@@ -1,0 +1,54 @@
+name: trading-dashboard
+services:
+- name: backend
+  source:
+    type: github
+    repo: Fullylucid/trading-dashboard
+    branch: main
+    deploy_on_push: true
+  github_deployment_branch: main
+  build_command: pip install -r requirements.txt
+  run_command: python main.py
+  envs:
+  - key: FINNHUB_API_KEY
+    scope: RUN_AND_BUILD_TIME
+    value: ${FINNHUB_API_KEY}
+  - key: REDIS_URL
+    scope: RUN_AND_BUILD_TIME
+    value: ${REDIS_URL}
+  - key: LOG_LEVEL
+    scope: RUN_AND_BUILD_TIME
+    value: INFO
+  http_port: 8000
+  source_dir: backend
+  health_check:
+    http_path: /api/health
+  internal_ports:
+  - 8000
+
+- name: frontend
+  source:
+    type: github
+    repo: Fullylucid/trading-dashboard
+    branch: main
+    deploy_on_push: true
+  github_deployment_branch: main
+  build_command: npm install && npm run build
+  run_command: npx serve -s build -l 5000
+  envs:
+  - key: REACT_APP_API_URL
+    scope: BUILD_TIME
+    value: https://${APP_DOMAIN}/api
+  http_port: 5000
+  source_dir: frontend
+  health_check:
+    http_path: /
+  internal_ports:
+  - 5000
+
+databases:
+- name: redis
+  engine: REDIS
+  version: "7"
+
+static_sites: []
