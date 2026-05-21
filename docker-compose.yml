@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  # Redis cache
+  redis:
+    image: redis:7-alpine
+    container_name: trading-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # FastAPI Backend
+  backend:
+    build: ./backend
+    container_name: trading-backend
+    ports:
+      - "8000:8000"
+    environment:
+      DASHBOARD_ENV: production
+      DASHBOARD_HOST: 0.0.0.0
+      DASHBOARD_PORT: 8000
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY}
+      REDIS_URL: redis://redis:6379/0
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+    volumes:
+      - ${HOME}/.hermes:/home/user/.hermes:ro
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # React Frontend
+  frontend:
+    build: ./frontend
+    container_name: trading-frontend
+    ports:
+      - "5000:5000"
+    environment:
+      REACT_APP_API_URL: http://localhost:8000
+      REACT_APP_WS_PRICES_URL: ws://localhost:8000/ws/prices
+      REACT_APP_WS_SIGNALS_URL: ws://localhost:8000/ws/signals
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:5000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Nginx reverse proxy (optional, for production)
+  nginx:
+    image: nginx:alpine
+    container_name: trading-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    profiles:
+      - "production"
+
+volumes:
+  redis-data:
+
+networks:
+  default:
+    name: trading-network
