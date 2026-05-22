@@ -3,7 +3,7 @@ services:
 - name: backend
   source:
     type: github
-    repo: Fullylucid/trading-dashboard
+    repo: fullylucid/trading-dashboard
     branch: main
     deploy_on_push: true
   github_deployment_branch: main
@@ -29,7 +29,7 @@ services:
 - name: frontend
   source:
     type: github
-    repo: Fullylucid/trading-dashboard
+    repo: fullylucid/trading-dashboard
     branch: main
     deploy_on_push: true
   github_deployment_branch: main
