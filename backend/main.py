@@ -295,7 +295,6 @@ def log_signal(signal: Dict):
 # ============================================================================
 
 @app.get("/api/health")
-@limiter.limit("60/minute")
 async def health_check():
     """Health check endpoint"""
     return {
@@ -308,7 +307,6 @@ async def health_check():
     }
 
 @app.get("/api/watchlist", response_model=List[WatchlistItem])
-@limiter.limit("30/minute")
 async def get_watchlist():
     """Get current watchlist with live prices"""
     if not price_fetcher:
@@ -333,7 +331,6 @@ async def get_watchlist():
     return watchlist
 
 @app.get("/api/signals/{symbol}", response_model=SignalUpdate)
-@limiter.limit("30/minute")
 async def get_signal(symbol: str):
     """Get latest signal for a symbol"""
     signal_data = await cache_manager.get(f"signal:{symbol}")
@@ -343,7 +340,6 @@ async def get_signal(symbol: str):
     return json.loads(signal_data)
 
 @app.get("/api/regime", response_model=RegimeState)
-@limiter.limit("30/minute")
 async def get_regime():
     """Get current market regime analysis"""
     if not signal_bridge:
@@ -360,7 +356,6 @@ async def get_regime():
     )
 
 @app.get("/api/signals-history", response_model=SignalHistory)
-@limiter.limit("30/minute")
 async def get_signals_history():
     """Get signal history from last 24 hours"""
     history_file = Path(settings.LOG_DIR) / "signals.jsonl"
@@ -417,7 +412,6 @@ async def get_signals_history():
     )
 
 @app.get("/api/pnl", response_model=PnLMetric)
-@limiter.limit("30/minute")
 async def get_pnl():
     """Get P&L metrics (mock data for now)"""
     # This would integrate with actual trading system
@@ -431,7 +425,6 @@ async def get_pnl():
     )
 
 @app.get("/api/chart-data/{symbol}")
-@limiter.limit("30/minute")
 async def get_chart_data(
     symbol: str,
     lookback_days: int = Query(30, ge=1, le=365)
