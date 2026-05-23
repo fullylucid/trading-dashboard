@@ -191,7 +191,6 @@ async def startup_event():
         
         # Initialize quant signal bridge
         signal_bridge = QuantSignalBridge(
-            quant_toolkit_path=settings.QUANT_TOOLKIT_PATH,
             logger=logger,
             cache_manager=cache_manager
         )
@@ -341,11 +340,21 @@ async def get_signal(symbol: str):
 
 @app.get("/api/regime", response_model=RegimeState)
 async def get_regime():
-    """Get current market regime analysis"""
+    """Get current market regime analysis (based on SPY price history)."""
     if not signal_bridge:
         raise HTTPException(status_code=503, detail="Signal bridge not ready")
-    
-    regime = await signal_bridge.get_regime_state()
+
+    # Fetch real SPY closes for regime detection — never synthetic data
+    spy_prices: Optional[List[float]] = None
+    try:
+        if price_fetcher:
+            candles = await price_fetcher.get_chart_data("SPY", lookback_days=90)
+            if candles:
+                spy_prices = [c["close"] for c in candles if c.get("close") is not None]
+    except Exception as e:
+        logger.warning(f"Failed to fetch SPY history for regime: {e}")
+
+    regime = await signal_bridge.get_regime_state(prices=spy_prices)
     return RegimeState(
         hmm_phase=regime.get("hmm_phase", 0),
         volatility_regime=regime.get("volatility_regime", "unknown"),

@@ -1,45 +1,33 @@
 """
-Bridge to quant-toolkit.py for signal generation.
-Integrates with existing Tradeskeebot quantitative analysis.
-
-This module dynamically imports quant-toolkit.py rather than invoking it as a
-subprocess. The toolkit file has no CLI/argparse entry point, so subprocess
-calls always failed silently and returned neutral signals. Direct import via
-importlib.util gives us real signals + better performance.
+Bridge to QuantToolkit for signal generation.
+Integrates with the vendored Tradeskeebot quantitative analysis module.
 """
 
 import asyncio
-import importlib.util
 import json
 import logging
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
 
 from cache_manager import CacheManager
+from quant_toolkit import QuantToolkit
 
 
 class QuantSignalBridge:
-    """Load quant-toolkit.py directly and call QuantToolkit methods for signals."""
+    """Call QuantToolkit methods in a thread pool to generate signals."""
 
     def __init__(
         self,
-        quant_toolkit_path: str,
         logger: logging.Logger,
         cache_manager: CacheManager,
+        quant_toolkit_path: Optional[str] = None,  # retained for backward-compat; unused
     ):
-        self.quant_toolkit_path = Path(quant_toolkit_path)
         self.logger = logger
         self.cache = cache_manager
-
-        # Lazy-loaded QuantToolkit instance
-        self._toolkit = None
+        self._toolkit: Optional[QuantToolkit] = None
         self._toolkit_loaded = False
-
-        if not self.quant_toolkit_path.exists():
-            self.logger.warning(f"Quant toolkit not found at {self.quant_toolkit_path}")
 
         # HMM regime state cache
         self.regime_cache: Optional[Dict] = None
@@ -47,25 +35,15 @@ class QuantSignalBridge:
         self.regime_cache_ttl = 300  # 5 minutes
 
     def _load_toolkit(self) -> None:
-        """Dynamically load QuantToolkit class from quant-toolkit.py."""
+        """Instantiate QuantToolkit (lazy, idempotent)."""
         if self._toolkit_loaded:
             return
-        self._toolkit_loaded = True  # mark attempted even on failure
-
+        self._toolkit_loaded = True
         try:
-            if not self.quant_toolkit_path.exists():
-                self.logger.error(f"Quant toolkit missing: {self.quant_toolkit_path}")
-                return
-
-            spec = importlib.util.spec_from_file_location(
-                "quant_toolkit", self.quant_toolkit_path
-            )
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            self._toolkit = module.QuantToolkit()
+            self._toolkit = QuantToolkit()
             self.logger.info("QuantToolkit loaded successfully")
         except Exception as e:
-            self.logger.error(f"Failed to load quant toolkit: {e}", exc_info=True)
+            self.logger.error(f"Failed to instantiate QuantToolkit: {e}", exc_info=True)
             self._toolkit = None
 
     async def generate_signal(self, symbol: str, ohlcv: Dict) -> Dict:
