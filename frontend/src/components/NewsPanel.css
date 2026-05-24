@@ -1,12 +1,33 @@
-/* NewsPanel Component Styles */
+/* NewsPanel Component Styles - Cyberpunk Terminal Theme */
 
 .news-panel {
-  background: white;
-  border-radius: 12px;
+  background: var(--bg-panel);
+  border-radius: 2px;
   padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--border);
   max-height: 800px;
   overflow-y: auto;
+  position: relative;
+  font-family: var(--font-mono);
+}
+
+.news-panel::before {
+  content: '▸';
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  color: var(--neon-green);
+  font-size: 12px;
+}
+
+@keyframes pulse-border {
+  0% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.2); }
+  50% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.4); }
+  100% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.2); }
+}
+
+.news-panel {
+  animation: pulse-border 3s infinite;
 }
 
 .news-panel-header {
@@ -15,13 +36,15 @@
   align-items: center;
   margin-bottom: 20px;
   padding-bottom: 15px;
-  border-bottom: 2px solid #f0f0f0;
+  border-bottom: 1px solid var(--border);
 }
 
 .news-panel h2 {
   margin: 0;
   font-size: 1.5rem;
-  color: #1a1a1a;
+  color: var(--neon-green);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
 }
 
 .news-controls {
@@ -32,17 +55,20 @@
 .category-select,
 .sort-select {
   padding: 8px 12px;
-  border: 1px solid #d0d0d0;
-  border-radius: 6px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
   font-size: 0.9rem;
-  background: white;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
   cursor: pointer;
   transition: all 0.3s ease;
 }
 
 .category-select:hover,
 .sort-select:hover {
-  border-color: #0066cc;
+  border-color: var(--neon-green);
+  box-shadow: var(--glow-green);
 }
 
 .news-loading,
@@ -50,14 +76,15 @@
 .news-empty {
   padding: 40px 20px;
   text-align: center;
-  color: #666;
+  color: var(--text-secondary);
   font-size: 0.95rem;
 }
 
 .news-error {
-  background: #fee;
-  color: #c00;
-  border-radius: 6px;
+  background: rgba(255, 0, 60, 0.1);
+  color: var(--danger);
+  border-radius: 2px;
+  border: 1px solid var(--danger);
 }
 
 .news-list {
@@ -68,29 +95,41 @@
 
 .news-item {
   padding: 15px;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
   transition: all 0.3s ease;
-  border-left: 4px solid #e0e0e0;
+  border-left: 4px solid var(--border);
+  position: relative;
+  background: var(--bg-elevated);
+}
+
+.news-item::before {
+  content: '▸';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  color: var(--neon-green);
+  font-size: 10px;
 }
 
 .news-item:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  border-left-color: #0066cc;
+  box-shadow: var(--glow-green);
+  border-left-color: var(--neon-cyan);
 }
 
 .news-item.sentiment-positive {
-  border-left-color: #28a745;
-  background: #f0fdf4;
+  border-left-color: var(--neon-green);
+  background: rgba(0, 255, 65, 0.05);
 }
 
 .news-item.sentiment-negative {
-  border-left-color: #dc3545;
-  background: #fef2f2;
+  border-left-color: var(--danger);
+  background: rgba(255, 0, 60, 0.05);
 }
 
 .news-item.sentiment-neutral {
-  border-left-color: #6c757d;
+  border-left-color: var(--amber);
+  background: rgba(255, 176, 0, 0.05);
 }
 
 .news-item-header {
@@ -100,16 +139,18 @@
 .news-item h3 {
   margin: 0 0 8px 0;
   font-size: 1rem;
+  color: var(--text-primary);
 }
 
 .news-item a {
-  color: #0066cc;
+  color: var(--neon-cyan);
   text-decoration: none;
   transition: color 0.3s ease;
 }
 
 .news-item a:hover {
-  color: #0052a3;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 6px currentColor;
   text-decoration: underline;
 }
 
@@ -117,18 +158,18 @@
   display: flex;
   gap: 12px;
   font-size: 0.85rem;
-  color: #888;
+  color: var(--text-secondary);
 }
 
 .news-source {
   font-weight: 600;
-  color: #0066cc;
+  color: var(--neon-cyan);
 }
 
 .news-summary {
   margin: 10px 0;
   font-size: 0.9rem;
-  color: #555;
+  color: var(--text-secondary);
   line-height: 1.4;
 }
 
@@ -138,7 +179,7 @@
   align-items: center;
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--border);
   font-size: 0.85rem;
 }
 
@@ -149,16 +190,17 @@
 }
 
 .symbol-badge {
-  background: #e3f2fd;
-  color: #0066cc;
+  background: rgba(0, 217, 255, 0.1);
+  color: var(--neon-cyan);
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: 2px;
   font-size: 0.8rem;
   font-weight: 600;
+  border: 1px solid var(--neon-cyan);
 }
 
 .news-impact {
-  color: #666;
+  color: var(--text-secondary);
   font-size: 0.85rem;
 }
 

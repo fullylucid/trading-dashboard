@@ -1,4 +1,25 @@
-/* Global styles for the application */
+/* Global styles for the application - Cyberpunk Terminal Theme */
+
+/* Import JetBrains Mono font */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+:root {
+  --bg-base: #0a0e0a;
+  --bg-panel: #0f1410;
+  --bg-elevated: #141a14;
+  --border: #1a2a1a;
+  --border-active: #00ff41;
+  --neon-green: #00ff41;
+  --neon-cyan: #00d9ff;
+  --amber: #ffb000;
+  --danger: #ff003c;
+  --muted: #4a8c4a;
+  --text-primary: #c5ffcd;
+  --text-secondary: #88aa88;
+  --glow-green: 0 0 8px rgba(0, 255, 65, 0.4);
+  --glow-cyan: 0 0 8px rgba(0, 217, 255, 0.4);
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+}
 
 * {
   margin: 0;
@@ -7,13 +28,39 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background-color: #f5f5f5;
-  color: #333;
+  font-family: var(--font-mono);
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 14px;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Scanlines overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 255, 65, 0.03) 0px,
+    rgba(0, 255, 65, 0.03) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* CRT flicker effect */
+@keyframes crt-flicker {
+  0% { opacity: 0.99; }
+  50% { opacity: 1; }
+  100% { opacity: 0.99; }
+}
+
+body {
+  animation: crt-flicker 0.1s infinite;
 }
 
 html, body, #root {
@@ -33,63 +80,85 @@ html, body, #root {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--bg-panel);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 5px;
+  background: var(--muted);
+  border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: var(--neon-green);
+  box-shadow: var(--glow-green);
 }
 
 /* Selection styling */
 ::selection {
-  background-color: #0066cc;
-  color: white;
+  background-color: var(--neon-green);
+  color: var(--bg-base);
 }
 
 ::-moz-selection {
-  background-color: #0066cc;
-  color: white;
+  background-color: var(--neon-green);
+  color: var(--bg-base);
 }
 
 /* Link styling */
 a {
-  color: #0066cc;
+  color: var(--neon-cyan);
   text-decoration: none;
-  transition: color 0.3s ease;
+  transition: all 0.2s ease;
 }
 
 a:hover {
-  color: #0052a3;
+  color: var(--neon-cyan);
+  text-shadow: 0 0 6px currentColor;
   text-decoration: underline;
 }
 
 /* Button styling */
 button {
-  font-family: inherit;
+  font-family: var(--font-mono);
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: 1px solid var(--neon-green);
+  color: var(--neon-green);
+  padding: 8px 16px;
+  border-radius: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 12px;
+}
+
+button:hover {
+  box-shadow: var(--glow-green);
+  text-shadow: 0 0 6px currentColor;
 }
 
 button:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
+  border-color: var(--muted);
+  color: var(--muted);
 }
 
 /* Input styling */
 input, textarea, select {
-  font-family: inherit;
-  border-radius: 6px;
-  transition: all 0.3s ease;
+  font-family: var(--font-mono);
+  background: var(--bg-base);
+  border: none;
+  border-bottom: 1px solid var(--neon-green);
+  color: var(--text-primary);
+  padding: 8px;
+  transition: all 0.2s ease;
 }
 
 input:focus, textarea:focus, select:focus {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+  border-bottom: 1px solid var(--neon-cyan);
+  box-shadow: var(--glow-cyan);
 }
 
 /* Utility classes */
@@ -121,9 +190,117 @@ input:focus, textarea:focus, select:focus {
   overflow: auto;
 }
 
+/* Panel base styling */
+.panel, .card, .section {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  padding: 16px;
+  position: relative;
+  border-radius: 2px;
+}
+
+.panel::before, .card::before, .section::before {
+  content: '▸';
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  color: var(--neon-green);
+  font-size: 12px;
+}
+
+/* Pulse border animation */
+@keyframes pulse-border {
+  0% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.2); }
+  50% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.4); }
+  100% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.2); }
+}
+
+.panel, .card {
+  animation: pulse-border 3s infinite;
+}
+
+/* Tables */
+table {
+  font-family: var(--font-mono);
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th {
+  text-align: left;
+  padding: 8px;
+  border-bottom: 2px solid var(--neon-green);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 12px;
+}
+
+td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+tr:nth-child(even) {
+  background: #0d110d;
+}
+
+tr:hover {
+  background: rgba(0, 217, 255, 0.1);
+}
+
+/* Positive/Negative numbers */
+.positive {
+  color: var(--neon-green);
+  text-shadow: var(--glow-green);
+}
+
+.negative {
+  color: var(--danger);
+  text-shadow: 0 0 8px rgba(255, 0, 60, 0.4);
+}
+
+/* Status indicators */
+.status-live::after {
+  content: '[LIVE]';
+  color: var(--neon-green);
+  margin-left: 8px;
+  font-size: 12px;
+}
+
+.status-offline::after {
+  content: '[OFFLINE]';
+  color: var(--muted);
+  margin-left: 8px;
+  font-size: 12px;
+}
+
+.status-rec::after {
+  content: '[●REC]';
+  color: var(--danger);
+  margin-left: 8px;
+  font-size: 12px;
+}
+
+/* Blinking cursor */
+.blinking-cursor::after {
+  content: '▋';
+  animation: blink 1s infinite;
+  margin-left: 4px;
+}
+
+@keyframes blink {
+  0% { opacity: 1; }
+  50% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
 /* Responsive utility */
 @media (max-width: 768px) {
   body {
-    font-size: 14px;
+    font-size: 12px;
+  }
+  
+  .panel, .card, .section {
+    padding: 12px;
   }
 }
