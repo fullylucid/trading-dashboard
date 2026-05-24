@@ -1,6 +1,10 @@
 """
 Portfolio API Routes
-FastAPI endpoints for Robinhood portfolio tracking and display
+FastAPI endpoints for brokerage portfolio tracking and display.
+
+Backed by SnapTrade (OAuth) — see snaptrade_portfolio.py. The legacy
+robinhood_portfolio.py remains in the tree as a fallback but is no
+longer wired up.
 """
 
 from fastapi import APIRouter, Query, HTTPException
@@ -8,7 +12,7 @@ from typing import Optional, List, Dict, Any
 import logging
 from datetime import datetime
 
-from robinhood_portfolio import get_portfolio_instance, clear_portfolio_cache
+from snaptrade_portfolio import get_portfolio_instance, clear_portfolio_cache
 
 logger = logging.getLogger(__name__)
 
@@ -264,13 +268,13 @@ async def portfolio_health() -> Dict[str, str]:
     """Check portfolio service health and authentication"""
     try:
         portfolio = await get_portfolio_instance()
-        
+
         if portfolio.authenticated:
             status = "connected"
         else:
             authenticated = await portfolio.authenticate()
             status = "connected" if authenticated else "disconnected"
-        
+
         return {
             "status": status,
             "username": portfolio.username if portfolio.username else "not configured",
@@ -281,3 +285,22 @@ async def portfolio_health() -> Dict[str, str]:
             "status": "error",
             "error": str(e),
         }
+
+
+@portfolio_router.get("/connect-url")
+async def get_connect_url(broker: Optional[str] = Query(None, description="Optional broker slug, e.g. ROBINHOOD")) -> Dict[str, str]:
+    """
+    Return a SnapTrade Connection Portal URL. Open this in a browser to
+    link a brokerage account (Robinhood, Schwab, IBKR, Fidelity, …).
+    The URL is short-lived (~5 min).
+    """
+    try:
+        portfolio = await get_portfolio_instance()
+        # Method only exists on SnapTradePortfolio
+        url = await portfolio.get_connection_url(broker=broker)  # type: ignore[attr-defined]
+        return {"redirect_uri": url}
+    except AttributeError:
+        raise HTTPException(status_code=501, detail="Connection portal not supported by current portfolio backend")
+    except Exception as e:
+        logger.error(f"Error generating connect URL: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
