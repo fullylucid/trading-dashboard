@@ -27,6 +27,10 @@ from data_fetcher import FinnhubPriceFetcher
 from quant_bridge import QuantSignalBridge
 from cache_manager import CacheManager
 from config import Settings
+from signal_engine import SignalEngine
+from signal_routes import create_signal_routes, create_telegram_webhook_routes
+from websocket_manager import WebSocketManager
+from telegram_bot import TelegramBot, TelegramConfig
 
 # ============================================================================
 # CONFIGURATION & LOGGING
@@ -83,7 +87,10 @@ app.add_middleware(
 
 price_fetcher: Optional[FinnhubPriceFetcher] = None
 signal_bridge: Optional[QuantSignalBridge] = None
+signal_engine: Optional[SignalEngine] = None
+telegram_bot: Optional[TelegramBot] = None
 cache_manager = CacheManager(settings.REDIS_URL)
+ws_manager = WebSocketManager()
 
 # Track WebSocket connections
 active_price_clients: Set[WebSocket] = set()
@@ -179,7 +186,7 @@ class ChartData(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     """Initialize data fetchers and bridges"""
-    global price_fetcher, signal_bridge
+    global price_fetcher, signal_bridge, signal_engine, telegram_bot
     
     try:
         # Initialize Finnhub price streamer
@@ -195,9 +202,30 @@ async def startup_event():
             cache_manager=cache_manager
         )
         
+        # Initialize signal engine
+        signal_engine = SignalEngine(
+            cache_manager=cache_manager,
+            logger=logger
+        )
+        
+        # Initialize Telegram bot
+        if settings.TELEGRAM_BOT_TOKEN:
+            telegram_config = TelegramConfig(
+                bot_token=settings.TELEGRAM_BOT_TOKEN,
+                chat_id=settings.TELEGRAM_CHAT_ID,
+            )
+            telegram_bot = TelegramBot(telegram_config)
+            if await telegram_bot.initialize():
+                logger.info("Telegram bot initialized")
+            else:
+                logger.warning("Failed to initialize Telegram bot")
+        
         # Start background tasks
         asyncio.create_task(price_fetcher.stream_prices())
         asyncio.create_task(signal_generator_loop())
+        
+        # Register signal routes
+        await register_signal_routes()
         
         logger.info("Dashboard backend initialized successfully", extra={
             "watchlist_count": len(price_fetcher.watchlist)
@@ -211,6 +239,8 @@ async def shutdown_event():
     """Cleanup on shutdown"""
     if price_fetcher:
         await price_fetcher.close()
+    if telegram_bot:
+        await telegram_bot.close()
     logger.info("Dashboard backend shut down")
 
 # ============================================================================
@@ -447,6 +477,22 @@ async def get_chart_data(
         raise HTTPException(status_code=404, detail=f"No chart data for {symbol}")
     
     return chart_data
+
+# ============================================================================
+# SIGNAL ENGINE ROUTES (register dynamically)
+# ============================================================================
+
+async def register_signal_routes():
+    """Register signal routes after signal_engine is initialized"""
+    if signal_engine and cache_manager:
+        signal_router = create_signal_routes(signal_engine, cache_manager)
+        app.include_router(signal_router)
+        
+        if telegram_bot:
+            telegram_router = create_telegram_webhook_routes(telegram_bot)
+            app.include_router(telegram_router)
+        
+        logger.info("Signal routes registered")
 
 # ============================================================================
 # WEBSOCKET ENDPOINTS
