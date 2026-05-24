@@ -234,13 +234,47 @@ class SnapTradePortfolio:
         return list(body) if body else []
 
     def _fetch_holdings(self) -> List[Dict[str, Any]]:
-        """Fetch holdings for all connected accounts (aggregated)."""
-        resp = self.client.account_information.get_all_user_holdings(
-            user_id=self.user_id,
-            user_secret=self.user_secret,
-        )
-        body = getattr(resp, "body", resp)
-        return list(body) if body else []
+        """Fetch holdings for all connected accounts (aggregated).
+
+        The legacy `get_all_user_holdings` endpoint is now HTTP 410 Gone.
+        We rebuild the same shape by iterating accounts and pulling
+        positions + balance via the current per-account endpoints.
+        """
+        accounts = self._fetch_accounts()
+        aggregated: List[Dict[str, Any]] = []
+        for acct in accounts:
+            aid = acct.get("id")
+            if not aid:
+                continue
+            # Positions
+            try:
+                pres = self.client.account_information.get_user_account_positions(
+                    account_id=aid,
+                    user_id=self.user_id,
+                    user_secret=self.user_secret,
+                )
+                positions = list(getattr(pres, "body", pres) or [])
+            except Exception as exc:
+                logger.warning("positions fetch failed for %s: %s", aid, exc)
+                positions = []
+            # Balances
+            try:
+                bres = self.client.account_information.get_user_account_balance(
+                    account_id=aid,
+                    user_id=self.user_id,
+                    user_secret=self.user_secret,
+                )
+                balances = list(getattr(bres, "body", bres) or [])
+            except Exception as exc:
+                logger.warning("balance fetch failed for %s: %s", aid, exc)
+                balances = []
+            aggregated.append({
+                "account": acct,
+                "balances": balances,
+                "positions": positions,
+                "total_value": acct.get("balance", {}).get("total", {}) or {},
+            })
+        return aggregated
 
     def _fetch_activities(self, days: int = 30) -> List[Dict[str, Any]]:
         end = datetime.utcnow().date()
