@@ -9,11 +9,12 @@ COPY package.json package-lock.json .npmrc ./
 # Install dependencies
 RUN npm ci --legacy-peer-deps
 
-# Copy source code
+# Copy source + build config
 COPY public ./public
 COPY src ./src
+COPY index.html tsconfig.json tsconfig.node.json vite.config.ts ./
 
-# Build application
+# Build application (tsc + vite -> /app/dist)
 RUN npm run build
 
 # Production stage
@@ -24,8 +25,8 @@ WORKDIR /app
 # Install serve to run the production build
 RUN npm install -g serve
 
-# Copy built application from build stage
-COPY --from=build /app/build ./build
+# Copy built application from build stage (Vite outputs to dist/)
+COPY --from=build /app/dist ./dist
 
 # Expose port
 EXPOSE 5000
@@ -35,4 +36,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:5000 || exit 1
 
 # Run application
-CMD ["serve", "-s", "build", "-l", "5000"]
+CMD ["serve", "-s", "dist", "-l", "5000"]
