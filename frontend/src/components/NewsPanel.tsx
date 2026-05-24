@@ -118,7 +118,7 @@ const NewsPanel: React.FC<NewsPanelProps> = ({
           {!symbol && (
             <select
               value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
+              onChange={(e) => setFilterCategory(e.target.value as any)}
               className="category-select"
             >
               <option value="market">Market</option>
