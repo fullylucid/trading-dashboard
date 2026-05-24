@@ -1,78 +1,137 @@
-#!/usr/bin/env python3
 """
-Trading Dashboard - FastAPI Backend
-Production-ready WebSocket streaming, signal generation, and analytics
+Trading Dashboard FastAPI Application
+Main entry point for the enhanced trading dashboard backend
 """
 
-import asyncio
-import json
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, Set, Optional
-from pathlib import Path
 import os
-
-from fastapi import FastAPI, WebSocket, HTTPException, Query, Depends
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-from pydantic import BaseModel, Field
-from pythonjsonlogger import jsonlogger
+from fastapi.openapi.utils import get_openapi
 
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from news_aggregator import NewsAggregator
+from earnings_calendar import EarningsCalendar
+from market_data import MarketData
+from research_agent import ResearchAgent
+from research_routes import (
+    news_router,
+    research_router,
+    earnings_router,
+    market_router,
+    initialize_services,
+)
 
-from data_fetcher import FinnhubPriceFetcher
-from quant_bridge import QuantSignalBridge
-from cache_manager import CacheManager
-from config import Settings
-from signal_engine import SignalEngine
-from signal_routes import create_signal_routes, create_telegram_webhook_routes
-from websocket_manager import WebSocketManager
-from telegram_bot import TelegramBot, TelegramConfig
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 
 # ============================================================================
-# CONFIGURATION & LOGGING
+# Configuration
 # ============================================================================
+
+class Settings:
+    """Application settings"""
+    
+    # API Keys (load from environment)
+    FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
+    ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
+    FMP_API_KEY = os.getenv("FMP_API_KEY", "")
+    
+    # Ollama Cloud Configuration
+    OLLAMA_CLOUD_BASE_URL = os.getenv(
+        "OLLAMA_CLOUD_BASE_URL", "https://api.ollama.cloud/v1"
+    )
+    OLLAMA_CLOUD_API_KEY = os.getenv("OLLAMA_CLOUD_API_KEY", "")
+    OLLAMA_CLOUD_MODEL = os.getenv("OLLAMA_CLOUD_MODEL", "kimi-k-3-70b")
+    
+    # API Settings
+    CORS_ORIGINS = [
+        "http://localhost:3000",
+        "http://localhost:5173",  # Vite default
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ]
+
 
 settings = Settings()
 
-# Configure structured JSON logging
-log_dir = Path(settings.LOG_DIR)
-log_dir.mkdir(parents=True, exist_ok=True)
+# ============================================================================
+# Initialize Services on Startup
+# ============================================================================
 
-logger = logging.getLogger("trading_dashboard")
-logger.setLevel(logging.INFO)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Manage application lifecycle
+    Startup: Initialize services
+    Shutdown: Cleanup resources
+    """
+    # Startup
+    logger.info("Starting Trading Dashboard Backend...")
+    
+    # Initialize API clients
+    api_keys = {
+        "finnhub": settings.FINNHUB_API_KEY,
+        "alpha_vantage": settings.ALPHA_VANTAGE_API_KEY,
+        "fmp": settings.FMP_API_KEY,
+    }
+    
+    # Initialize service instances
+    news_agg = NewsAggregator(api_keys)
+    earnings_cal = EarningsCalendar(api_keys)
+    market_dat = MarketData(api_keys)
+    research_ag = ResearchAgent(
+        {
+            "base_url": settings.OLLAMA_CLOUD_BASE_URL,
+            "api_key": settings.OLLAMA_CLOUD_API_KEY,
+            "model": settings.OLLAMA_CLOUD_MODEL,
+        }
+    )
+    
+    # Initialize routes with service instances
+    initialize_services(news_agg, earnings_cal, market_dat, research_ag)
+    
+    logger.info("All services initialized successfully")
+    logger.info(f"CORS origins: {settings.CORS_ORIGINS}")
+    
+    # Validate API keys
+    if not api_keys.get("finnhub"):
+        logger.warning("FINNHUB_API_KEY not configured")
+    if not api_keys.get("alpha_vantage"):
+        logger.warning("ALPHA_VANTAGE_API_KEY not configured")
+    if not api_keys.get("fmp"):
+        logger.warning("FMP_API_KEY not configured")
+    if not settings.OLLAMA_CLOUD_API_KEY:
+        logger.warning("OLLAMA_CLOUD_API_KEY not configured - research features disabled")
+    
+    yield  # Application runs here
+    
+    # Shutdown
+    logger.info("Shutting down Trading Dashboard Backend...")
+    await news_agg.clear_cache()
+    await earnings_cal.clear_cache()
+    await market_dat.clear_cache()
+    await research_ag.clear_cache()
+    logger.info("Cleanup complete")
 
-# JSON handler for structured logs
-json_handler = logging.FileHandler(log_dir / "dashboard.log")
-json_formatter = jsonlogger.JsonFormatter()
-json_handler.setFormatter(json_formatter)
-logger.addHandler(json_handler)
-
-# Console handler for development
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(logging.Formatter(
-    "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-))
-logger.addHandler(console_handler)
 
 # ============================================================================
-# FASTAPI APPLICATION
+# FastAPI Application
 # ============================================================================
 
 app = FastAPI(
     title="Trading Dashboard API",
-    description="Production WebSocket streaming, quant signals, and analytics",
-    version="1.0.0"
+    description="Comprehensive trading dashboard with news, research, earnings, and market data",
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
-# Rate limiting
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-
-# CORS middleware
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -82,525 +141,111 @@ app.add_middleware(
 )
 
 # ============================================================================
-# DEPENDENCY INJECTION & INITIALIZATION
+# Register Routes
 # ============================================================================
 
-price_fetcher: Optional[FinnhubPriceFetcher] = None
-signal_bridge: Optional[QuantSignalBridge] = None
-signal_engine: Optional[SignalEngine] = None
-telegram_bot: Optional[TelegramBot] = None
-cache_manager = CacheManager(settings.REDIS_URL)
-ws_manager = WebSocketManager()
+app.include_router(news_router)
+app.include_router(research_router)
+app.include_router(earnings_router)
+app.include_router(market_router)
 
-# Track WebSocket connections
-active_price_clients: Set[WebSocket] = set()
-active_signal_clients: Set[WebSocket] = set()
 
 # ============================================================================
-# DATA MODELS
+# Root Endpoints
 # ============================================================================
 
-class PriceUpdate(BaseModel):
-    """Real-time price data"""
-    symbol: str
-    price: float
-    bid: float
-    ask: float
-    volume: int
-    timestamp: datetime
-    change_percent: float
+@app.get("/")
+async def root():
+    """Root endpoint - API overview"""
+    return {
+        "title": "Trading Dashboard API",
+        "version": "1.0.0",
+        "endpoints": {
+            "news": "/api/news",
+            "research": "/api/research",
+            "earnings": "/api/earnings",
+            "market": "/api/market",
+            "docs": "/docs",
+            "openapi": "/openapi.json",
+        },
+    }
 
-class SignalUpdate(BaseModel):
-    """Trading signal data"""
-    symbol: str
-    timestamp: datetime
-    momentum_score: float
-    momentum_confidence: float
-    reversion_score: float
-    reversion_confidence: float
-    volatility_regime: str
-    volatility_score: float
-    pattern_score: float
-    regime_score: float
-    correlation_score: float
-    leading_indicator_score: float
-    aggregate_confidence: float
-    signal_type: str  # "buy", "sell", "neutral"
-    trigger_reason: str
 
-class WatchlistItem(BaseModel):
-    """Watchlist entry with live data"""
-    symbol: str
-    price: float
-    change_percent: float
-    volume: int
-    bid: float
-    ask: float
-    alert_status: str  # "triggered", "watchful", "disabled"
-    last_price_update: datetime
-
-class RegimeState(BaseModel):
-    """Market regime analysis"""
-    hmm_phase: int
-    volatility_regime: str
-    market_heat: float
-    trend_direction: str
-    estimated_probability: float
-    timestamp: datetime
-
-class SignalHistory(BaseModel):
-    """Historical signal data"""
-    total_signals_24h: int
-    buy_signals: int
-    sell_signals: int
-    conversion_rate: float
-    avg_confidence: float
-    confidence_distribution: Dict[str, int]  # "high", "medium", "low" -> count
-    top_signals: List[SignalUpdate]
-
-class PnLMetric(BaseModel):
-    """P&L tracking"""
-    realized_pnl: float
-    unrealized_pnl: float
-    total_return: float
-    win_rate: float
-    sharpe_ratio: float
-    max_drawdown: float
-
-class ChartData(BaseModel):
-    """OHLCV data for charting"""
-    timestamp: datetime
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: int
-    sma_20: Optional[float] = None
-    sma_50: Optional[float] = None
-    sma_200: Optional[float] = None
-
-# ============================================================================
-# INITIALIZATION & LIFECYCLE
-# ============================================================================
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize data fetchers and bridges"""
-    global price_fetcher, signal_bridge, signal_engine, telegram_bot
-    
-    try:
-        # Initialize Finnhub price streamer
-        price_fetcher = FinnhubPriceFetcher(
-            api_key=settings.FINNHUB_API_KEY,
-            watchlist=await load_watchlist(),
-            logger=logger
-        )
-        
-        # Initialize quant signal bridge
-        signal_bridge = QuantSignalBridge(
-            logger=logger,
-            cache_manager=cache_manager
-        )
-        
-        # Initialize signal engine
-        signal_engine = SignalEngine(
-            cache_manager=cache_manager,
-            logger=logger
-        )
-        
-        # Initialize Telegram bot
-        if settings.TELEGRAM_BOT_TOKEN:
-            telegram_config = TelegramConfig(
-                bot_token=settings.TELEGRAM_BOT_TOKEN,
-                chat_id=settings.TELEGRAM_CHAT_ID,
-            )
-            telegram_bot = TelegramBot(telegram_config)
-            if await telegram_bot.initialize():
-                logger.info("Telegram bot initialized")
-            else:
-                logger.warning("Failed to initialize Telegram bot")
-        
-        # Start background tasks
-        asyncio.create_task(price_fetcher.stream_prices())
-        asyncio.create_task(signal_generator_loop())
-        
-        # Register signal routes
-        await register_signal_routes()
-        
-        logger.info("Dashboard backend initialized successfully", extra={
-            "watchlist_count": len(price_fetcher.watchlist)
-        })
-    except Exception as e:
-        logger.error(f"Startup error: {e}", exc_info=True)
-        raise
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    if price_fetcher:
-        await price_fetcher.close()
-    if telegram_bot:
-        await telegram_bot.close()
-    logger.info("Dashboard backend shut down")
-
-# ============================================================================
-# BACKGROUND TASKS
-# ============================================================================
-
-async def signal_generator_loop():
-    """Continuously generate signals from price data and broadcast to clients"""
-    while True:
-        try:
-            if not price_fetcher:
-                await asyncio.sleep(5)
-                continue
-            
-            for symbol in price_fetcher.watchlist:
-                # Get latest OHLCV data
-                ohlcv = await price_fetcher.get_ohlcv(symbol)
-                if not ohlcv:
-                    continue
-                
-                # Generate signal
-                signal = await signal_bridge.generate_signal(symbol, ohlcv)
-                
-                # Cache signal
-                await cache_manager.set(f"signal:{symbol}", json.dumps(signal))
-                
-                # Broadcast to clients
-                await broadcast_signal(signal)
-                
-                # Log signal
-                log_signal(signal)
-            
-            await asyncio.sleep(settings.SIGNAL_UPDATE_INTERVAL)
-            
-        except Exception as e:
-            logger.error(f"Signal generator error: {e}", exc_info=True)
-            await asyncio.sleep(5)
-
-async def broadcast_signal(signal: Dict):
-    """Send signal to all connected signal WebSocket clients"""
-    disconnected = set()
-    for client in active_signal_clients:
-        try:
-            await client.send_json(signal)
-        except Exception as e:
-            logger.warning(f"Failed to send signal to client: {e}")
-            disconnected.add(client)
-    
-    # Clean up disconnected clients
-    for client in disconnected:
-        active_signal_clients.discard(client)
-
-async def broadcast_price(price_update: Dict):
-    """Send price update to all connected price WebSocket clients"""
-    disconnected = set()
-    for client in active_price_clients:
-        try:
-            await client.send_json(price_update)
-        except Exception as e:
-            logger.warning(f"Failed to send price to client: {e}")
-            disconnected.add(client)
-    
-    # Clean up disconnected clients
-    for client in disconnected:
-        active_price_clients.discard(client)
-
-def log_signal(signal: Dict):
-    """Log signal to analytics file"""
-    try:
-        log_file = Path(settings.LOG_DIR) / "signals.jsonl"
-        with open(log_file, "a") as f:
-            f.write(json.dumps({
-                **signal,
-                "logged_at": datetime.utcnow().isoformat()
-            }) + "\n")
-    except Exception as e:
-        logger.error(f"Failed to log signal: {e}")
-
-# ============================================================================
-# REST API ENDPOINTS
-# ============================================================================
-
-@app.get("/api/health")
-async def health_check():
+@app.get("/health")
+async def health():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "price_fetcher_active": price_fetcher is not None,
-        "signal_bridge_active": signal_bridge is not None,
-        "connected_price_clients": len(active_price_clients),
-        "connected_signal_clients": len(active_signal_clients)
+        "service": "Trading Dashboard API",
+        "version": "1.0.0",
     }
 
-@app.get("/api/watchlist", response_model=List[WatchlistItem])
-async def get_watchlist():
-    """Get current watchlist with live prices"""
-    if not price_fetcher:
-        raise HTTPException(status_code=503, detail="Price fetcher not ready")
-    
-    watchlist = []
-    for symbol in price_fetcher.watchlist:
-        price_data = await cache_manager.get(f"price:{symbol}")
-        if price_data:
-            data = json.loads(price_data)
-            watchlist.append(WatchlistItem(
-                symbol=symbol,
-                price=data.get("price", 0),
-                change_percent=data.get("change_percent", 0),
-                volume=data.get("volume", 0),
-                bid=data.get("bid", 0),
-                ask=data.get("ask", 0),
-                alert_status=data.get("alert_status", "watchful"),
-                last_price_update=datetime.fromisoformat(data.get("timestamp", ""))
-            ))
-    
-    return watchlist
 
-@app.get("/api/signals/{symbol}", response_model=SignalUpdate)
-async def get_signal(symbol: str):
-    """Get latest signal for a symbol"""
-    signal_data = await cache_manager.get(f"signal:{symbol}")
-    if not signal_data:
-        raise HTTPException(status_code=404, detail=f"No signal for {symbol}")
-    
-    return json.loads(signal_data)
+@app.get("/api/stats")
+async def get_stats():
+    """Get API statistics"""
+    return {
+        "service": "Trading Dashboard",
+        "version": "1.0.0",
+        "features": [
+            "Market News & Articles",
+            "Research Summaries (Kimi K)",
+            "Earnings Calendar",
+            "Market Data & Breadth",
+            "Sector Performance",
+            "Sentiment Analysis",
+        ],
+        "status": "operational",
+    }
 
-@app.get("/api/regime", response_model=RegimeState)
-async def get_regime():
-    """Get current market regime analysis (based on SPY price history)."""
-    if not signal_bridge:
-        raise HTTPException(status_code=503, detail="Signal bridge not ready")
 
-    # Fetch real SPY closes for regime detection — never synthetic data
-    spy_prices: Optional[List[float]] = None
-    try:
-        if price_fetcher:
-            candles = await price_fetcher.get_chart_data("SPY", lookback_days=90)
-            if candles:
-                spy_prices = [c["close"] for c in candles if c.get("close") is not None]
-    except Exception as e:
-        logger.warning(f"Failed to fetch SPY history for regime: {e}")
+# ============================================================================
+# Custom OpenAPI Schema
+# ============================================================================
 
-    regime = await signal_bridge.get_regime_state(prices=spy_prices)
-    return RegimeState(
-        hmm_phase=regime.get("hmm_phase", 0),
-        volatility_regime=regime.get("volatility_regime", "unknown"),
-        market_heat=regime.get("market_heat", 0),
-        trend_direction=regime.get("trend_direction", "neutral"),
-        estimated_probability=regime.get("estimated_probability", 0),
-        timestamp=datetime.utcnow()
+def custom_openapi():
+    """Custom OpenAPI schema"""
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title="Trading Dashboard API",
+        version="1.0.0",
+        description="Enhanced trading dashboard with comprehensive market research and data",
+        routes=app.routes,
     )
 
-@app.get("/api/signals-history", response_model=SignalHistory)
-async def get_signals_history():
-    """Get signal history from last 24 hours"""
-    history_file = Path(settings.LOG_DIR) / "signals.jsonl"
-    
-    if not history_file.exists():
-        return SignalHistory(
-            total_signals_24h=0,
-            buy_signals=0,
-            sell_signals=0,
-            conversion_rate=0,
-            avg_confidence=0,
-            confidence_distribution={},
-            top_signals=[]
-        )
-    
-    signals = []
-    cutoff_time = datetime.utcnow() - timedelta(hours=24)
-    
-    with open(history_file, "r") as f:
-        for line in f:
-            try:
-                sig = json.loads(line)
-                sig_time = datetime.fromisoformat(sig.get("logged_at", ""))
-                if sig_time > cutoff_time:
-                    signals.append(sig)
-            except json.JSONDecodeError:
-                continue
-    
-    # Analyze signals
-    buy_count = sum(1 for s in signals if s.get("signal_type") == "buy")
-    sell_count = sum(1 for s in signals if s.get("signal_type") == "sell")
-    
-    confidence_dist = {"high": 0, "medium": 0, "low": 0}
-    total_confidence = 0
-    
-    for s in signals:
-        conf = s.get("aggregate_confidence", 0)
-        total_confidence += conf
-        if conf > 0.75:
-            confidence_dist["high"] += 1
-        elif conf > 0.5:
-            confidence_dist["medium"] += 1
-        else:
-            confidence_dist["low"] += 1
-    
-    return SignalHistory(
-        total_signals_24h=len(signals),
-        buy_signals=buy_count,
-        sell_signals=sell_count,
-        conversion_rate=buy_count / max(len(signals), 1),
-        avg_confidence=total_confidence / max(len(signals), 1),
-        confidence_distribution=confidence_dist,
-        top_signals=[SignalUpdate(**s) for s in signals[:10]]
-    )
+    openapi_schema["info"]["x-logo"] = {
+        "url": "https://fastapi.tiangolo.com/img/logo-margin/logo-teal.png"
+    }
 
-@app.get("/api/pnl", response_model=PnLMetric)
-async def get_pnl():
-    """Get P&L metrics (mock data for now)"""
-    # This would integrate with actual trading system
-    return PnLMetric(
-        realized_pnl=0,
-        unrealized_pnl=0,
-        total_return=0,
-        win_rate=0,
-        sharpe_ratio=0,
-        max_drawdown=0
-    )
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
 
-@app.get("/api/chart-data/{symbol}")
-async def get_chart_data(
-    symbol: str,
-    lookback_days: int = Query(30, ge=1, le=365)
-):
-    """Get OHLCV chart data for a symbol"""
-    if not price_fetcher:
-        raise HTTPException(status_code=503, detail="Price fetcher not ready")
-    
-    chart_data = await price_fetcher.get_chart_data(symbol, lookback_days)
-    if not chart_data:
-        raise HTTPException(status_code=404, detail=f"No chart data for {symbol}")
-    
-    return chart_data
+
+app.openapi = custom_openapi
+
 
 # ============================================================================
-# SIGNAL ENGINE ROUTES (register dynamically)
+# Error Handling
 # ============================================================================
 
-async def register_signal_routes():
-    """Register signal routes after signal_engine is initialized"""
-    if signal_engine and cache_manager:
-        signal_router = create_signal_routes(signal_engine, cache_manager)
-        app.include_router(signal_router)
-        
-        if telegram_bot:
-            telegram_router = create_telegram_webhook_routes(telegram_bot)
-            app.include_router(telegram_router)
-        
-        logger.info("Signal routes registered")
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Global exception handler"""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return {
+        "error": "Internal server error",
+        "detail": str(exc),
+    }
 
-# ============================================================================
-# WEBSOCKET ENDPOINTS
-# ============================================================================
-
-@app.websocket("/ws/prices")
-async def websocket_prices(websocket: WebSocket):
-    """WebSocket for real-time price updates"""
-    await websocket.accept()
-    active_price_clients.add(websocket)
-    logger.info("Price client connected", extra={"clients": len(active_price_clients)})
-    
-    try:
-        while True:
-            # Keep connection alive
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_text("pong")
-    except Exception as e:
-        logger.warning(f"Price WebSocket error: {e}")
-    finally:
-        active_price_clients.discard(websocket)
-        logger.info("Price client disconnected", extra={"clients": len(active_price_clients)})
-
-@app.websocket("/ws/signals")
-async def websocket_signals(websocket: WebSocket):
-    """WebSocket for real-time signal updates"""
-    await websocket.accept()
-    active_signal_clients.add(websocket)
-    logger.info("Signal client connected", extra={"clients": len(active_signal_clients)})
-    
-    try:
-        while True:
-            # Keep connection alive
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_text("pong")
-    except Exception as e:
-        logger.warning(f"Signal WebSocket error: {e}")
-    finally:
-        active_signal_clients.discard(websocket)
-        logger.info("Signal client disconnected", extra={"clients": len(active_signal_clients)})
-
-# ============================================================================
-# STATIC FILES & SPA ROUTING
-# ============================================================================
-
-# Serve React frontend
-frontend_dir = Path(__file__).parent.parent / "frontend" / "build"
-if frontend_dir.exists():
-    app.mount("/static", StaticFiles(directory=frontend_dir / "static"), name="static")
-
-@app.get("/")
-async def serve_frontend():
-    """Serve React SPA"""
-    index_file = frontend_dir / "index.html"
-    if index_file.exists():
-        return FileResponse(index_file)
-    return {"message": "Frontend not built yet"}
-
-@app.get("/{path:path}")
-async def serve_spa(path: str):
-    """Serve React SPA for all routes"""
-    index_file = frontend_dir / "index.html"
-    if index_file.exists():
-        return FileResponse(index_file)
-    return {"message": "Frontend not built yet"}
-
-# ============================================================================
-# UTILITY FUNCTIONS
-# ============================================================================
-
-async def load_watchlist() -> List[str]:
-    """Load watchlist from MEMORY.md"""
-    try:
-        memory_file = Path.home() / ".hermes" / "MEMORY.md"
-        if memory_file.exists():
-            content = memory_file.read_text()
-            # Parse watchlist symbols from markdown
-            symbols = []
-            for line in content.split("\n"):
-                if line.startswith("**") and line.endswith("**"):
-                    symbol = line.strip("*").split("(")[0].strip()
-                    if len(symbol) <= 5 and symbol.isupper():
-                        symbols.append(symbol)
-            return symbols
-    except Exception as e:
-        logger.error(f"Failed to load watchlist: {e}")
-    
-    # Default watchlist
-    return ["SMCI", "AMD", "PLTR", "INTC", "GLW"]
-
-# ============================================================================
-# MAIN
-# ============================================================================
 
 if __name__ == "__main__":
+    import uvicorn
+
     uvicorn.run(
         app,
-        host=settings.HOST,
-        port=settings.PORT,
-        log_config={
-            "version": 1,
-            "disable_existing_loggers": False,
-            "formatters": {
-                "default": {
-                    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-                },
-            },
-        }
+        host="0.0.0.0",
+        port=8000,
+        log_level="info",
     )

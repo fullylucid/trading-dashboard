@@ -1,0 +1,419 @@
+/* MarketStats Component Styles */
+
+.market-stats {
+  padding: 20px;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.market-error {
+  padding: 15px;
+  background: #fee;
+  color: #c00;
+  border-radius: 6px;
+  margin-bottom: 20px;
+}
+
+.stats-section {
+  margin-bottom: 30px;
+}
+
+.stats-section h3 {
+  margin: 0 0 15px 0;
+  font-size: 1.1rem;
+  color: #1a1a1a;
+  border-bottom: 2px solid #f0f0f0;
+  padding-bottom: 10px;
+}
+
+/* Indices Grid */
+.indices-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.index-card {
+  padding: 15px;
+  border-radius: 8px;
+  background: #f9f9f9;
+  border: 2px solid #e0e0e0;
+  transition: all 0.3s ease;
+}
+
+.index-card.positive {
+  background: #d4edda;
+  border-color: #28a745;
+}
+
+.index-card.negative {
+  background: #f8d7da;
+  border-color: #dc3545;
+}
+
+.index-card.neutral {
+  background: #f0f0f0;
+  border-color: #ccc;
+}
+
+.index-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.index-symbol {
+  font-weight: 600;
+  color: #1a1a1a;
+  font-size: 0.9rem;
+  margin-bottom: 5px;
+}
+
+.index-price {
+  font-size: 1.4rem;
+  font-weight: bold;
+  color: #1a1a1a;
+  font-family: monospace;
+}
+
+.index-change {
+  margin-top: 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.index-card.positive .index-change {
+  color: #155724;
+}
+
+.index-card.negative .index-change {
+  color: #721c24;
+}
+
+/* VIX Card */
+.vix-card {
+  padding: 20px;
+  border-radius: 8px;
+  background: #f9f9f9;
+  border: 2px solid #e0e0e0;
+  text-align: center;
+}
+
+.vix-card.rising {
+  background: #ffe6e6;
+  border-color: #ff6b6b;
+}
+
+.vix-card.falling {
+  background: #e6ffe6;
+  border-color: #51cf66;
+}
+
+.vix-label {
+  font-size: 0.9rem;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 10px;
+}
+
+.vix-value {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: #1a1a1a;
+  font-family: monospace;
+  margin-bottom: 10px;
+}
+
+.vix-status {
+  font-size: 0.9rem;
+  color: #666;
+  padding: 8px;
+  border-radius: 4px;
+  background: white;
+}
+
+/* Sector Performance */
+.sectors-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sector-item {
+  display: grid;
+  grid-template-columns: 150px 1fr 100px;
+  gap: 15px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 6px;
+  background: #f9f9f9;
+  transition: all 0.3s ease;
+}
+
+.sector-item.positive {
+  background: #d4edda;
+}
+
+.sector-item.negative {
+  background: #f8d7da;
+}
+
+.sector-item:hover {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.sector-name {
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.sector-metrics {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sector-value {
+  font-family: monospace;
+  color: #333;
+  font-weight: 500;
+}
+
+.sector-change {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.sector-item.positive .sector-change {
+  color: #155724;
+}
+
+.sector-item.negative .sector-change {
+  color: #721c24;
+}
+
+.sector-bar {
+  height: 4px;
+  background: #0066cc;
+  border-radius: 2px;
+}
+
+/* Market Breadth */
+.breadth-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.breadth-item {
+  padding: 15px;
+  background: #f9f9f9;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  text-align: center;
+}
+
+.breadth-label {
+  font-size: 0.85rem;
+  color: #666;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.breadth-value {
+  font-size: 1.5rem;
+  font-weight: bold;
+  font-family: monospace;
+  color: #1a1a1a;
+}
+
+.breadth-value.positive {
+  color: #28a745;
+}
+
+.breadth-value.negative {
+  color: #dc3545;
+}
+
+.breadth-visualization {
+  margin-top: 20px;
+}
+
+.breadth-bar {
+  display: flex;
+  height: 30px;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.breadth-segment {
+  transition: width 0.3s ease;
+}
+
+.breadth-segment.positive {
+  background: #28a745;
+}
+
+.breadth-segment.negative {
+  background: #dc3545;
+}
+
+.breadth-labels {
+  display: flex;
+  gap: 30px;
+  justify-content: center;
+}
+
+.label-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+}
+
+.color-box {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+}
+
+.color-box.positive {
+  background: #28a745;
+}
+
+.color-box.negative {
+  background: #dc3545;
+}
+
+/* Treasuries */
+.treasuries-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 15px;
+}
+
+.treasury-item {
+  padding: 15px;
+  background: #f9f9f9;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  text-align: center;
+}
+
+.treasury-period {
+  font-size: 0.85rem;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.treasury-yield {
+  font-size: 1.4rem;
+  font-weight: bold;
+  color: #1a1a1a;
+  font-family: monospace;
+  margin-bottom: 8px;
+}
+
+.treasury-change {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.treasury-change.positive {
+  color: #28a745;
+}
+
+.treasury-change.negative {
+  color: #dc3545;
+}
+
+/* Commodities */
+.commodities-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 15px;
+}
+
+.commodity-item {
+  padding: 15px;
+  background: #f9f9f9;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  transition: all 0.3s ease;
+}
+
+.commodity-item.positive {
+  background: #d4edda;
+  border-color: #28a745;
+}
+
+.commodity-item.negative {
+  background: #f8d7da;
+  border-color: #dc3545;
+}
+
+.commodity-name {
+  font-size: 0.9rem;
+  color: #666;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.commodity-price {
+  font-size: 1.3rem;
+  font-weight: bold;
+  color: #1a1a1a;
+  font-family: monospace;
+  margin-bottom: 8px;
+}
+
+.commodity-change {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.commodity-item.positive .commodity-change {
+  color: #155724;
+}
+
+.commodity-item.negative .commodity-change {
+  color: #721c24;
+}
+
+.last-update {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #e0e0e0;
+  font-size: 0.85rem;
+  color: #999;
+  text-align: right;
+}
+
+@media (max-width: 768px) {
+  .sector-item {
+    grid-template-columns: 1fr;
+  }
+
+  .sector-metrics {
+    justify-content: flex-start;
+    gap: 15px;
+  }
+
+  .treasuries-grid,
+  .commodities-grid,
+  .indices-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .breadth-labels {
+    flex-direction: column;
+    gap: 10px;
+  }
+}
