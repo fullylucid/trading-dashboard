@@ -27,7 +27,16 @@ try:
     HAS_SIGNAL_ROUTES = True
 except ImportError:
     HAS_SIGNAL_ROUTES = False
+    logger = logging.getLogger(__name__)
     logger.warning("Signal routes not available")
+
+try:
+    from portfolio_routes import portfolio_router
+    HAS_PORTFOLIO_ROUTES = True
+except ImportError:
+    HAS_PORTFOLIO_ROUTES = False
+    logger = logging.getLogger(__name__)
+    logger.warning("Portfolio routes not available")
 
 # Configure logging
 logging.basicConfig(
@@ -159,6 +168,9 @@ app.include_router(market_router)
 if HAS_SIGNAL_ROUTES:
     app.include_router(signal_router)
 
+if HAS_PORTFOLIO_ROUTES:
+    app.include_router(portfolio_router)
+
 
 # ============================================================================
 # Root Endpoints
@@ -178,6 +190,9 @@ async def root():
     
     if HAS_SIGNAL_ROUTES:
         endpoints["signals"] = "/api/signals"
+    
+    if HAS_PORTFOLIO_ROUTES:
+        endpoints["portfolio"] = "/api/portfolio"
     
     return {
         "title": "Trading Dashboard API",

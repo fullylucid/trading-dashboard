@@ -10,6 +10,7 @@
 
 import React, { useState, useEffect } from 'react';
 import './EnhancedDashboard.css';
+import PortfolioPanel from './PortfolioPanel';
 
 // Types
 interface Signal {
@@ -151,6 +152,7 @@ export const EnhancedDashboard: React.FC = () => {
                 
                 {/* Right Column: Research Panels */}
                 <div className="right-column">
+                    <PortfolioPanel />
                     <SectorPerformancePanel sectors={sectors} />
                     <EarningsCalendarPanel earnings={earnings} />
                 </div>
