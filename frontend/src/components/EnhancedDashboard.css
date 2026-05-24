@@ -1,0 +1,634 @@
+/* EnhancedDashboard.css - Professional trading dashboard styling */
+
+:root {
+    --primary-bg: #0f1419;
+    --secondary-bg: #1a1f2e;
+    --tertiary-bg: #252d3d;
+    --text-primary: #ffffff;
+    --text-secondary: #a0aec0;
+    --accent-primary: #00d4ff;
+    --accent-secondary: #ffa502;
+    --positive-color: #00ff41;
+    --negative-color: #ff4757;
+    --neutral-color: #9ca3af;
+    --border-color: #2d3748;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+.enhanced-dashboard {
+    background: var(--primary-bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 1rem;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.dashboard-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+}
+
+/* Header: Market Overview Panel */
+.market-overview-panel {
+    background: var(--secondary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    display: flex;
+    align-items: center;
+    gap: 2rem;
+    flex-wrap: wrap;
+}
+
+.market-status {
+    flex-shrink: 0;
+}
+
+.status-badge {
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.status-badge.open {
+    background: rgba(0, 255, 65, 0.1);
+    color: var(--positive-color);
+    border: 1px solid var(--positive-color);
+}
+
+.status-badge.closed {
+    background: rgba(100, 100, 100, 0.1);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.indices-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1rem;
+    flex: 1;
+}
+
+.index-card {
+    background: var(--tertiary-bg);
+    border-left: 3px solid var(--accent-primary);
+    padding: 1rem;
+    border-radius: 4px;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.index-card:hover {
+    transform: translateY(-2px);
+    border-left-color: var(--accent-secondary);
+}
+
+.index-card .symbol {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+.index-card .price {
+    font-size: 1.3rem;
+    font-weight: 600;
+    margin: 0.3rem 0;
+    color: var(--text-primary);
+}
+
+.index-card .change {
+    font-size: 0.9rem;
+}
+
+.index-card .change.positive {
+    color: var(--positive-color);
+}
+
+.index-card .change.negative {
+    color: var(--negative-color);
+}
+
+/* Main Content Grid */
+.dashboard-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+@media (max-width: 1200px) {
+    .dashboard-content {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Left Column */
+.left-column {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+/* Signal Feed */
+.signal-feed {
+    background: var(--secondary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.signal-feed h2 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    font-size: 1.3rem;
+    color: var(--text-primary);
+}
+
+.signals-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.signals-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.signals-list::-webkit-scrollbar-track {
+    background: var(--primary-bg);
+}
+
+.signals-list::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+
+.signal-card {
+    background: var(--tertiary-bg);
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--accent-primary);
+    border-radius: 4px;
+    padding: 1rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.signal-card:hover {
+    border-color: var(--accent-primary);
+    background: rgba(0, 212, 255, 0.05);
+    transform: translateX(4px);
+}
+
+.signal-card.selected {
+    border: 2px solid var(--accent-primary);
+    background: rgba(0, 212, 255, 0.1);
+    box-shadow: 0 0 15px rgba(0, 212, 255, 0.3);
+}
+
+.signal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.8rem;
+}
+
+.signal-header .ticker {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--accent-primary);
+}
+
+.score-badge {
+    background: rgba(0, 212, 255, 0.2);
+    color: var(--accent-primary);
+    padding: 0.3rem 0.7rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.signal-body {
+    margin-bottom: 0.8rem;
+}
+
+.catalyst {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    margin-bottom: 0.8rem;
+}
+
+.price-levels {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.5rem;
+    margin-bottom: 0.8rem;
+}
+
+.level {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+
+.level .label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+.level .value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.level .value.stop {
+    color: var(--negative-color);
+}
+
+.level .value.target {
+    color: var(--positive-color);
+}
+
+.risk-reward {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.8rem;
+}
+
+.score-bar {
+    height: 6px;
+    background: var(--border-color);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 0.8rem;
+}
+
+.bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+    width: 70%;
+    transition: width 0.3s ease;
+}
+
+.signal-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    border-top: 1px solid var(--border-color);
+    padding-top: 0.8rem;
+}
+
+.news-indicator {
+    color: var(--accent-secondary);
+}
+
+/* News Panel */
+.news-panel {
+    background: var(--secondary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.news-panel h3 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    font-size: 1.1rem;
+}
+
+.news-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.news-item {
+    background: var(--tertiary-bg);
+    border-left: 3px solid var(--border-color);
+    padding: 1rem;
+    border-radius: 4px;
+    transition: all 0.3s ease;
+}
+
+.news-item.sentiment-positive {
+    border-left-color: var(--positive-color);
+    background: rgba(0, 255, 65, 0.05);
+}
+
+.news-item.sentiment-negative {
+    border-left-color: var(--negative-color);
+    background: rgba(255, 71, 87, 0.05);
+}
+
+.news-item.sentiment-neutral {
+    border-left-color: var(--accent-secondary);
+    background: rgba(255, 165, 2, 0.05);
+}
+
+.news-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.news-item h4 {
+    margin: 0.5rem 0;
+    color: var(--text-primary);
+}
+
+.news-item p {
+    margin: 0.5rem 0;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.news-item a {
+    color: var(--accent-primary);
+    text-decoration: none;
+    font-size: 0.85rem;
+}
+
+.news-item a:hover {
+    text-decoration: underline;
+}
+
+/* Right Column */
+.right-column {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+/* Sector Performance */
+.sector-performance-panel {
+    background: var(--secondary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+}
+
+.sector-performance-panel h3 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+}
+
+.sectors-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1rem;
+}
+
+.sector-card {
+    background: var(--tertiary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 1rem;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.sector-card.outperform {
+    border: 2px solid var(--positive-color);
+    background: rgba(0, 255, 65, 0.1);
+}
+
+.sector-card.outperform:hover {
+    box-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
+}
+
+.sector-card.underperform {
+    border: 2px solid var(--negative-color);
+    background: rgba(255, 71, 87, 0.1);
+}
+
+.sector-card.underperform:hover {
+    box-shadow: 0 0 10px rgba(255, 71, 87, 0.3);
+}
+
+.sector-name {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.sector-change {
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+
+.sector-change.outperform {
+    color: var(--positive-color);
+}
+
+.sector-change.underperform {
+    color: var(--negative-color);
+}
+
+/* Earnings Calendar */
+.earnings-calendar-panel {
+    background: var(--secondary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+    flex: 1;
+}
+
+.earnings-calendar-panel h3 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+}
+
+.earnings-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.earnings-row {
+    display: grid;
+    grid-template-columns: 80px 120px 1fr;
+    gap: 1rem;
+    background: var(--tertiary-bg);
+    padding: 0.8rem;
+    border-radius: 4px;
+    border-left: 2px solid var(--accent-primary);
+    align-items: center;
+}
+
+.earnings-row .symbol {
+    font-weight: 600;
+    color: var(--accent-primary);
+}
+
+.earnings-row .date {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.earnings-row .estimates {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.85rem;
+}
+
+.earnings-row .estimates span {
+    color: var(--text-secondary);
+}
+
+/* Signal Detail Panel */
+.signal-detail-panel {
+    background: var(--secondary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 2rem;
+    margin-top: 2rem;
+}
+
+.signal-detail-panel h2 {
+    margin-top: 0;
+    margin-bottom: 1.5rem;
+    font-size: 1.3rem;
+    color: var(--accent-primary);
+}
+
+.detail-sections {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 2rem;
+}
+
+.detail-sections .section {
+    background: var(--tertiary-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 1.5rem;
+}
+
+.section h3 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    font-size: 1rem;
+}
+
+/* Scanner Breakdown */
+.scanner-breakdown {
+    /* Flex layout for scanner items */
+}
+
+.scanners-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+}
+
+.scanner-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.scanner-name {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-align: center;
+    text-transform: uppercase;
+}
+
+.scanner-weight {
+    width: 30px;
+    background: linear-gradient(180deg, var(--accent-primary), var(--accent-secondary));
+    border-radius: 2px;
+    min-height: 20px;
+}
+
+.scanner-value {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* Trading Levels Table */
+.trading-levels table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.trading-levels table tbody tr {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.trading-levels table td {
+    padding: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.trading-levels table td.value {
+    text-align: right;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.trading-levels table td.value.stop {
+    color: var(--negative-color);
+}
+
+.trading-levels table td.value.target {
+    color: var(--positive-color);
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--primary-bg);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-primary);
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.signal-card,
+.news-item,
+.sector-card,
+.earnings-row {
+    animation: fadeIn 0.3s ease;
+}
