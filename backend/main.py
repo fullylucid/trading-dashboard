@@ -22,6 +22,13 @@ from research_routes import (
     initialize_services,
 )
 
+try:
+    from signal_routes import signal_router
+    HAS_SIGNAL_ROUTES = True
+except ImportError:
+    HAS_SIGNAL_ROUTES = False
+    logger.warning("Signal routes not available")
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -149,6 +156,9 @@ app.include_router(research_router)
 app.include_router(earnings_router)
 app.include_router(market_router)
 
+if HAS_SIGNAL_ROUTES:
+    app.include_router(signal_router)
+
 
 # ============================================================================
 # Root Endpoints
@@ -157,17 +167,22 @@ app.include_router(market_router)
 @app.get("/")
 async def root():
     """Root endpoint - API overview"""
+    endpoints = {
+        "news": "/api/news",
+        "research": "/api/research",
+        "earnings": "/api/earnings",
+        "market": "/api/market",
+        "docs": "/docs",
+        "openapi": "/openapi.json",
+    }
+    
+    if HAS_SIGNAL_ROUTES:
+        endpoints["signals"] = "/api/signals"
+    
     return {
         "title": "Trading Dashboard API",
         "version": "1.0.0",
-        "endpoints": {
-            "news": "/api/news",
-            "research": "/api/research",
-            "earnings": "/api/earnings",
-            "market": "/api/market",
-            "docs": "/docs",
-            "openapi": "/openapi.json",
-        },
+        "endpoints": endpoints,
     }
 
 
