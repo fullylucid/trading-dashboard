@@ -1,22 +1,45 @@
-/* EarningsCalendar Component Styles */
+/* EarningsCalendar Component Styles - Cyberpunk Terminal Theme */
 
 .earnings-calendar {
-  background: white;
-  border-radius: 12px;
+  background: var(--bg-panel);
+  border-radius: 2px;
   padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--border);
+  position: relative;
+  font-family: var(--font-mono);
+}
+
+.earnings-calendar::before {
+  content: '▸';
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  color: var(--neon-green);
+  font-size: 12px;
+}
+
+@keyframes pulse-border {
+  0% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.2); }
+  50% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.4); }
+  100% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.2); }
+}
+
+.earnings-calendar {
+  animation: pulse-border 3s infinite;
 }
 
 .earnings-header {
   margin-bottom: 20px;
   padding-bottom: 15px;
-  border-bottom: 2px solid #f0f0f0;
+  border-bottom: 1px solid var(--border);
 }
 
 .earnings-header h2 {
   margin: 0 0 10px 0;
   font-size: 1.5rem;
-  color: #1a1a1a;
+  color: var(--neon-green);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
 }
 
 .earnings-tabs {
@@ -27,24 +50,30 @@
 
 .tab {
   padding: 10px 16px;
-  border: 2px solid #e0e0e0;
-  background: white;
-  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  border-radius: 2px;
   cursor: pointer;
   transition: all 0.3s ease;
   font-weight: 500;
-  color: #666;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.8rem;
 }
 
 .tab:hover:not(:disabled) {
-  border-color: #0066cc;
-  color: #0066cc;
+  border-color: var(--neon-green);
+  color: var(--neon-green);
+  box-shadow: var(--glow-green);
 }
 
 .tab.active {
-  background: #0066cc;
-  color: white;
-  border-color: #0066cc;
+  background: rgba(0, 255, 65, 0.1);
+  color: var(--neon-green);
+  border-color: var(--neon-green);
+  box-shadow: var(--glow-green);
 }
 
 .tab:disabled {
@@ -57,14 +86,15 @@
 .earnings-empty {
   padding: 40px 20px;
   text-align: center;
-  color: #666;
+  color: var(--text-secondary);
   font-size: 0.95rem;
 }
 
 .earnings-error {
-  background: #fee;
-  color: #c00;
-  border-radius: 6px;
+  background: rgba(255, 0, 60, 0.1);
+  color: var(--danger);
+  border-radius: 2px;
+  border: 1px solid var(--danger);
 }
 
 .earnings-table-wrapper {
@@ -76,23 +106,28 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
+  font-family: var(--font-mono);
 }
 
 .earnings-table thead {
-  background: #f9f9f9;
-  border-bottom: 2px solid #e0e0e0;
+  background: var(--bg-elevated);
+  border-bottom: 2px solid var(--neon-green);
 }
 
 .earnings-table th {
   padding: 12px;
   text-align: left;
   font-weight: 600;
-  color: #333;
+  color: var(--neon-green);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.8rem;
 }
 
 .earnings-table td {
   padding: 12px;
-  border-bottom: 1px solid #f0f0f0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
 }
 
 .earnings-table tbody tr {
@@ -100,18 +135,20 @@
 }
 
 .earnings-table tbody tr:hover {
-  background: #f9f9f9;
+  background: rgba(0, 255, 65, 0.05);
 }
 
 .symbol-cell {
-  color: #0066cc;
+  color: var(--neon-green);
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .estimate-cell,
 .actual-cell {
   text-align: right;
-  font-family: monospace;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .surprise-cell {
@@ -120,24 +157,28 @@
 
 .surprise-value {
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: 2px;
   font-weight: 600;
-  font-family: monospace;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .surprise-beat {
-  background: #d4edda;
-  color: #155724;
+  background: rgba(0, 255, 65, 0.1);
+  color: var(--neon-green);
+  border: 1px solid var(--neon-green);
 }
 
 .surprise-miss {
-  background: #f8d7da;
-  color: #721c24;
+  background: rgba(255, 0, 60, 0.1);
+  color: var(--danger);
+  border: 1px solid var(--danger);
 }
 
 .surprise-inline {
-  background: #fff3cd;
-  color: #856404;
+  background: rgba(255, 176, 0, 0.1);
+  color: var(--amber);
+  border: 1px solid var(--amber);
 }
 
 .status-cell {
@@ -147,33 +188,39 @@
 .status-badge {
   display: inline-block;
   padding: 6px 12px;
-  border-radius: 4px;
+  border-radius: 2px;
   font-size: 0.8rem;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
 }
 
 .status-badge.upcoming {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: rgba(0, 217, 255, 0.1);
+  color: var(--neon-cyan);
+  border: 1px solid var(--neon-cyan);
 }
 
 .status-badge.reported {
-  background: #f0f0f0;
-  color: #666;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
 }
 
 .status-badge.surprise {
-  background: #fff9c4;
-  color: #f57f17;
+  background: rgba(255, 176, 0, 0.1);
+  color: var(--amber);
+  border: 1px solid var(--amber);
 }
 
 .earnings-legend {
   display: flex;
   gap: 20px;
   padding: 15px;
-  background: #f9f9f9;
-  border-radius: 6px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
   font-size: 0.9rem;
+  border: 1px solid var(--border);
 }
 
 .legend-item {
@@ -185,19 +232,22 @@
 .legend-color {
   width: 16px;
   height: 16px;
-  border-radius: 3px;
+  border-radius: 2px;
 }
 
 .legend-color.beat {
-  background: #28a745;
+  background: var(--neon-green);
+  box-shadow: var(--glow-green);
 }
 
 .legend-color.miss {
-  background: #dc3545;
+  background: var(--danger);
+  box-shadow: 0 0 8px rgba(255, 0, 60, 0.4);
 }
 
 .legend-color.inline {
-  background: #ffc107;
+  background: var(--amber);
+  box-shadow: 0 0 8px rgba(255, 176, 0, 0.4);
 }
 
 @media (max-width: 768px) {

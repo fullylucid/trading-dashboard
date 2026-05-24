@@ -57,6 +57,18 @@ interface MarketOverview {
     market_time: 'open' | 'closed';
 }
 
+// Mock data for ticker tape
+const mockTickerData = [
+  { symbol: 'AAPL', price: 195.32, change: 2.1 },
+  { symbol: 'TSLA', price: 245.10, change: -0.8 },
+  { symbol: 'MSFT', price: 405.22, change: 1.5 },
+  { symbol: 'GOOGL', price: 175.75, change: 0.3 },
+  { symbol: 'AMZN', price: 180.45, change: -0.2 },
+  { symbol: 'NVDA', price: 950.75, change: 3.2 },
+  { symbol: 'META', price: 500.30, change: 1.8 },
+  { symbol: 'NFLX', price: 620.40, change: -0.5 },
+];
+
 // Main Dashboard Component
 export const EnhancedDashboard: React.FC = () => {
     const [signals, setSignals] = useState<Signal[]>([]);
@@ -133,6 +145,20 @@ export const EnhancedDashboard: React.FC = () => {
 
     return (
         <div className="enhanced-dashboard">
+            {/* Ticker Tape */}
+            <div className="ticker-tape-container">
+                <div className="ticker-content">
+                    {mockTickerData.map((item, index) => (
+                        <span 
+                            key={index} 
+                            className={`ticker-symbol ${item.change >= 0 ? 'up' : 'down'}`}
+                        >
+                            {item.symbol} {item.price.toFixed(2)} {item.change >= 0 ? '▲' : '▼'}{Math.abs(item.change).toFixed(1)}%
+                        </span>
+                    ))}
+                </div>
+            </div>
+            
             {/* Header: Market Overview */}
             <MarketOverviewPanel data={marketOverview} />
             
@@ -212,7 +238,7 @@ interface SignalFeedProps {
 const SignalFeed: React.FC<SignalFeedProps> = ({ signals, selectedSignal, onSelectSignal }) => {
     return (
         <div className="signal-feed">
-            <h2>🔍 Signal Feed</h2>
+            <h2 className="glitch" data-text="SIGNAL FEED">SIGNAL FEED</h2>
             <div className="signals-list">
                 {signals.slice(0, 10).map(signal => (
                     <div 
@@ -348,7 +374,7 @@ interface SignalDetailPanelProps {
 const SignalDetailPanel: React.FC<SignalDetailPanelProps> = ({ signal }) => {
     return (
         <div className="signal-detail-panel">
-            <h2>📊 {signal.symbol} - Detailed Analysis</h2>
+            <h2 className="glitch" data-text={`${signal.symbol} ANALYSIS`}>{signal.symbol} ANALYSIS</h2>
             
             <div className="detail-sections">
                 <div className="section scanner-breakdown">

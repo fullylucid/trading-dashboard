@@ -1,27 +1,50 @@
-/* ResearchPanel Component Styles */
+/* ResearchPanel Component Styles - Cyberpunk Terminal Theme */
 
 .research-panel {
-  background: white;
-  border-radius: 12px;
+  background: var(--bg-panel);
+  border-radius: 2px;
   padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--border);
+  position: relative;
+  font-family: var(--font-mono);
+}
+
+.research-panel::before {
+  content: '▸';
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  color: var(--neon-green);
+  font-size: 12px;
+}
+
+@keyframes pulse-border {
+  0% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.2); }
+  50% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.4); }
+  100% { box-shadow: 0 0 0 1px rgba(0, 255, 65, 0.2); }
+}
+
+.research-panel {
+  animation: pulse-border 3s infinite;
 }
 
 .research-header {
   margin-bottom: 20px;
   padding-bottom: 15px;
-  border-bottom: 2px solid #f0f0f0;
+  border-bottom: 1px solid var(--border);
 }
 
 .research-header h2 {
   margin: 0;
   font-size: 1.5rem;
-  color: #1a1a1a;
+  color: var(--neon-green);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
 }
 
 .research-symbol {
   margin: 5px 0 0 0;
-  color: #666;
+  color: var(--text-secondary);
   font-size: 0.95rem;
 }
 
@@ -29,47 +52,53 @@
   display: flex;
   gap: 10px;
   margin-bottom: 20px;
-  border-bottom: 2px solid #f0f0f0;
+  border-bottom: 1px solid var(--border);
 }
 
 .research-tabs .tab {
   padding: 12px 16px;
   border: none;
   background: none;
-  border-bottom: 3px solid transparent;
+  border-bottom: 2px solid transparent;
   cursor: pointer;
   transition: all 0.3s ease;
-  color: #666;
+  color: var(--text-secondary);
   font-weight: 500;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.8rem;
 }
 
 .research-tabs .tab:hover {
-  color: #0066cc;
+  color: var(--neon-green);
+  border-bottom-color: var(--neon-green);
 }
 
 .research-tabs .tab.active {
-  border-bottom-color: #0066cc;
-  color: #0066cc;
+  border-bottom-color: var(--neon-green);
+  color: var(--neon-green);
 }
 
 .research-error {
   padding: 15px;
-  background: #fee;
-  color: #c00;
-  border-radius: 6px;
+  background: rgba(255, 0, 60, 0.1);
+  color: var(--danger);
+  border-radius: 2px;
   margin-bottom: 20px;
+  border: 1px solid var(--danger);
 }
 
 .research-loading {
   padding: 40px 20px;
   text-align: center;
-  color: #666;
+  color: var(--text-secondary);
 }
 
 .research-empty {
   padding: 40px 20px;
   text-align: center;
-  color: #999;
+  color: var(--text-secondary);
   font-style: italic;
 }
 
@@ -80,8 +109,19 @@
 
 .summary-container {
   padding: 20px;
-  background: #f9f9f9;
-  border-radius: 8px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  position: relative;
+}
+
+.summary-container::before {
+  content: '▸';
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  color: var(--neon-green);
+  font-size: 12px;
 }
 
 .sentiment-badge {
@@ -89,25 +129,31 @@
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  border-radius: 8px;
+  border-radius: 2px;
   margin-bottom: 20px;
   font-weight: 600;
   font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border: 1px solid;
 }
 
 .sentiment-badge.bullish {
-  background: #d4edda;
-  color: #155724;
+  background: rgba(0, 255, 65, 0.1);
+  color: var(--neon-green);
+  border-color: var(--neon-green);
 }
 
 .sentiment-badge.bearish {
-  background: #f8d7da;
-  color: #721c24;
+  background: rgba(255, 0, 60, 0.1);
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .sentiment-badge.neutral {
-  background: #fff3cd;
-  color: #856404;
+  background: rgba(255, 176, 0, 0.1);
+  color: var(--amber);
+  border-color: var(--amber);
 }
 
 .sentiment-icon {
@@ -123,17 +169,19 @@
 .summary-container h3 {
   margin: 20px 0 15px 0;
   font-size: 1.2rem;
-  color: #1a1a1a;
+  color: var(--neon-green);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
 }
 
 .summary-text {
   line-height: 1.6;
-  color: #555;
+  color: var(--text-secondary);
   margin-bottom: 20px;
   padding: 15px;
-  background: white;
-  border-radius: 6px;
-  border-left: 4px solid #0066cc;
+  background: var(--bg-panel);
+  border-radius: 2px;
+  border-left: 4px solid var(--neon-green);
 }
 
 .key-points {
@@ -142,7 +190,10 @@
 
 .key-points h4 {
   margin: 0 0 10px 0;
-  color: #333;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.9rem;
 }
 
 .key-points ul {
@@ -153,7 +204,7 @@
 
 .key-points li {
   padding: 8px 0;
-  color: #555;
+  color: var(--text-secondary);
   position: relative;
   padding-left: 24px;
 }
@@ -162,14 +213,14 @@
   content: "▪";
   position: absolute;
   left: 0;
-  color: #0066cc;
+  color: var(--neon-green);
   font-weight: bold;
 }
 
 .generated-info {
   margin-top: 15px;
   font-size: 0.85rem;
-  color: #999;
+  color: var(--text-secondary);
   text-align: right;
 }
 
@@ -186,19 +237,32 @@
 
 .analysis-section {
   padding: 15px;
-  background: #f9f9f9;
-  border-radius: 8px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  position: relative;
+}
+
+.analysis-section::before {
+  content: '▸';
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  color: var(--neon-green);
+  font-size: 10px;
 }
 
 .analysis-section h4 {
   margin: 0 0 10px 0;
-  color: #333;
+  color: var(--neon-green);
   font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
 }
 
 .analysis-section p {
   margin: 0;
-  color: #555;
+  color: var(--text-secondary);
   font-size: 0.9rem;
   line-height: 1.5;
 }
@@ -212,7 +276,10 @@
 
 .analysis-lists h4 {
   margin: 0 0 10px 0;
-  color: #333;
+  color: var(--neon-green);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.9rem;
 }
 
 .analysis-lists ul {
@@ -223,7 +290,7 @@
 
 .analysis-lists li {
   padding: 6px 0;
-  color: #555;
+  color: var(--text-secondary);
   position: relative;
   padding-left: 24px;
 }
@@ -232,30 +299,36 @@
   content: "•";
   position: absolute;
   left: 0;
-  color: #0066cc;
+  color: var(--neon-cyan);
 }
 
 .overall-sentiment {
   grid-column: 1 / -1;
   padding: 15px;
-  border-radius: 8px;
+  border-radius: 2px;
   font-weight: 600;
   text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.9rem;
 }
 
 .overall-sentiment.positive {
-  background: #d4edda;
-  color: #155724;
+  background: rgba(0, 255, 65, 0.1);
+  color: var(--neon-green);
+  border: 1px solid var(--neon-green);
 }
 
 .overall-sentiment.negative {
-  background: #f8d7da;
-  color: #721c24;
+  background: rgba(255, 0, 60, 0.1);
+  color: var(--danger);
+  border: 1px solid var(--danger);
 }
 
 .overall-sentiment.neutral {
-  background: #fff3cd;
-  color: #856404;
+  background: rgba(255, 176, 0, 0.1);
+  color: var(--amber);
+  border: 1px solid var(--amber);
 }
 
 /* Sentiment View */
@@ -273,37 +346,44 @@
 
 .sentiment-result {
   padding: 30px;
-  border-radius: 12px;
+  border-radius: 2px;
   margin-bottom: 20px;
+  border: 1px solid;
 }
 
 .sentiment-result.bullish {
-  background: #d4edda;
-  color: #155724;
+  background: rgba(0, 255, 65, 0.1);
+  color: var(--neon-green);
+  border-color: var(--neon-green);
 }
 
 .sentiment-result.bearish {
-  background: #f8d7da;
-  color: #721c24;
+  background: rgba(255, 0, 60, 0.1);
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .sentiment-result.neutral {
-  background: #fff3cd;
-  color: #856404;
+  background: rgba(255, 176, 0, 0.1);
+  color: var(--amber);
+  border-color: var(--amber);
 }
 
 .sentiment-value {
   font-size: 3rem;
   margin-bottom: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .sentiment-label {
   font-size: 1.2rem;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
 }
 
 .sentiment-explanation {
-  color: #666;
+  color: var(--text-secondary);
   font-size: 0.95rem;
   line-height: 1.5;
   max-width: 500px;

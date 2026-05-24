@@ -1,11 +1,59 @@
-/* App Component Styles */
+/* App Component Styles - Cyberpunk Terminal Theme */
 
 .app {
-  background: #f5f5f5;
+  background: var(--bg-base);
   min-height: 100vh;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
 }
 
 /* Ensure proper layout structure */
 .app > * {
   width: 100%;
+}
+
+/* Ticker tape container */
+.ticker-tape-container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  background: rgba(10, 14, 10, 0.9);
+  border-bottom: 1px solid var(--neon-green);
+  z-index: 1000;
+  overflow: hidden;
+  box-shadow: 0 0 10px rgba(0, 255, 65, 0.3);
+}
+
+/* Ticker tape animation */
+@keyframes scroll-left {
+  0% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+.ticker-content {
+  display: inline-block;
+  padding-left: 100%;
+  animation: scroll-left 60s linear infinite;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.ticker-symbol {
+  display: inline-block;
+  margin-right: 20px;
+}
+
+.ticker-symbol.up {
+  color: var(--neon-green);
+}
+
+.ticker-symbol.down {
+  color: var(--danger);
+}
+
+/* Main content area - adjusted for ticker */
+.main-content {
+  padding-top: 40px;
 }
