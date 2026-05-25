@@ -14,6 +14,22 @@ interface Position {
   ask_price: number;
   pe_ratio?: number;
   market_cap?: string;
+  account_id?: string;
+  account_name?: string;
+}
+
+interface Account {
+  id: string;
+  name: string;
+  number: string;
+  institution: string;
+  total_value: number;
+  cash: number;
+  buying_power: number;
+  market_value: number;
+  positions_count: number;
+  is_margin_account: boolean;
+  type: string;
 }
 
 interface PortfolioData {
@@ -33,6 +49,7 @@ interface PortfolioData {
     };
   };
   timestamp: string;
+  accounts: Account[];
 }
 
 interface PortfolioPanelProps {
@@ -45,6 +62,7 @@ const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ onRefresh }) => {
   const [error, setError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'value' | 'gain_loss' | 'gain_loss_pct' | 'symbol'>('value');
   const [expandedSymbol, setExpandedSymbol] = useState<string | null>(null);
+  const [activeAccount, setActiveAccount] = useState<string | null>(null); // null means "ALL"
 
   const fetchPortfolio = async (forceRefresh = false) => {
     try {
@@ -106,7 +124,15 @@ const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ onRefresh }) => {
   }
 
   const summary = portfolio.summary;
-  const positions = portfolio.positions.sort((a, b) => {
+  const accounts = portfolio.accounts;
+  
+  // Filter positions based on active account
+  let positions = portfolio.positions;
+  if (activeAccount) {
+    positions = positions.filter(pos => pos.account_id === activeAccount);
+  }
+  
+  positions = positions.sort((a, b) => {
     switch (sortBy) {
       case 'value':
         return b.current_value - a.current_value;
@@ -148,6 +174,57 @@ const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ onRefresh }) => {
         </button>
       </div>
 
+      {/* Account Tabs */}
+      <div className="account-tabs">
+        <button 
+          className={`account-tab ${!activeAccount ? 'active' : ''}`}
+          onClick={() => setActiveAccount(null)}
+        >
+          ALL
+        </button>
+        {accounts.map(account => (
+          <button
+            key={account.id}
+            className={`account-tab ${activeAccount === account.id ? 'active' : ''}`}
+            onClick={() => setActiveAccount(account.id)}
+          >
+            {account.name}
+          </button>
+        ))}
+      </div>
+
+      {/* Accounts Summary Grid */}
+      <div className="accounts-grid">
+        {accounts.map(account => (
+          <div key={account.id} className="account-card">
+            <div className="account-header">
+              <div className="account-name">{account.name}</div>
+              <div className="account-number">****{account.number}</div>
+            </div>
+            <div className="account-stats">
+              <div className="stat-item">
+                <span>Net Equity</span>
+                <strong>{formatCurrency(account.total_value)}</strong>
+              </div>
+              <div className="stat-item">
+                <span>Market Value</span>
+                <strong>{formatCurrency(account.market_value)}</strong>
+              </div>
+              <div className="stat-item">
+                <span>{account.cash >= 0 ? 'Cash' : 'Margin Debit'}</span>
+                <strong className={account.cash < 0 ? 'margin-debit' : ''}>
+                  {formatCurrency(account.cash)}
+                </strong>
+              </div>
+              <div className="stat-item">
+                <span>Positions</span>
+                <strong>{account.positions_count}</strong>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
       {/* Summary Stats */}
       <div className="portfolio-summary">
         <div className="stat-card">
@@ -159,8 +236,10 @@ const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ onRefresh }) => {
           <span className="stat-value">{formatCurrency(portfolio.buying_power)}</span>
         </div>
         <div className="stat-card">
-          <span className="stat-label">Cash</span>
-          <span className="stat-value">{formatCurrency(portfolio.cash)}</span>
+          <span className="stat-label">{portfolio.cash >= 0 ? 'Cash' : 'Margin Debit'}</span>
+          <span className={`stat-value ${portfolio.cash < 0 ? 'margin-debit' : ''}`}>
+            {formatCurrency(portfolio.cash)}
+          </span>
         </div>
         <div className="stat-card">
           <span className="stat-label">Total Gain/Loss</span>
@@ -268,6 +347,12 @@ const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ onRefresh }) => {
                         <span className="value">{pos.market_cap}</span>
                       </div>
                     )}
+                    {pos.account_name && (
+                      <div className="detail-row">
+                        <span className="label">Account:</span>
+                        <span className="value">{pos.account_name}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -285,3 +370,4 @@ const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ onRefresh }) => {
 };
 
 export default PortfolioPanel;
+

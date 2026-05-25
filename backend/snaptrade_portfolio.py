@@ -348,19 +348,60 @@ class SnapTradePortfolio:
         buying_power = 0.0
         cash = 0.0
         positions: List[Dict[str, Any]] = []
+        accounts_list: List[Dict[str, Any]] = []
 
         # `holdings_payload` is a list, one entry per connected account.
         for acct_holdings in holdings_payload:
+            account_obj = acct_holdings.get("account") or {}
+            account_id = account_obj.get("id")
+            account_name = account_obj.get("name") or "Unknown Account"
+            account_number = account_obj.get("number", "")[-4:] if account_obj.get("number") else ""
+            institution_name = account_obj.get("institution_name") or "Unknown Broker"
+            meta = account_obj.get("meta") or {}
+            raw_type = (meta.get("type") or account_obj.get("raw_type") or "").upper()
+
+            # Determine account type
+            account_type = (
+                "crypto"
+                if raw_type == "DIGITALASSET"
+                or "crypto" in account_name.lower()
+                else "brokerage"
+            )
+            
             balances = acct_holdings.get("balances") or []
+            account_cash = 0.0
             for bal in balances:
                 amt = _as_float(bal.get("cash"))
+                account_cash += amt
                 cash += amt
                 buying_power += _as_float(bal.get("buying_power", amt))
 
             tot = acct_holdings.get("total_value") or {}
-            account_value += _as_float(tot.get("amount"))
+            account_total_value = _as_float(tot.get("amount"))
+            account_value += account_total_value
 
-            for pos in acct_holdings.get("positions") or []:
+            account_positions = acct_holdings.get("positions") or []
+            account_market_value = sum(
+                _as_float(pos.get("units") or pos.get("quantity")) * _as_float(pos.get("price"))
+                for pos in account_positions
+            )
+            
+            # Add account to accounts list
+            accounts_list.append({
+                "id": account_id,
+                "name": account_name,
+                "number": account_number,
+                "institution": institution_name,
+                "total_value": account_total_value,
+                "cash": account_cash,
+                "buying_power": _as_float(balances[0].get("buying_power")) if balances else 0.0,
+                "market_value": account_market_value,
+                "positions_count": len(account_positions),
+                "is_margin_account": account_cash < 0,
+                "type": account_type
+            })
+
+            for pos in account_positions:
                 sym_obj = pos.get("symbol") or {}
                 inner = sym_obj.get("symbol") or sym_obj  # SDK nests it
                 symbol = (
@@ -402,6 +443,9 @@ class SnapTradePortfolio:
                                 if isinstance(inner, dict) else None,
                     "type": (inner.get("type") or {}).get("description")
                             if isinstance(inner, dict) else None,
+                    # Add account info to position
+                    "account_id": account_id,
+                    "account_name": account_name,
                 })
 
         # Compute weights now that we have total market value
@@ -420,6 +464,7 @@ class SnapTradePortfolio:
             "watchlist": [],  # SnapTrade has no native watchlist
             "summary": summary,
             "timestamp": datetime.now().isoformat(),
+            "accounts": accounts_list,  # Add accounts list
         }
         self._set_cached("portfolio", result)
         return result
@@ -457,27 +502,37 @@ class SnapTradePortfolio:
 
     async def get_holdings_breakdown(self) -> Dict[str, Any]:
         """Asset-class / position-size breakdown."""
-        positions = await self.get_positions()
+        portfolio_data = await self.get_portfolio()
+        positions = portfolio_data.get("positions", [])
+        accounts = portfolio_data.get("accounts", [])
+        
         if not positions:
             return {
-                "total_value": 0,
+                "gross_market_value": 0,
+                "net_equity": 0,
+                "margin_debit": 0,
                 "positions_count": 0,
                 "largest_position_pct": 0,
                 "concentration": "N/A",
                 "by_asset_class": {},
             }
 
-        total = sum(p["current_value"] for p in positions)
+        gross_market_value = sum(p["current_value"] for p in positions)
+        net_equity = sum(acc["total_value"] for acc in accounts)
+        margin_debit = sum(abs(acc["cash"]) for acc in accounts if acc["cash"] < 0)
+        
         by_asset: Dict[str, float] = {}
         for p in positions:
             cls = p.get("type") or "Equity"
             by_asset[cls] = by_asset.get(cls, 0.0) + p["current_value"]
 
         return {
-            "total_value": total,
+            "gross_market_value": gross_market_value,
+            "net_equity": net_equity,
+            "margin_debit": margin_debit,
             "positions_count": len(positions),
             "by_asset_class": {
-                k: {"value": v, "pct": (v / total * 100) if total else 0}
+                k: {"value": v, "pct": (v / gross_market_value * 100) if gross_market_value else 0}
                 for k, v in by_asset.items()
             },
         }
@@ -614,3 +669,4 @@ async def clear_portfolio_cache() -> None:
     global _portfolio_instance
     if _portfolio_instance is not None:
         _portfolio_instance.clear_cache()
+

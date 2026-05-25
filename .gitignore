@@ -1,15 +1,19 @@
-backend/.venv/
-backend/tests/__pycache__/
-*.pyc
-__pycache__/
-
-# Node
-node_modules/
-frontend/node_modules/
-frontend/dist/
-.DS_Store
-*.log
 
 # Env
+# Node
+*.log
+*.pyc
+.DS_Store
 .env
 .env.local
+.pytest_cache/
+.venv/
+HYDRA_TASK.md
+__pycache__/
+backend/.venv/
+backend/tests/__pycache__/
+frontend/dist/
+frontend/node_modules/
+hydra_response.md
+node_modules
+node_modules/

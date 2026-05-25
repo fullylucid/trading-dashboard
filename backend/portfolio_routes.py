@@ -62,6 +62,9 @@ async def get_portfolio_summary() -> Dict[str, Any]:
             raise HTTPException(status_code=500, detail=data["error"])
         
         summary = data.get("summary", {})
+        accounts = data.get("accounts", [])
+        margin_debit = sum(abs(acc["cash"]) for acc in accounts if acc["cash"] < 0)
+        gross_market_value = sum(acc["market_value"] for acc in accounts)
         
         return {
             "total_value": data.get("account_value", 0),
@@ -72,6 +75,8 @@ async def get_portfolio_summary() -> Dict[str, Any]:
             "total_gain_loss_pct": summary.get("total_gain_loss_pct", 0),
             "top_position": summary.get("top_position"),
             "timestamp": data.get("timestamp"),
+            "margin_debit": margin_debit,
+            "gross_market_value": gross_market_value,
         }
     except HTTPException:
         raise
@@ -206,57 +211,22 @@ async def get_holdings_breakdown() -> Dict[str, Any]:
     """
     try:
         portfolio = await get_portfolio_instance()
-        data = await portfolio.get_portfolio()
+        breakdown_data = await portfolio.get_holdings_breakdown()
         
-        if "error" in data:
-            raise HTTPException(status_code=500, detail=data["error"])
+        if "error" in breakdown_data:
+            raise HTTPException(status_code=500, detail=breakdown_data["error"])
         
-        positions = data.get("positions", [])
-        
-        if not positions:
-            return {
-                "total_value": 0,
-                "positions_count": 0,
-                "largest_position_pct": 0,
-                "concentration": "N/A",
-            }
-        
-        total_value = sum(p["current_value"] for p in positions)
-        largest_position = max(p["current_value"] for p in positions) if positions else 0
-        largest_position_pct = (largest_position / total_value * 100) if total_value > 0 else 0
-        
-        # Determine concentration level
-        if largest_position_pct > 50:
-            concentration = "HIGHLY CONCENTRATED"
-        elif largest_position_pct > 30:
-            concentration = "CONCENTRATED"
-        elif largest_position_pct > 20:
-            concentration = "MODERATE"
-        else:
-            concentration = "DIVERSIFIED"
-        
-        # Calculate position sizes
-        position_sizes = {}
-        for pos in positions:
-            pct = (pos["current_value"] / total_value * 100) if total_value > 0 else 0
-            if pct >= 10:
-                size_category = "LARGE (>10%)"
-            elif pct >= 5:
-                size_category = "MEDIUM (5-10%)"
-            else:
-                size_category = "SMALL (<5%)"
-            
-            if size_category not in position_sizes:
-                position_sizes[size_category] = 0
-            position_sizes[size_category] += 1
-        
+        # Backward compatibility: keep total_value as net_equity
         return {
-            "total_value": total_value,
-            "positions_count": len(positions),
-            "largest_position_pct": round(largest_position_pct, 2),
-            "largest_position_symbol": positions[0]["symbol"],
-            "concentration": concentration,
-            "position_sizes": position_sizes,
+            "total_value": breakdown_data.get("net_equity", 0),
+            "gross_market_value": breakdown_data.get("gross_market_value", 0),
+            "net_equity": breakdown_data.get("net_equity", 0),
+            "margin_debit": breakdown_data.get("margin_debit", 0),
+            "positions_count": breakdown_data.get("positions_count", 0),
+            "largest_position_pct": breakdown_data.get("largest_position_pct", 0),
+            "largest_position_symbol": breakdown_data.get("largest_position_symbol", ""),
+            "concentration": breakdown_data.get("concentration", "N/A"),
+            "position_sizes": breakdown_data.get("position_sizes", {}),
         }
     except Exception as e:
         logger.error(f"Error calculating holdings breakdown: {e}")
@@ -304,3 +274,20 @@ async def get_connect_url(broker: Optional[str] = Query(None, description="Optio
     except Exception as e:
         logger.error(f"Error generating connect URL: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@portfolio_router.get("/accounts")
+async def get_accounts() -> List[Dict[str, Any]]:
+    """Get list of connected accounts with their metadata"""
+    try:
+        portfolio = await get_portfolio_instance()
+        data = await portfolio.get_portfolio()
+        
+        if "error" in data:
+            raise HTTPException(status_code=500, detail=data["error"])
+        
+        return data.get("accounts", [])
+    except Exception as e:
+        logger.error(f"Error fetching accounts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
