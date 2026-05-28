@@ -185,9 +185,12 @@ def create_signal_routes(signal_engine, cache_manager):
                 name=symbol.upper(),
                 category=SignalCategory.MOMENTUM,
                 action=SignalAction[action.upper()] if action.upper() in ["BUY", "SELL", "HOLD"] else SignalAction.BUY,
-                score=score,
+                score=int(score),
                 strength=SignalStrength.STRONG if score >= 70 else SignalStrength.MODERATE,
                 current_price=0.0,
+                price_change_percent=0.0,
+                volume=0.0,
+                avg_volume=0.0,
                 catalyst="Hermes-enhanced signal via trading-dashboard",
             )
 
