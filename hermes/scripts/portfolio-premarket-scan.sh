@@ -13,7 +13,7 @@ set -uo pipefail
 # --- config ---
 API_BASE="${API_BASE:-https://shaptech-3p3qo.ondigitalocean.app}"
 TOP_N="${TOP_N:-15}"
-INCLUDE_THESIS="${INCLUDE_THESIS:-false}"
+INCLUDE_THESIS="${INCLUDE_THESIS:-true}"
 MAX_POLLS="${MAX_POLLS:-40}"   # 40 * 5s = 200s max wait
 SLEEP_SEC="${SLEEP_SEC:-5}"
 
@@ -58,7 +58,7 @@ log "=== pre-market scan start ==="
 log "API_BASE=${API_BASE} top_n=${TOP_N} include_thesis=${INCLUDE_THESIS}"
 
 # --- 1. POST scan ---
-SCAN_RESP=$(curl -sS -X POST -m 30 \
+SCAN_RESP=$(curl -sS -X POST -m 120 \
     "${API_BASE}/api/portfolio/scan?top_n=${TOP_N}&include_thesis=${INCLUDE_THESIS}" \
     2>>"${LOG_FILE}" || echo "")
 log "scan POST: ${SCAN_RESP:0:300}"
@@ -138,10 +138,31 @@ done < "${SIDECAR}"
 log "buys=[${BUYS_CSV}] sells=[${SELLS_CSV}] pv=${PORTFOLIO_VALUE}"
 
 # --- 4. Narrative via kimi-k2.6:cloud (Ollama Cloud) ---
+# Pull top-buy theses from final JSON to feed kimi.
+THESES_BLOCK=$(python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+buys = (d.get("result") or {}).get("top_buys") or []
+parts = []
+for b in buys[:5]:
+    sym = b.get("symbol", "?")
+    th = (b.get("thesis_markdown") or "").strip()
+    if th:
+        parts.append(f"=== {sym} ===\n{th}")
+print("\n\n".join(parts))
+' "${FINAL_JSON_PATH}" 2>>"${LOG_FILE}" || echo "")
+log "theses block chars=${#THESES_BLOCK}"
+
 NARRATIVE=""
 if [[ -n "${OLLAMA_API_KEY:-}" ]]; then
-    SYS_MSG="You are Jeremy Lefebvre / 1000xstocks-style market analyst. Reply with EXACTLY ONE punchy sentence, no preamble, no quotes, max 140 chars."
-    USR_MSG="Pre-market portfolio summary. Buys: ${BUYS_CSV}. Sells/trims: ${SELLS_CSV}. Portfolio value: ${PORTFOLIO_VALUE}. One line only."
+    SYS_MSG="You are Jeremy Lefebvre / 1000xstocks-style portfolio narrator. Write a short, punchy, decisive pre-market briefing (3–5 sentences, max ~600 chars total). Reference each top-buy ticker with a one-line take grounded in the supplied thesis (catalyst, edge, or risk). Mention trims/sells in one closing line. No preamble, no headers, no bullet points, no quotes — just flowing prose."
+    USR_MSG="Pre-market portfolio summary.
+Buys: ${BUYS_CSV}
+Sells/trims: ${SELLS_CSV}
+Portfolio value: ${PORTFOLIO_VALUE}
+
+Top-buy theses (use these for the per-ticker takes):
+${THESES_BLOCK}"
     PAYLOAD=$(python3 -c '
 import json, sys
 print(json.dumps({

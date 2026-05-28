@@ -7,9 +7,37 @@ Usage:
 Prints the formatted message to stdout. Reads the scan job JSON from disk
 (avoids bash quoting hell with multi-KB JSON blobs).
 """
-import json, sys, datetime, zoneinfo
+import json, sys, datetime, zoneinfo, re
 
-def fmt_items(items, n=3):
+def _thesis_snippet(md: str, limit: int = 120) -> str:
+    """Strip markdown headers/bullets, return first sentence-ish chunk."""
+    if not md:
+        return ""
+    text = md.strip()
+    # drop fenced code
+    text = re.sub(r"```.*?```", " ", text, flags=re.S)
+    # drop headers, list markers, blockquotes, emphasis
+    lines = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        s = re.sub(r"^#+\s*", "", s)
+        s = re.sub(r"^[-*+]\s+", "", s)
+        s = re.sub(r"^>\s*", "", s)
+        s = re.sub(r"\*\*|__|`", "", s)
+        # skip pure label lines like "Thesis:" with nothing after
+        if s.lower().rstrip(":") in {"thesis", "summary", "tldr", "tl;dr"}:
+            continue
+        lines.append(s)
+    flat = " ".join(lines)
+    flat = re.sub(r"\s+", " ", flat).strip()
+    if len(flat) <= limit:
+        return flat
+    cut = flat[:limit].rsplit(" ", 1)[0]
+    return cut + "…"
+
+def fmt_items(items, n=3, with_thesis=False):
     lines, csv = [], []
     for it in (items or [])[:n]:
         sym = it.get("symbol", "?")
@@ -19,6 +47,10 @@ def fmt_items(items, n=3):
         except Exception:
             sc_f = 0.0
         lines.append(f"• {sym}  {sc_f:.2f}")
+        if with_thesis:
+            snip = _thesis_snippet(it.get("thesis_markdown") or "")
+            if snip:
+                lines.append(f"   _{snip}_")
         csv.append(sym)
     return ("\n".join(lines) or "—"), (", ".join(csv) or "—")
 
@@ -43,7 +75,7 @@ def main():
 
     buys = result.get("top_buys") or result.get("buys") or []
     sells = result.get("top_sells") or result.get("sells") or []
-    bblock, bcsv = fmt_items(buys)
+    bblock, bcsv = fmt_items(buys, with_thesis=True)
     sblock, scsv = fmt_items(sells)
 
     if not narrative:

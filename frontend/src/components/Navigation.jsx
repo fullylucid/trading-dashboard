@@ -24,6 +24,9 @@ function Navigation({ isConnected }) {
               <Link to="/portal" className="text-gray-300 hover:text-white transition">
                 Hermes Portal
               </Link>
+              <Link to="/portfolio-scan" className="text-gray-300 hover:text-white transition">
+                📊 Portfolio Scan
+              </Link>
             </div>
           </div>
 

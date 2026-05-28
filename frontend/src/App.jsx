@@ -9,6 +9,7 @@ import Dashboard from './pages/Dashboard';
 import ChartView from './pages/ChartView';
 import SignalHistory from './pages/SignalHistory';
 import HermesPortal from './pages/HermesPortal';
+import PortfolioScan from './pages/PortfolioScan';
 
 // Store
 import useStore from './store/useStore';
@@ -88,6 +89,7 @@ function App() {
           <Route path="/chart/:symbol" element={<ChartView />} />
           <Route path="/signals" element={<SignalHistory />} />
           <Route path="/portal" element={<HermesPortal />} />
+          <Route path="/portfolio-scan" element={<PortfolioScan />} />
         </Routes>
       </div>
     </Router>

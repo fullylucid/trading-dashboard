@@ -15,6 +15,7 @@ Public API:
         .get_sell_signals() → list of strong_sell signals
         .get_buy_signals() → list of strong_buy signals
 """
+import math
 import sys
 from datetime import datetime
 from typing import Optional, Dict, List, Tuple
@@ -113,19 +114,14 @@ class EnhancedSignalEngine:
         x_base = self.narrative_projection.get('x_bagger_base', 1.0)
         x_bull = self.narrative_projection.get('x_bagger_bull', 1.0)
 
-        if x_base >= 3.0:
-            score += 2.5
-            reason_parts.append('3x_base')
-        elif x_base >= 2.0:
-            score += 1.5
-            reason_parts.append('2x_base')
-        elif x_base < 1.2:
-            score -= 1.5
-            reason_parts.append('overvalued_story')
+        # Continuous: x_base contributes via tanh centered at 1.5x
+        base_delta = 2.5 * math.tanh((x_base - 1.5) / 1.0)
+        # x_bull contributes via tanh centered at 5x
+        bull_delta = 1.5 * math.tanh((x_bull - 5.0) / 5.0)
+        score += base_delta + bull_delta
 
-        if x_bull >= 10.0:
-            score += 1.5
-            reason_parts.append('10x_bull')
+        reason_parts.append(f'x_base={x_base:.2f}({base_delta:+.2f})')
+        reason_parts.append(f'x_bull={x_bull:.2f}({bull_delta:+.2f})')
 
         score = max(0.0, min(10.0, score))
         reason = '+'.join(reason_parts) if reason_parts else 'baseline'
@@ -139,27 +135,30 @@ class EnhancedSignalEngine:
         """
         score = 5.0  # Neutral baseline
         reason_parts = []
-        
-        # Bearish signals (momentum_trim / secular_top)
-        if self.peak_signal and self.peak_signal.get('confidence', 0) >= 6:
-            conf = self.peak_signal['confidence']
-            score += min(3.0, conf * 0.3)  # Peak signal adds up to 3
-            reason_parts.append(f"peak({conf:.1f})")
-        
-        if self.top_signal and self.top_signal.get('confidence', 0) >= 6:
-            conf = self.top_signal['confidence']
-            score += min(2.5, conf * 0.25)  # Secular top adds up to 2.5
-            reason_parts.append(f"top({conf:.1f})")
-        
-        # Bullish signals (trough)
-        if self.trough_signal and self.trough_signal.get('confidence', 0) >= 5:
-            conf = self.trough_signal['confidence']
-            # Bullish reduces bearish score
-            score = max(0, score - min(2.0, (10 - conf) * 0.2))
-            reason_parts.append(f"trough({conf:.1f})")
-        
+
+        # Bearish signals (momentum_trim / secular_top): continuous via (conf - 5)
+        if self.peak_signal:
+            conf = self.peak_signal.get('confidence', 0) or 0
+            delta = (conf - 5.0) * 0.30
+            score += delta
+            reason_parts.append(f"peak({conf:.1f},{delta:+.2f})")
+
+        if self.top_signal:
+            conf = self.top_signal.get('confidence', 0) or 0
+            delta = (conf - 5.0) * 0.25
+            score += delta
+            reason_parts.append(f"top({conf:.1f},{delta:+.2f})")
+
+        # Bullish signal (trough): reduces score continuously
+        if self.trough_signal:
+            conf = self.trough_signal.get('confidence', 0) or 0
+            delta = (conf - 5.0) * 0.20
+            score -= delta
+            reason_parts.append(f"trough({conf:.1f},-{delta:+.2f})")
+
+        score = max(0.0, min(10.0, score))
         reason = '+'.join(reason_parts) if reason_parts else 'baseline'
-        return round(min(10.0, score), 2), reason
+        return round(score, 2), reason
     
     def _calculate_projection_score(self) -> Tuple[float, str]:
         """Calculate projection score (0-10) from DCF targets.
@@ -180,36 +179,19 @@ class EnhancedSignalEngine:
         bear = self.projection.get('bear', current)
         base = self.projection.get('base', current)
         bull = self.projection.get('bull', current)
-        
-        # Bearish scenario: bear target is significantly below current
+
+        # Continuous bear contribution: tanh-scaled by downside magnitude
         bear_downside = (bear - current) / current if current > 0 else 0
-        if bear_downside < -0.20:  # >20% downside
-            score += 2.5
-            reason_parts.append(f'bear_-{abs(bear_downside)*100:.0f}%')
-        elif bear_downside < -0.10:  # >10% downside
-            score += 1.5
-            reason_parts.append(f'bear_-{abs(bear_downside)*100:.0f}%')
-        elif bear_downside < 0:  # Any downside
-            score += 0.5
-            reason_parts.append('bear_down')
-        
-        # Bullish scenario: bull target significantly above current
+        bear_delta = 5.0 * math.tanh(-bear_downside / 0.15)
+        score += bear_delta
+        reason_parts.append(f'bear={bear_downside*100:+.1f}%({bear_delta:+.2f})')
+
+        # Continuous bull contribution: tanh-scaled by upside magnitude (reduces score)
         bull_upside = (bull - current) / current if current > 0 else 0
-        if bull_upside > 0.30:  # >30% upside
-            score = max(0, score - 3.0)
-            reason_parts.append(f'bull_+{bull_upside*100:.0f}%')
-        elif bull_upside > 0.15:  # >15% upside
-            score = max(0, score - 2.0)
-            reason_parts.append(f'bull_+{bull_upside*100:.0f}%')
-        elif bull_upside > 0:  # Any upside
-            score = max(0, score - 1.0)
-            reason_parts.append('bull_up')
-        
-        # Base case judgment
-        base_deviation = abs(base - current) / current if current > 0 else 0
-        if base_deviation < 0.05:  # Within 5% = fair value
-            pass  # No adjustment
-        
+        bull_delta = 5.0 * math.tanh(bull_upside / 0.20)
+        score -= bull_delta
+        reason_parts.append(f'bull={bull_upside*100:+.1f}%(-{bull_delta:+.2f})')
+
         reason = '+'.join(reason_parts) if reason_parts else 'neutral'
         return round(min(10.0, max(0.0, score)), 2), reason
     
