@@ -12,6 +12,8 @@ from typing import Optional, List, Dict, Any, Tuple
 import asyncio
 import logging
 import re
+import time
+import uuid
 from datetime import datetime, timedelta
 
 from snaptrade_portfolio import get_portfolio_instance, clear_portfolio_cache
@@ -341,6 +343,19 @@ async def scan_portfolio(
     Bulk deep-dive scan across every equity ticker in the connected
     SnapTrade portfolio. Returns ranked summary plus optional thesis on
     the top 5 names.
+
+    NOTE: On DigitalOcean App Platform this endpoint can hit the ~75s
+    gateway timeout for larger portfolios. Prefer the background job
+    pattern: POST /api/portfolio/scan then poll GET /api/portfolio/scan/{job_id}.
+    """
+    return await _execute_scan(top_n=top_n, include_thesis=include_thesis, refresh=refresh)
+
+
+async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool) -> Dict[str, Any]:
+    """Internal coroutine that performs the full portfolio scan.
+
+    Extracted so it can be reused by both the synchronous GET endpoint
+    and the background job runner.
     """
     cache_key = (top_n, include_thesis)
     now = datetime.now()
@@ -469,3 +484,77 @@ async def scan_portfolio(
 
     _SCAN_CACHE[cache_key] = (now, payload)
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Background job pattern — bypass DigitalOcean App Platform's ~75s gateway
+# timeout. Clients POST to /scan to enqueue, then poll GET /scan/{job_id}.
+# ---------------------------------------------------------------------------
+
+_scan_jobs: Dict[str, Dict[str, Any]] = {}
+_JOB_TTL = 30 * 60  # 30 minutes
+_jobs_lock = asyncio.Lock()
+
+
+def _gc_jobs() -> None:
+    """Drop jobs older than _JOB_TTL seconds."""
+    now = time.time()
+    expired = [jid for jid, j in _scan_jobs.items() if now - j["created_at"] > _JOB_TTL]
+    for jid in expired:
+        _scan_jobs.pop(jid, None)
+
+
+async def _run_scan_job(job_id: str, top_n: int, include_thesis: bool, refresh: bool) -> None:
+    """Background runner — drives _execute_scan and updates the job record."""
+    _gc_jobs()
+    job = _scan_jobs.get(job_id)
+    if not job:
+        return
+    job["status"] = "running"
+    job["started_at"] = time.time()
+    try:
+        result = await _execute_scan(top_n=top_n, include_thesis=include_thesis, refresh=refresh)
+        job["result"] = result
+        job["status"] = "complete"
+        job["completed_at"] = time.time()
+        scanned = result.get("scanned", result.get("tickers_scanned", 0))
+        job["progress"] = {"scanned": scanned, "total": scanned}
+    except Exception as e:  # noqa: BLE001
+        job["status"] = "error"
+        job["error"] = f"{type(e).__name__}: {e}"
+        job["completed_at"] = time.time()
+
+
+@portfolio_router.post("/scan", status_code=202)
+async def start_scan_job(
+    top_n: int = Query(10, ge=1, le=100),
+    include_thesis: bool = Query(False),
+    refresh: bool = Query(False),
+) -> Dict[str, Any]:
+    """Enqueue a portfolio scan and return a job_id immediately (HTTP 202).
+
+    Poll GET /api/portfolio/scan/{job_id} for status + results.
+    """
+    _gc_jobs()
+    job_id = str(uuid.uuid4())
+    _scan_jobs[job_id] = {
+        "job_id": job_id,
+        "status": "queued",
+        "created_at": time.time(),
+        "params": {"top_n": top_n, "include_thesis": include_thesis, "refresh": refresh},
+        "result": None,
+        "error": None,
+        "progress": {"scanned": 0, "total": 0},
+    }
+    asyncio.create_task(_run_scan_job(job_id, top_n, include_thesis, refresh))
+    return {"job_id": job_id, "status": "queued", "message": "Scan started"}
+
+
+@portfolio_router.get("/scan/{job_id}")
+async def get_scan_job(job_id: str) -> Dict[str, Any]:
+    """Return the current status (and result, if complete) of a scan job."""
+    _gc_jobs()
+    job = _scan_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Scan job {job_id} not found")
+    return job
