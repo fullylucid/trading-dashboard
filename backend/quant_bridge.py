@@ -14,6 +14,11 @@ import numpy as np
 from cache_manager import CacheManager
 from quant_toolkit import QuantToolkit
 
+# Hermes signal integration
+from hermes_signals.models import Signal, SignalCategory, SignalAction, SignalStrength
+from hermes_signals.formatter import SignalFormatter
+from hermes_signals.engine import SignalEngine
+
 
 class QuantSignalBridge:
     """Call QuantToolkit methods in a thread pool to generate signals."""
@@ -33,6 +38,10 @@ class QuantSignalBridge:
         self.regime_cache: Optional[Dict] = None
         self.regime_cache_time: Optional[datetime] = None
         self.regime_cache_ttl = 300  # 5 minutes
+
+        # Hermes signal engine
+        self.hermes_engine = SignalEngine()
+        self.hermes_formatter = SignalFormatter()
 
     def _load_toolkit(self) -> None:
         """Instantiate QuantToolkit (lazy, idempotent)."""
@@ -238,6 +247,28 @@ class QuantSignalBridge:
 
         # No real prices supplied → don't make up data; return default.
         if not prices or len(prices) < 60:
+
+    def create_hermes_signal(self, symbol: str, quant_result: Dict) -> Optional[Signal]:
+        """Convert a quant toolkit result into a rich Hermes Signal."""
+        try:
+            score = quant_result.get("aggregate_confidence", 50)
+            action = SignalAction.BUY if quant_result.get("signal_type") == "buy" else \
+                     SignalAction.SELL if quant_result.get("signal_type") == "sell" else SignalAction.HOLD
+
+            signal = self.hermes_engine.create_signal(
+                ticker=symbol,
+                name=symbol,
+                category=SignalCategory.MOMENTUM,
+                action=action,
+                score=score,
+                strength=SignalStrength.STRONG if score > 70 else SignalStrength.MODERATE,
+                current_price=quant_result.get("current_price", 0),
+                catalyst=quant_result.get("trigger_reason", ""),
+            )
+            return signal
+        except Exception as e:
+            self.logger.error(f"Hermes signal creation failed for {symbol}: {e}")
+            return None
             return self._default_regime()
 
         try:
