@@ -15,8 +15,12 @@ Routers (paths match the frontend client in src/services/):
 from datetime import datetime
 import logging
 from typing import Optional
+import sys
 
 from fastapi import APIRouter, HTTPException, Query
+
+# Add hermes to path for Charlotte Phase 2
+sys.path.insert(0, '/tmp/trading-dashboard/hermes')
 
 logger = logging.getLogger(__name__)
 
@@ -501,3 +505,91 @@ async def research_market_overview_alias():
 @research_router.get("/market/sectors")
 async def research_market_sectors_alias():
     return await get_sector_performance()
+
+
+# ---------------------------------------------------------------------------
+# Charlotte Phase 2 — Projections, Charts, and Signals (NEW)
+# ---------------------------------------------------------------------------
+
+@research_router.get("/projections/{symbol}")
+async def get_projections(symbol: str):
+    """Get DCF projections + charts + merged signals for a symbol.
+    
+    Returns:
+        Dict with projections, Plotly charts, and signal analysis.
+    """
+    try:
+        from charlotte.agents.charlotte_crew import run_full_charlotte
+        
+        result = run_full_charlotte(symbol)
+        return {
+            'symbol': symbol.upper(),
+            'projections': result.get('projections'),
+            'charts': result.get('charts'),
+            'signal': result.get('signal'),
+            'overall_status': result.get('overall_status'),
+            'timestamp': datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error("Projections error for %s: %s", symbol, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@research_router.get("/charts/{symbol}")
+async def get_charts(symbol: str):
+    """Get Plotly JSON charts for a symbol (revenue waterfall, price paths, sensitivity).
+    
+    Returns:
+        Dict with four chart objects (all Plotly JSON format).
+    """
+    try:
+        from charlotte.projections import DCFProjector
+        from charlotte.visualizer import PlotlyChartBuilder
+        
+        projector = DCFProjector(symbol)
+        builder = PlotlyChartBuilder(projector)
+        
+        return builder.get_all_charts()
+    except Exception as e:
+        logger.error("Charts error for %s: %s", symbol, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@research_router.get("/signal/enhanced/{symbol}")
+async def get_enhanced_signal_route(symbol: str):
+    """Get enhanced signal: merge technical detectors + DCF projections.
+    
+    Returns:
+        Dict with signal type, confidence, trigger, and price target.
+    """
+    try:
+        from charlotte.signal_engine_v2 import get_enhanced_signal
+        
+        signal = get_enhanced_signal(symbol)
+        return signal
+    except Exception as e:
+        logger.error("Enhanced signal error for %s: %s", symbol, e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@research_router.post("/batch/projections")
+async def batch_projections(payload: dict):
+    """Get projections for multiple symbols in one call.
+    
+    Expected payload: {"symbols": ["SHOP", "SOFI", ...]}
+    
+    Returns:
+        List of projection results.
+    """
+    try:
+        from charlotte.agents.charlotte_crew import run_batch_charlotte
+        
+        symbols = payload.get('symbols', [])
+        if not symbols:
+            raise HTTPException(status_code=400, detail="missing 'symbols' list")
+        
+        result = run_batch_charlotte(symbols)
+        return result
+    except Exception as e:
+        logger.error("Batch projections error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
