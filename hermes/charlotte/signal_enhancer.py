@@ -23,13 +23,22 @@ import numpy as np
 # Add hermes to path for absolute imports
 sys.path.insert(0, '/tmp/trading-dashboard/hermes')
 
-from charlotte import data_fetch as df_mod
-from charlotte import indicators as ind
-from charlotte import multi_factor_scorer as scorer
-from charlotte.projections import DCFProjector
-from charlotte.trough_detector import analyze as trough_analyze
-from charlotte.momentum_trim_detector import analyze as peak_analyze
-from charlotte.secular_top_detector import analyze as top_analyze
+try:
+    from hermes.charlotte import data_fetch as df_mod
+    from hermes.charlotte import indicators as ind
+    from hermes.charlotte import multi_factor_scorer as scorer
+    from hermes.charlotte.projections import DCFProjector
+    from hermes.charlotte.trough_detector import analyze as trough_analyze
+    from hermes.charlotte.momentum_trim_detector import analyze as peak_analyze
+    from hermes.charlotte.secular_top_detector import analyze as top_analyze
+except ImportError:
+    from charlotte import data_fetch as df_mod
+    from charlotte import indicators as ind
+    from charlotte import multi_factor_scorer as scorer
+    from charlotte.projections import DCFProjector
+    from charlotte.trough_detector import analyze as trough_analyze
+    from charlotte.momentum_trim_detector import analyze as peak_analyze
+    from charlotte.secular_top_detector import analyze as top_analyze
 
 
 class EnhancedSignalEngine:

@@ -14,9 +14,12 @@ from typing import Optional, Dict, List
 sys.path.insert(0, '/tmp/trading-dashboard/hermes')
 
 try:
-    from charlotte.signal_enhancer import EnhancedSignalEngine
+    from hermes.charlotte.signal_enhancer import EnhancedSignalEngine
 except ImportError:
-    from signal_enhancer import EnhancedSignalEngine
+    try:
+        from charlotte.signal_enhancer import EnhancedSignalEngine
+    except ImportError:
+        from signal_enhancer import EnhancedSignalEngine
 
 
 def get_enhanced_signal(symbol: str) -> Dict:

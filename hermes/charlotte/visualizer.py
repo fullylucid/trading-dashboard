@@ -22,9 +22,12 @@ import pandas as pd
 sys.path.insert(0, '/tmp/trading-dashboard/hermes')
 
 try:
-    from charlotte.projections import DCFProjector
+    from hermes.charlotte.projections import DCFProjector
 except ImportError:
-    from projections import DCFProjector
+    try:
+        from charlotte.projections import DCFProjector
+    except ImportError:
+        from projections import DCFProjector
 
 
 class PlotlyChartBuilder:

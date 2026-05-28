@@ -19,9 +19,9 @@ from typing import Dict
 # Add hermes to path
 sys.path.insert(0, '/tmp/trading-dashboard/hermes')
 
-from charlotte.projections import DCFProjector
-from charlotte.visualizer import PlotlyChartBuilder
-from charlotte.signal_enhancer import EnhancedSignalEngine
+from hermes.charlotte.projections import DCFProjector
+from hermes.charlotte.visualizer import PlotlyChartBuilder
+from hermes.charlotte.signal_enhancer import EnhancedSignalEngine
 
 
 class TestDCFProjector:

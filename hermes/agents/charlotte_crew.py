@@ -19,14 +19,21 @@ from typing import Dict, Optional, List
 sys.path.insert(0, '/tmp/trading-dashboard/hermes')
 
 try:
-    from charlotte.projections import DCFProjector
-    from charlotte.visualizer import PlotlyChartBuilder
-    from charlotte.signal_enhancer import EnhancedSignalEngine
+    from hermes.charlotte.projections import DCFProjector
+    from hermes.charlotte.visualizer import PlotlyChartBuilder
+    from hermes.charlotte.signal_enhancer import EnhancedSignalEngine
+    from hermes.charlotte.signal_engine_v2 import get_enhanced_signal, get_enhanced_analysis
 except ImportError:
-    from projections import DCFProjector
-    from visualizer import PlotlyChartBuilder
-    from signal_enhancer import EnhancedSignalEngine
-from charlotte.signal_engine_v2 import get_enhanced_signal, get_enhanced_analysis
+    try:
+        from charlotte.projections import DCFProjector
+        from charlotte.visualizer import PlotlyChartBuilder
+        from charlotte.signal_enhancer import EnhancedSignalEngine
+        from charlotte.signal_engine_v2 import get_enhanced_signal, get_enhanced_analysis
+    except ImportError:
+        from projections import DCFProjector
+        from visualizer import PlotlyChartBuilder
+        from signal_enhancer import EnhancedSignalEngine
+        from signal_engine_v2 import get_enhanced_signal, get_enhanced_analysis
 
 
 class ProjectionTask:

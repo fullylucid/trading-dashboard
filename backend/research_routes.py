@@ -519,7 +519,7 @@ async def get_projections(symbol: str):
         Dict with projections, Plotly charts, and signal analysis.
     """
     try:
-        from charlotte.agents.charlotte_crew import run_full_charlotte
+        from hermes.agents.charlotte_crew import run_full_charlotte
         
         result = run_full_charlotte(symbol)
         return {
@@ -543,8 +543,8 @@ async def get_charts(symbol: str):
         Dict with four chart objects (all Plotly JSON format).
     """
     try:
-        from charlotte.projections import DCFProjector
-        from charlotte.visualizer import PlotlyChartBuilder
+        from hermes.charlotte.projections import DCFProjector
+        from hermes.charlotte.visualizer import PlotlyChartBuilder
         
         projector = DCFProjector(symbol)
         builder = PlotlyChartBuilder(projector)
@@ -563,7 +563,7 @@ async def get_enhanced_signal_route(symbol: str):
         Dict with signal type, confidence, trigger, and price target.
     """
     try:
-        from charlotte.signal_engine_v2 import get_enhanced_signal
+        from hermes.charlotte.signal_engine_v2 import get_enhanced_signal
         
         signal = get_enhanced_signal(symbol)
         return signal
@@ -582,7 +582,7 @@ async def batch_projections(payload: dict):
         List of projection results.
     """
     try:
-        from charlotte.agents.charlotte_crew import run_batch_charlotte
+        from hermes.agents.charlotte_crew import run_batch_charlotte
         
         symbols = payload.get('symbols', [])
         if not symbols:

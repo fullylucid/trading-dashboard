@@ -24,7 +24,10 @@ import yfinance as yf
 # Add hermes to path for absolute imports
 sys.path.insert(0, '/tmp/trading-dashboard/hermes')
 
-from charlotte import data_fetch as df_mod
+try:
+    from hermes.charlotte import data_fetch as df_mod
+except ImportError:
+    from charlotte import data_fetch as df_mod
 
 
 class DCFProjector:

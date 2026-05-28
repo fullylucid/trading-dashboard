@@ -5,6 +5,21 @@ Main entry point for the enhanced trading dashboard backend
 
 import logging
 import os
+import sys
+from pathlib import Path
+
+# --- sys.path bootstrap -----------------------------------------------------
+# Charlotte modules use two import styles depending on era:
+#   - Legacy detectors do `from charlotte import X`  -> needs hermes/ on path
+#   - Phase 2 modules do `from hermes.charlotte.X`   -> needs repo root on path
+# Add both so research_routes.py imports resolve from a single uvicorn entry.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_HERMES_DIR = _REPO_ROOT / "hermes"
+for _p in (str(_REPO_ROOT), str(_HERMES_DIR)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+# ----------------------------------------------------------------------------
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -196,6 +211,9 @@ if HAS_SIGNAL_ROUTES:
 
 if HAS_PORTFOLIO_ROUTES:
     app.include_router(portfolio_router)
+if HAS_HERMES_PORTAL and hermes_router is not None:
+    app.include_router(hermes_router)
+    logger.info("Hermes Portal router registered at /api/portal/*")
 
 
 # ============================================================================
