@@ -20,14 +20,12 @@ from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 import numpy as np
 
-# Add hermes to path for absolute imports
-sys.path.insert(0, '/tmp/trading-dashboard/hermes')
-
 try:
     from hermes.charlotte import data_fetch as df_mod
     from hermes.charlotte import indicators as ind
     from hermes.charlotte import multi_factor_scorer as scorer
     from hermes.charlotte.projections import DCFProjector
+    from hermes.charlotte.narrative_projector import NarrativeProjector
     from hermes.charlotte.trough_detector import analyze as trough_analyze
     from hermes.charlotte.momentum_trim_detector import analyze as peak_analyze
     from hermes.charlotte.secular_top_detector import analyze as top_analyze
@@ -36,6 +34,7 @@ except ImportError:
     from charlotte import indicators as ind
     from charlotte import multi_factor_scorer as scorer
     from charlotte.projections import DCFProjector
+    from charlotte.narrative_projector import NarrativeProjector
     from charlotte.trough_detector import analyze as trough_analyze
     from charlotte.momentum_trim_detector import analyze as peak_analyze
     from charlotte.secular_top_detector import analyze as top_analyze
@@ -53,6 +52,7 @@ class EnhancedSignalEngine:
         self.symbol = symbol.upper()
         self.technical_signal: Optional[Dict] = None
         self.projection: Optional[Dict] = None
+        self.narrative_projection: Optional[Dict] = None
         self._evaluate_signals()
     
     def _evaluate_signals(self) -> None:
@@ -91,6 +91,45 @@ class EnhancedSignalEngine:
                 }
         except (ValueError, KeyError, AttributeError, ConnectionError):
             self.projection = None
+
+        # Narrative projection (Jeremy Lefebvre / 1000xstocks-style forward valuation)
+        try:
+            np_proj = NarrativeProjector(self.symbol, horizon_years=5)
+            self.narrative_projection = np_proj.calculate_narrative_targets()
+        except (ValueError, KeyError, AttributeError, ConnectionError, TypeError):
+            self.narrative_projection = None
+
+    def _calculate_narrative_score(self) -> Tuple[float, str]:
+        """Calculate narrative score (0-10) from forward TAM/capture/PS targets.
+
+        Returns:
+            (score, reason) tuple
+        """
+        if not self.narrative_projection:
+            return 5.0, 'no_narrative'
+
+        score = 5.0
+        reason_parts = []
+        x_base = self.narrative_projection.get('x_bagger_base', 1.0)
+        x_bull = self.narrative_projection.get('x_bagger_bull', 1.0)
+
+        if x_base >= 3.0:
+            score += 2.5
+            reason_parts.append('3x_base')
+        elif x_base >= 2.0:
+            score += 1.5
+            reason_parts.append('2x_base')
+        elif x_base < 1.2:
+            score -= 1.5
+            reason_parts.append('overvalued_story')
+
+        if x_bull >= 10.0:
+            score += 1.5
+            reason_parts.append('10x_bull')
+
+        score = max(0.0, min(10.0, score))
+        reason = '+'.join(reason_parts) if reason_parts else 'baseline'
+        return round(score, 2), reason
     
     def _calculate_technical_score(self) -> Tuple[float, str]:
         """Calculate technical score (0-10) from detector signals.
@@ -187,9 +226,17 @@ class EnhancedSignalEngine:
         """
         tech_score, tech_reason = self._calculate_technical_score()
         proj_score, proj_reason = self._calculate_projection_score()
-        
-        # Weighted average
-        combined = (tech_score * 0.60) + (proj_score * 0.40)
+        narr_score, narr_reason = self._calculate_narrative_score()
+
+        # Weighted average: tech 0.50 + projection 0.30 + narrative 0.20.
+        # If narrative is unavailable, redistribute its 0.20 weight to tech/proj
+        # proportionally (0.50/0.30 → 0.625/0.375).
+        if self.narrative_projection:
+            w_tech, w_proj, w_narr = 0.50, 0.30, 0.20
+            combined = (tech_score * w_tech) + (proj_score * w_proj) + (narr_score * w_narr)
+        else:
+            w_tech, w_proj, w_narr = 0.625, 0.375, 0.0
+            combined = (tech_score * w_tech) + (proj_score * w_proj)
         combined = round(min(10.0, max(0.0, combined)), 2)
         
         # Classify
@@ -208,14 +255,17 @@ class EnhancedSignalEngine:
             'combined_score': combined,
             'technical_score': tech_score,
             'projection_score': proj_score,
+            'narrative_score': narr_score,
             'signal_type': signal_type,
             'reasoning': {
                 'technical': tech_reason,
                 'projection': proj_reason,
+                'narrative': narr_reason,
             },
             'weights': {
-                'technical': 0.60,
-                'projection': 0.40,
+                'technical': w_tech,
+                'projection': w_proj,
+                'narrative': w_narr,
             },
         }
     
@@ -287,6 +337,11 @@ class EnhancedSignalEngine:
                 'projection': {
                     'score': combined['projection_score'],
                     'reason': combined['reasoning']['projection'],
+                },
+                'narrative': {
+                    'score': combined['narrative_score'],
+                    'reason': combined['reasoning']['narrative'],
+                    'targets': self.narrative_projection,
                 },
             },
             'timestamp': datetime.now().isoformat(),
@@ -378,5 +433,6 @@ class EnhancedSignalEngine:
                 'peak': bool(self.peak_signal),
                 'secular_top': bool(self.top_signal),
                 'projection': bool(self.projection),
+                'narrative': bool(self.narrative_projection),
             },
         }

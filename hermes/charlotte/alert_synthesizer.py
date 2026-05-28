@@ -13,8 +13,13 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# Add hermes to path for absolute imports
-sys.path.insert(0, '/tmp/trading-dashboard/hermes')
+try:
+    from hermes.charlotte.signal_enhancer import EnhancedSignalEngine
+except ImportError:
+    try:
+        from charlotte.signal_enhancer import EnhancedSignalEngine
+    except ImportError:
+        EnhancedSignalEngine = None
 
 ROOT = Path(__file__).resolve().parent.parent  # .../hermes
 VENV_PY = "/tmp/trading-dashboard/backend/.venv/bin/python3"
@@ -122,12 +127,20 @@ def format_line(sig):
     reasons = ' + '.join(sig['reasons'])
     conf = sig['confidence']
     if sig['category'] == 'momentum_trim':
-        return f"{sym} TRIM: {reasons}. Trim {sig['trim_pct']}%. Trail core at {sig['trail_pct']}%. Multi-factor confidence: {conf:.1f}/10"
-    if sig['category'] == 'secular_top':
-        return f"{sym} SECULAR-REVIEW: {reasons}. Trim {sig['trim_pct']}% + thesis check. Multi-factor confidence: {conf:.1f}/10"
-    if sig['category'] == 'trough':
-        return f"{sym} ADD: {reasons}. Add {sig['add_pct']}% to core. Multi-factor confidence: {conf:.1f}/10"
-    return f"{sym}: {reasons} (conf {conf:.1f})"
+        line = f"{sym} TRIM: {reasons}. Trim {sig['trim_pct']}%. Trail core at {sig['trail_pct']}%. Multi-factor confidence: {conf:.1f}/10"
+    elif sig['category'] == 'secular_top':
+        line = f"{sym} SECULAR-REVIEW: {reasons}. Trim {sig['trim_pct']}% + thesis check. Multi-factor confidence: {conf:.1f}/10"
+    elif sig['category'] == 'trough':
+        line = f"{sym} ADD: {reasons}. Add {sig['add_pct']}% to core. Multi-factor confidence: {conf:.1f}/10"
+    else:
+        line = f"{sym}: {reasons} (conf {conf:.1f})"
+    tgt = sig.get('projection_target')
+    if tgt is not None:
+        try:
+            line += f" [DCF target: ${float(tgt):.2f}]"
+        except (TypeError, ValueError):
+            pass
+    return line
 
 
 def build_message(buckets):
@@ -151,6 +164,27 @@ def build_message(buckets):
             lines.append(format_line(s))
         lines.append("")
     return "\n".join(lines).strip()
+
+
+def enhance_with_projections(signals):
+    """Merge DCF projection metadata into each signal (additive, non-destructive)."""
+    if EnhancedSignalEngine is None:
+        print("EnhancedSignalEngine unavailable; skipping projection enrichment", file=sys.stderr)
+        return signals
+    for sig in signals:
+        sym = sig.get('symbol')
+        try:
+            engine = EnhancedSignalEngine(sym)
+            combined = engine.combine_signals()
+            if not combined:
+                continue
+            sig['enhanced_confidence'] = combined.get('confidence')
+            sig['projection_target'] = combined.get('target')
+            sig['enhanced_breakdown'] = combined.get('breakdown')
+            sig['enhanced_trigger'] = combined.get('trigger')
+        except Exception as e:
+            print(f"projection enrichment failed for {sym}: {e}", file=sys.stderr)
+    return signals
 
 
 def enrich_signals_with_llm(signals, portfolio, deep_analysis=False):
@@ -203,6 +237,9 @@ def main(argv=None):
     ap.add_argument('--dry-run', action='store_true', help='Print message; do not send/dedup')
     ap.add_argument('--deep-analysis', action='store_true', default=DEEP_ANALYSIS_DEFAULT,
                     help='Activate v4 LLM enrichment (Ollama Cloud)')
+    ap.add_argument('--enhance-projections', dest='enhance_projections',
+                    action=argparse.BooleanOptionalAction, default=True,
+                    help='Enrich signals with DCF projection targets (default: on)')
     args = ap.parse_args(argv)
 
     if not args.symbols and not is_market_open_today():
@@ -230,6 +267,11 @@ def main(argv=None):
     dedup = {} if args.dry_run else load_dedup()
     if not args.dry_run:
         all_sigs = filter_dedup(all_sigs, dedup)
+
+    # DCF projection enrichment (additive metadata pass)
+    if args.enhance_projections and all_sigs and EnhancedSignalEngine is not None:
+        print(f"Enhancing {len(all_sigs)} signals with DCF projections...", file=sys.stderr)
+        all_sigs = enhance_with_projections(all_sigs)
 
     # LLM enrichment (v4 layer)
     if args.deep_analysis and all_sigs:
