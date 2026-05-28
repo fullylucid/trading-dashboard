@@ -8,7 +8,8 @@ set -e
 
 LOG_DIR="/home/user/.hermes/logs"
 LOG_FILE="$LOG_DIR/trading-alerts.log"
-HERMES_DIR="/tmp/trading-dashboard/hermes"
+HERMES_DIR="/home/user/.hermes/workspace/trading-dashboard/hermes"
+VENV_PY="/home/user/.hermes/workspace/trading-dashboard/backend/venv/bin/python3"
 mkdir -p "$LOG_DIR"
 
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
@@ -41,7 +42,7 @@ if [[ -d "$HERMES_DIR" ]]; then
     cd "$HERMES_DIR"
     
     # Run Charlotte detectors and format alerts
-    CHARLOTTE_ALERT=$(python3 << 'PYTHONEOF'
+    CHARLOTTE_ALERT=$("$VENV_PY" << 'PYTHONEOF'
 import sys
 import json
 import subprocess
