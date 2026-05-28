@@ -38,6 +38,15 @@ except ImportError:
     logger = logging.getLogger(__name__)
     logger.warning("Portfolio routes not available")
 
+try:
+    from hermes_portal import router as hermes_router, startup_event as hermes_startup, shutdown_event as hermes_shutdown
+    HAS_HERMES_PORTAL = True
+except ImportError:
+    HAS_HERMES_PORTAL = False
+    hermes_router = None
+    logger = logging.getLogger(__name__)
+    logger.warning("Hermes Portal not available")
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -112,6 +121,14 @@ async def lifespan(app: FastAPI):
     # Initialize routes with service instances
     initialize_services(news_agg, earnings_cal, market_dat, research_ag)
     
+    # Initialize Hermes Portal if available
+    if HAS_HERMES_PORTAL:
+        try:
+            await hermes_startup()
+            logger.info("Hermes Portal initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Hermes Portal: {e}")
+    
     logger.info("All services initialized successfully")
     logger.info(f"CORS origins: {settings.CORS_ORIGINS}")
     
@@ -129,6 +146,15 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down Trading Dashboard Backend...")
+    
+    # Shutdown Hermes Portal if available
+    if HAS_HERMES_PORTAL:
+        try:
+            await hermes_shutdown()
+            logger.info("Hermes Portal shutdown complete")
+        except Exception as e:
+            logger.error(f"Error shutting down Hermes Portal: {e}")
+    
     await news_agg.clear_cache()
     await earnings_cal.clear_cache()
     await market_dat.clear_cache()
