@@ -8,7 +8,7 @@ longer wired up.
 """
 
 from fastapi import APIRouter, Query, HTTPException
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Callable
 import asyncio
 import logging
 import re
@@ -351,7 +351,7 @@ async def scan_portfolio(
     return await _execute_scan(top_n=top_n, include_thesis=include_thesis, refresh=refresh)
 
 
-async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool) -> Dict[str, Any]:
+async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progress_cb: Optional[Callable[[int, int], None]] = None) -> Dict[str, Any]:
     """Internal coroutine that performs the full portfolio scan.
 
     Extracted so it can be reused by both the synchronous GET endpoint
@@ -409,7 +409,25 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool) -> Dict
             except Exception as e:  # noqa: BLE001
                 return {"symbol": sym, "error": str(e)}
 
-    gathered = await asyncio.gather(*[_scan_one(s) for s in symbols])
+    total = len(symbols)
+    if progress_cb:
+        try:
+            progress_cb(0, total)
+        except Exception:
+            pass
+
+    tasks = [asyncio.create_task(_scan_one(s)) for s in symbols]
+    gathered = []
+    done_count = 0
+    for fut in asyncio.as_completed(tasks):
+        item = await fut
+        gathered.append(item)
+        done_count += 1
+        if progress_cb:
+            try:
+                progress_cb(done_count, total)
+            except Exception:
+                pass
 
     for item in gathered:
         sym = item["symbol"]
@@ -513,12 +531,17 @@ async def _run_scan_job(job_id: str, top_n: int, include_thesis: bool, refresh: 
     job["status"] = "running"
     job["started_at"] = time.time()
     try:
-        result = await _execute_scan(top_n=top_n, include_thesis=include_thesis, refresh=refresh)
+        def _cb(scanned: int, total: int) -> None:
+            pct = int((scanned / total) * 100) if total else 0
+            job["progress"] = {"scanned": scanned, "total": total, "percent": pct}
+
+        result = await _execute_scan(top_n=top_n, include_thesis=include_thesis, refresh=refresh, progress_cb=_cb)
         job["result"] = result
         job["status"] = "complete"
         job["completed_at"] = time.time()
         scanned = result.get("scanned", result.get("tickers_scanned", 0))
-        job["progress"] = {"scanned": scanned, "total": scanned}
+        total = job.get("progress", {}).get("total") or scanned
+        job["progress"] = {"scanned": scanned, "total": total, "percent": 100}
     except Exception as e:  # noqa: BLE001
         job["status"] = "error"
         job["error"] = f"{type(e).__name__}: {e}"
