@@ -382,30 +382,44 @@ async def scan_portfolio(
     results: List[Dict[str, Any]] = []
     failed: List[Dict[str, str]] = []
 
-    for sym in symbols:
-        try:
-            dd = await _run_deep_dive(sym, include_thesis=False)
-            mv = agg[sym]["market_value"]
-            pct = (mv / portfolio_value * 100) if portfolio_value else 0.0
-            entry = {
-                "symbol": sym,
-                "composite_score": dd.get("composite_score", 0),
-                "verdict": dd.get("verdict", "N/A"),
-                "scores": dd.get("scores", {}),
-                "quote": dd.get("quote"),
-                "projection": dd.get("projection", {}),
-                "narrative": dd.get("narrative", {}),
-                "signals_summary": _signals_summary(dd.get("breakdown", {}) or {}),
-                "market_value": mv,
-                "units": agg[sym]["units"],
-                "pct_of_portfolio": pct,
-                "warnings": dd.get("warnings", []),
-            }
-            results.append(entry)
-        except Exception as e:
-            logger.warning(f"Portfolio scan: deep-dive failed for {sym}: {e}")
-            failed.append({"symbol": sym, "error": str(e)})
-        await asyncio.sleep(0.05)
+    # Bounded concurrency: run deep-dives in parallel (3 at a time) to beat
+    # DigitalOcean's ~500s gateway timeout that was killing the sequential loop.
+    sem = asyncio.Semaphore(3)
+
+    async def _scan_one(sym: str) -> Dict[str, Any]:
+        async with sem:
+            try:
+                dd = await _run_deep_dive(sym, include_thesis=False)
+                return {"symbol": sym, "_dd": dd}
+            except Exception as e:  # noqa: BLE001
+                return {"symbol": sym, "error": str(e)}
+
+    gathered = await asyncio.gather(*[_scan_one(s) for s in symbols])
+
+    for item in gathered:
+        sym = item["symbol"]
+        if "error" in item:
+            logger.warning(f"Portfolio scan: deep-dive failed for {sym}: {item['error']}")
+            failed.append({"symbol": sym, "error": item["error"]})
+            continue
+        dd = item["_dd"]
+        mv = agg[sym]["market_value"]
+        pct = (mv / portfolio_value * 100) if portfolio_value else 0.0
+        entry = {
+            "symbol": sym,
+            "composite_score": dd.get("composite_score", 0),
+            "verdict": dd.get("verdict", "N/A"),
+            "scores": dd.get("scores", {}),
+            "quote": dd.get("quote"),
+            "projection": dd.get("projection", {}),
+            "narrative": dd.get("narrative", {}),
+            "signals_summary": _signals_summary(dd.get("breakdown", {}) or {}),
+            "market_value": mv,
+            "units": agg[sym]["units"],
+            "pct_of_portfolio": pct,
+            "warnings": dd.get("warnings", []),
+        }
+        results.append(entry)
 
     # Rank by composite score
     results.sort(key=lambda r: r.get("composite_score", 0) or 0, reverse=True)
