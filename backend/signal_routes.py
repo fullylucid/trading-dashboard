@@ -195,7 +195,7 @@ def create_signal_routes(signal_engine, cache_manager):
             )
 
             formatter = SignalFormatter()
-            telegram_card = formatter.format_telegram(signal)
+            telegram_card = formatter.format_telegram_message(signal)
             rest_payload = signal.to_dict()
 
             return {
