@@ -17,9 +17,9 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/api/health', timeout=5)"
+# Health check - matches the actual /health endpoint in main.py
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=5)"
 
-# Run application
-CMD ["python", "main.py"]
+# Run with uvicorn, respecting DigitalOcean's PORT env var
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
