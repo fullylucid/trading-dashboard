@@ -17,9 +17,11 @@ INCLUDE_THESIS="${INCLUDE_THESIS:-true}"
 MAX_POLLS="${MAX_POLLS:-40}"   # 40 * 5s = 200s max wait
 SLEEP_SEC="${SLEEP_SEC:-5}"
 
+# Telegram delivery — send to @Siiigggbot (Signals bot, id 8704320930) explicitly.
+# Override via env var SIGNALS_BOT_TOKEN / TELEGRAM_BOT_TOKEN if rotated.
 TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-5696824719}"
-TELEGRAM_BOT_TOKEN_DEFAULT="8398668205:AAGFHkw8b9YMtRYDsm-7sm67LkLg-OUmTjA"
-TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-$TELEGRAM_BOT_TOKEN_DEFAULT}"
+SIGNALS_BOT_TOKEN_DEFAULT="8704320930:AAFf55JwmNjMXgZOznZvHYZmw_F0h2OfExo"
+TELEGRAM_BOT_TOKEN="${SIGNALS_BOT_TOKEN:-${TELEGRAM_BOT_TOKEN:-$SIGNALS_BOT_TOKEN_DEFAULT}}"
 
 LOG_DIR="${HOME}/.hermes/logs"
 LOG_FILE="${LOG_DIR}/portfolio-premarket-scan.log"
@@ -46,12 +48,20 @@ log() {
 
 send_telegram() {
     local text="$1"
-    curl -sS -m 15 \
+    local resp
+    resp=$(curl -sS -m 15 \
         -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         -d "chat_id=${TELEGRAM_CHAT_ID}" \
         --data-urlencode "text=${text}" \
         -d "parse_mode=Markdown" \
-        -d "disable_web_page_preview=true" >/dev/null
+        -d "disable_web_page_preview=true")
+    if [[ "${resp}" == *'"ok":true'* ]]; then
+        log "telegram api ok"
+        return 0
+    else
+        log "telegram api FAILED: ${resp:0:200}"
+        return 1
+    fi
 }
 
 log "=== pre-market scan start ==="

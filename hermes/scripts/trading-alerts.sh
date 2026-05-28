@@ -38,7 +38,12 @@ WATCHLIST=("SHOP" "SOFI" "COIN" "SMCI" "CRDO" "GLW" "GFS" "AMD" "PLTR" "INTC" "U
 
 CHARLOTTE_ALERT=""
 
-if [[ -d "$HERMES_DIR" ]]; then
+# DISABLED 2026-05-28 — replaced by portfolio-premarket-scan.sh which sends
+# richer Tradeskeebot scan results (top buys/sells/holds + Kimi narrative +
+# per-row theses) to @Siiigggbot. The old SMA-based detectors were spamming
+# the same bot with the same low-value signals on every hourly tick.
+# Re-enable by removing the `false &&` guard if needed.
+if false && [[ -d "$HERMES_DIR" ]]; then
     cd "$HERMES_DIR"
     
     # Run Charlotte detectors and format alerts
