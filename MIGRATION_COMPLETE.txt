@@ -1,0 +1,116 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                   🕷️  CHARLOTTE MIGRATION — COMPLETE ✅                  ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+📍 REAL REPO LOCATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  /home/user/.hermes/workspace/trading-dashboard/hermes/
+  └─ Single source of truth for all trading logic
+
+🔗 GITHUB
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Repository: https://github.com/fullylucid/trading-dashboard
+  Latest Commit: 1e52b0a (Charlotte integration checklist)
+  Branch: main
+
+📦 WHAT'S IN HERMES/
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ├── charlotte/
+  │   ├── trough_detector.py ................. Buy signals (oversold)
+  │   ├── momentum_trim_detector.py ......... Exit signals (peak)
+  │   ├── secular_top_detector.py .......... Thesis reviews (top)
+  │   ├── alert_synthesizer.py ............ Signal orchestration
+  │   ├── ollama_deep_analyzer.py ........ LLM enrichment (:cloud)
+  │   ├── multi_factor_scorer.py ........ Pillar-based scoring
+  │   ├── indicators.py .................. Technical indicators
+  │   ├── data_fetch.py ................. SnapTrade + yfinance
+  │   └── [7 more: backtest, tests, utils]
+  ├── scripts/
+  │   ├── trading-alerts.sh .............. Main alert pipeline
+  │   ├── quant-toolkit.py .............. Quantitative analysis
+  │   └── insider-detector.py .......... SEC insider detection
+  ├── agents/
+  │   └── charlotte_crew.py ............ Orchestration layer
+  ├── portal/
+  │   └── screenshot_handler.py ...... Playwright automation
+  ├── .env.example ..................... Secrets template
+  ├── .env ............................. Gitignored secrets
+  ├── setup_hermes.sh .................. Activation script
+  └── MEMORY.md ....................... System notes
+
+✅ TEST RESULTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ✓ All 5 Charlotte modules import successfully
+  ✓ Detectors return valid signals:
+    • SHOP: 6.3/10 (trough — add 20%)
+    • SOFI: 6.3/10 (trough — add 20%)
+    • COIN: 6.5/10 (secular top — trim 75%)
+  ✓ LLM integration test: 8/8 PASS
+  ✓ Ollama :cloud models verified (NO local models)
+  ✓ Telegram delivery → @Siiigggbot working
+  ✓ Git commit successful
+  ✓ Push to remote successful
+
+🚀 QUICK START
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. Populate secrets:
+     cd ~/trading-dashboard/hermes
+     cp .env.example .env
+     # Edit .env with your API keys
+
+  2. Activate system:
+     bash setup_hermes.sh
+
+  3. Run trading alerts:
+     bash scripts/trading-alerts.sh
+
+  4. Check Telegram:
+     Signals arrive at @Siiigggbot within minutes
+
+📅 CRON SCHEDULE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  3:30 AM PT (Mon-Fri) ........ Pre-market scan
+  6:30 AM PT (Mon-Fri) ........ Market open scan
+  10 AM-3 PM PT (Mon-Fri) ..... Hourly scans
+  1:15 PM PT (Mon-Fri) ........ After-hours scan
+
+  All times: Eastern Time (ET) converted to Pacific (PT)
+  All output: @Siiigggbot Telegram bot
+
+⚠️  CRITICAL CONSTRAINTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  🚫 NO LOCAL OLLAMA MODELS
+  Only use :cloud suffix:
+    ✅ kimi-k2.6:cloud (primary)
+    ✅ qwen3-coder:480b-cloud (secondary)
+    ❌ Bare model names (will hang system)
+
+  🔒 SECRETS NEVER COMMITTED
+    ✅ .env is gitignored
+    ✅ .env.example is public template
+    ❌ Never commit TELEGRAM_TOKEN or OLLAMA_API_KEY
+
+  📊 SEQUENTIAL API CALLS ONLY
+    Max 2 models active at once (Pro tier = 3 limit, reserve 1)
+    No parallel Ollama requests
+
+📚 DOCUMENTATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  HERMES_INTEGRATION.md ............. Full setup + API guide
+  CHARLOTTE_INTEGRATION_CHECKLIST.md  Test results + verification
+
+🎯 NEXT STEPS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  □ Integrate Charlotte API routes into backend/main.py
+  □ Add signal feed to frontend dashboard
+  □ Wire up Playwright portal for real-time screenshots
+  □ Build portfolio reconciliation UI
+  □ Create WebSocket feed for live signals
+
+═══════════════════════════════════════════════════════════════════════════
+
+Timestamp: May 27, 2026
+Status: ✅ PRODUCTION READY
+Source of Truth: /home/user/.hermes/workspace/trading-dashboard/hermes/
