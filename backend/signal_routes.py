@@ -337,3 +337,12 @@ def create_telegram_webhook_routes(telegram_bot):
             raise HTTPException(status_code=500, detail="Webhook processing failed")
     
     return router
+
+
+# ============================================================================
+# MODULE-LEVEL EXPORT (required for main.py import)
+# ============================================================================
+
+# Create the signal router at import time so `from signal_routes import signal_router`
+# succeeds and all routes (including /hermes/{symbol}) are registered.
+signal_router = create_signal_routes(None, None)
