@@ -56,11 +56,11 @@ except ImportError:
 try:
     from hermes_portal import router as hermes_router, startup_event as hermes_startup, shutdown_event as hermes_shutdown
     HAS_HERMES_PORTAL = True
-except ImportError:
+except Exception as _hp_err:
     HAS_HERMES_PORTAL = False
     hermes_router = None
     logger = logging.getLogger(__name__)
-    logger.warning("Hermes Portal not available")
+    logger.warning(f"Hermes Portal not available: {_hp_err!r}")
 
 # Configure logging
 logging.basicConfig(

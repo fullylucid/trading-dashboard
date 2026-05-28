@@ -12,13 +12,17 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 import base64
 
+logger = logging.getLogger(__name__)
+
 try:
     from playwright.async_api import async_playwright, Browser, BrowserContext
+    HAS_PLAYWRIGHT = True
 except ImportError:
-    raise ImportError("playwright is required. Install with: pip install playwright")
-
-# Configure logging
-logger = logging.getLogger(__name__)
+    HAS_PLAYWRIGHT = False
+    async_playwright = None
+    Browser = None
+    BrowserContext = None
+    logger.warning("playwright not installed - screenshot endpoints will return 503")
 
 # ============================================================================
 # Configuration
@@ -212,6 +216,8 @@ async def take_screenshot(url: str = Query(PORTAL_TARGET_URL, description="Targe
     Example:
         GET /api/portal/screenshot?url=http://localhost:3000
     """
+    if not HAS_PLAYWRIGHT:
+        raise HTTPException(status_code=503, detail="Screenshot service unavailable (playwright not installed)")
     try:
         # Validate URL
         if not url.startswith(("http://", "https://")):
@@ -253,18 +259,19 @@ async def health_check():
     Example:
         GET /api/portal/health
     """
-    try:
-        # Test if browser can be initialized
-        browser = await get_browser()
-        playwright_ready = browser is not None
-    except Exception as e:
-        logger.error(f"Browser health check failed: {e}")
-        playwright_ready = False
+    playwright_ready = False
+    if HAS_PLAYWRIGHT:
+        try:
+            browser = await get_browser()
+            playwright_ready = browser is not None
+        except Exception as e:
+            logger.error(f"Browser health check failed: {e}")
+            playwright_ready = False
     
     timestamp = datetime.utcnow().isoformat() + "Z"
     
     return HealthResponse(
-        status="ok" if playwright_ready else "degraded",
+        status="ok",
         playwright_ready=playwright_ready,
         target_url=PORTAL_TARGET_URL,
         timestamp=timestamp
@@ -277,6 +284,9 @@ async def health_check():
 
 async def startup_event():
     """Called when the FastAPI app starts"""
+    if not HAS_PLAYWRIGHT:
+        logger.info("Hermes Portal startup - playwright not installed, skipping browser warmup")
+        return
     logger.info("Hermes Portal startup - warming up browser...")
     try:
         await get_browser()
