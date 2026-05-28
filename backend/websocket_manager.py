@@ -155,6 +155,28 @@ class WebSocketManager:
             self.logger.debug(f"Signal {signal_data.get('id')} broadcast to {notified} clients")
         
         return notified
+
+    async def broadcast_hermes_signal(self, signal) -> int:
+        """
+        Broadcast a Hermes Signal object (rich format) to all clients.
+        Converts the Hermes Signal to dict + adds Telegram card.
+        """
+        from hermes_signals.formatter import SignalFormatter
+
+        formatter = SignalFormatter()
+        payload = {
+            "type": "hermes_signal",
+            "data": signal.to_dict(),
+            "telegram_card": formatter.format_telegram_message(signal),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+        notified = 0
+        for client_id, connection in self.active_connections.items():
+            success = await connection.send_json(payload)
+            if success:
+                notified += 1
+        return notified
     
     async def broadcast_price_update(self, symbol: str, price_data: Dict[str, Any]) -> int:
         """

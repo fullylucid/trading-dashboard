@@ -9,6 +9,10 @@ from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
 
+# Hermes integration
+from hermes_signals.models import Signal
+from hermes_signals.formatter import SignalFormatter
+
 logger = logging.getLogger(__name__)
 
 
@@ -160,6 +164,45 @@ def create_signal_routes(signal_engine, cache_manager):
         except Exception as e:
             logger.error(f"Failed to get signal history for {symbol}: {e}")
             raise HTTPException(status_code=500, detail="Failed to retrieve history")
+
+    @router.get("/hermes/{symbol}", response_model=Dict[str, Any])
+    async def get_hermes_signal(
+        symbol: str,
+        score: float = Query(75.0, ge=0, le=100),
+        action: str = Query("BUY"),
+    ):
+        """
+        Generate a Hermes-formatted professional signal for a symbol.
+        Uses the enhanced Hermes signal model and multi-channel formatter.
+        """
+        try:
+            from hermes_signals.engine import SignalEngine
+            from hermes_signals.models import SignalAction, SignalCategory, SignalStrength
+
+            engine = SignalEngine()
+            signal = engine.create_signal(
+                ticker=symbol.upper(),
+                name=symbol.upper(),
+                category=SignalCategory.MOMENTUM,
+                action=SignalAction[action.upper()] if action.upper() in ["BUY", "SELL", "HOLD"] else SignalAction.BUY,
+                score=score,
+                strength=SignalStrength.STRONG if score >= 70 else SignalStrength.MODERATE,
+                current_price=0.0,
+                catalyst="Hermes-enhanced signal via trading-dashboard",
+            )
+
+            formatter = SignalFormatter()
+            telegram_card = formatter.format_telegram(signal)
+            rest_payload = signal.to_dict()
+
+            return {
+                "hermes_signal": rest_payload,
+                "telegram_card": telegram_card,
+                "channels": ["telegram", "websocket", "rest", "react"],
+            }
+        except Exception as e:
+            logger.error(f"Hermes signal generation failed for {symbol}: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
     
     # ========================================================================
     # SCANNER DETAIL ENDPOINTS
