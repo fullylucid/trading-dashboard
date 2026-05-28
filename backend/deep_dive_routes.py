@@ -33,6 +33,8 @@ logger = logging.getLogger(__name__)
 # Create router
 deep_dive_router = APIRouter(prefix="/api/research/deep", tags=["deep-dive"])
 
+THESIS_MODEL = "qwen3-coder:480b-cloud"
+
 
 def _get_ollama_client() -> OllamaPrimaryClient:
     """Get or create singleton Ollama client."""
@@ -70,7 +72,7 @@ def _generate_thesis_fallback(scores: Dict[str, float], projection: Dict[str, An
     tech_score = scores.get('technical', 0)
     proj_score = scores.get('projection', 0)
     narr_score = scores.get('narrative', 0)
-    
+
     # Determine verdict based on scores
     if tech_score >= 8.0 and proj_score >= 7.0:
         verdict = "Strong Buy"
@@ -82,7 +84,7 @@ def _generate_thesis_fallback(scores: Dict[str, float], projection: Dict[str, An
         verdict = "Trim"
     else:
         verdict = "Avoid"
-    
+
     # Create markdown thesis
     return f"""## Verdict
 {verdict} with moderate confidence
@@ -103,144 +105,44 @@ A significant change in technical momentum or fundamental outlook.
 """
 
 
-@deep_dive_router.get("/{symbol}")
-async def get_deep_dive(symbol: str) -> Dict[str, Any]:
-    """Get deep dive analysis for a symbol."""
-    symbol = symbol.upper()
-    now = datetime.now()
-    
-    # Check cache
-    if symbol in _deep_dive_cache:
-        timestamp, cached_result = _deep_dive_cache[symbol]
-        if now - timestamp < timedelta(seconds=60):
-            logger.info(f"Cache hit for {symbol}")
-            return cached_result
-    
-    warnings = []
-    result = {
-        "symbol": symbol,
-        "timestamp": now.isoformat(),
-    }
-    
+def _verdict_from_score(combined_score: float) -> str:
+    if combined_score >= 8.0:
+        return "Strong Buy"
+    elif combined_score >= 6.5:
+        return "Buy"
+    elif combined_score >= 4.5:
+        return "Hold"
+    elif combined_score >= 3.0:
+        return "Trim"
+    else:
+        return "Avoid"
+
+
+def _generate_thesis(symbol: str, quote: Optional[Dict[str, Any]],
+                     scores: Dict[str, float], breakdown: Dict[str, Any],
+                     projection: Dict[str, Any], narrative: Dict[str, Any],
+                     news: List[Dict[str, Any]]) -> tuple:
+    """Run LLM thesis call; returns (markdown, warnings_list)."""
+    warnings: List[str] = []
     try:
-        # Get quote data from yfinance
-        try:
-            ticker = yf.Ticker(symbol)
-            info = ticker.fast_info
-            quote = {
-                "price": info.last_price,
-                "change_pct": ((info.last_price - info.previous_close) / info.previous_close) * 100,
-                "volume": info.last_volume
-            }
-        except Exception as e:
-            logger.warning(f"Failed to get quote for {symbol}: {e}")
-            quote = None
-            warnings.append("Failed to fetch current quote")
-        
-        result["quote"] = quote
-        
-        # Get enhanced signal analysis
-        try:
-            engine = EnhancedSignalEngine(symbol)
-            signal_analysis = engine.combine_signals()
-            breakdown = signal_analysis.get("breakdown", {})
-            
-            # Extract scores
-            scores = {
-                "technical": breakdown.get("technical", {}).get("score", 0),
-                "projection": breakdown.get("projection", {}).get("score", 0),
-                "narrative": breakdown.get("narrative", {}).get("score", 0),
-                "combined": signal_analysis.get("confidence", 0)
-            }
-            
-            # Determine verdict
-            combined_score = scores["combined"]
-            if combined_score >= 8.0:
-                verdict = "Strong Buy"
-            elif combined_score >= 6.5:
-                verdict = "Buy"
-            elif combined_score >= 4.5:
-                verdict = "Hold"
-            elif combined_score >= 3.0:
-                verdict = "Trim"
-            else:
-                verdict = "Avoid"
-            
-            result.update({
-                "composite_score": combined_score,
-                "verdict": verdict,
-                "scores": scores,
-                "breakdown": breakdown
-            })
-        except Exception as e:
-            logger.error(f"Failed to get signal analysis for {symbol}: {e}")
-            warnings.append("Failed to generate signal analysis")
-            # Fallback scores
-            result.update({
-                "composite_score": 0,
-                "verdict": "N/A",
-                "scores": {"technical": 0, "projection": 0, "narrative": 0, "combined": 0},
-                "breakdown": {}
-            })
-        
-        # Get DCF projections
-        try:
-            projector = DCFProjector(symbol)
-            projection = projector.calculate_price_targets()
-            result["projection"] = projection
-        except Exception as e:
-            logger.error(f"Failed to get DCF projections for {symbol}: {e}")
-            warnings.append("Failed to generate DCF projections")
-            result["projection"] = {}
-        
-        # Get narrative projection
-        try:
-            narrative_proj = NarrativeProjector(symbol)
-            narrative = narrative_proj.get_summary()
-            result["narrative"] = narrative
-        except Exception as e:
-            logger.error(f"Failed to get narrative projection for {symbol}: {e}")
-            warnings.append("Failed to generate narrative projection")
-            result["narrative"] = {}
-        
-        # Get news
-        try:
-            news = _get_news(symbol)
-            result["news"] = news
-        except Exception as e:
-            logger.error(f"Failed to get news for {symbol}: {e}")
-            result["news"] = []
-        
-        # Generate AI thesis
-        thesis_markdown = ""
-        thesis_model = "qwen3-coder:480b-cloud"
-        
-        try:
-            # Prepare data for LLM prompt
-            structured_data = {
-                "symbol": symbol,
-                "current_price": quote.get("price") if quote else "N/A",
-                "scores": scores,
-                "dcf": {
-                    "bear": result.get("projection", {}).get("bear"),
-                    "base": result.get("projection", {}).get("base"),
-                    "bull": result.get("projection", {}).get("bull")
-                },
-                "narrative": {
-                    "x_bagger_base": result.get("narrative", {}).get("x_bagger_base"),
-                    "x_bagger_bull": result.get("narrative", {}).get("x_bagger_bull"),
-                    "tam_billions": result.get("narrative", {}).get("tam_billions_future")
-                },
-                "technical_reasons": [
-                    breakdown.get("technical", {}).get("reason", "N/A")
-                ],
-                "news_headlines": [
-                    item.get("headline", "N/A") for item in result.get("news", [])[:3]
-                ]
-            }
-            
-            # Build prompt
-            prompt = f"""You are a sober quantitative analyst. Write a 250-400 word investment thesis in
+        structured_data = {
+            "symbol": symbol,
+            "current_price": quote.get("price") if quote else "N/A",
+            "scores": scores,
+            "dcf": {
+                "bear": projection.get("bear"),
+                "base": projection.get("base"),
+                "bull": projection.get("bull"),
+            },
+            "narrative": {
+                "x_bagger_base": narrative.get("x_bagger_base"),
+                "x_bagger_bull": narrative.get("x_bagger_bull"),
+                "tam_billions": narrative.get("tam_billions_future"),
+            },
+            "technical_reasons": [breakdown.get("technical", {}).get("reason", "N/A")],
+            "news_headlines": [item.get("headline", "N/A") for item in news[:3]],
+        }
+        prompt = f"""You are a sober quantitative analyst. Write a 250-400 word investment thesis in
 markdown for {symbol} based ONLY on the data below. Structure:
 
 ## Verdict
@@ -263,37 +165,146 @@ No disclaimers. No price predictions outside the bear/base/bull range provided.
 
 DATA:
 {structured_data}"""
-            
-            # Call LLM
-            client = _get_ollama_client()
-            if client:
-                response = client.call_model(thesis_model, prompt, timeout=60)
-                if response and response.strip():
-                    thesis_markdown = response.strip()
-                else:
-                    logger.warning(f"LLM returned empty response for {symbol}")
-                    thesis_markdown = _generate_thesis_fallback(scores, result.get("projection", {}))
-                    warnings.append("LLM returned empty response, using fallback thesis")
-            else:
-                logger.warning("Ollama client not available")
-                thesis_markdown = _generate_thesis_fallback(scores, result.get("projection", {}))
-                warnings.append("LLM unavailable, using fallback thesis")
-        except Exception as e:
-            logger.error(f"Failed to generate thesis for {symbol}: {e}")
-            thesis_markdown = _generate_thesis_fallback(scores, result.get("projection", {}))
-            warnings.append("Failed to generate AI thesis, using fallback")
-        
+        client = _get_ollama_client()
+        if client:
+            response = client.call_model(THESIS_MODEL, prompt, timeout=60)
+            if response and response.strip():
+                return response.strip(), warnings
+            logger.warning(f"LLM returned empty response for {symbol}")
+            warnings.append("LLM returned empty response, using fallback thesis")
+        else:
+            logger.warning("Ollama client not available")
+            warnings.append("LLM unavailable, using fallback thesis")
+    except Exception as e:
+        logger.error(f"Failed to generate thesis for {symbol}: {e}")
+        warnings.append("Failed to generate AI thesis, using fallback")
+    return _generate_thesis_fallback(scores, projection), warnings
+
+
+async def _run_deep_dive(symbol: str, *, include_thesis: bool = True) -> Dict[str, Any]:
+    """
+    Run the deep-dive analyzer for a single symbol.
+
+    Composes signal engine, DCF projection, narrative projection, news, and
+    (optionally) the qwen3-coder LLM thesis. Safe to call from bulk scans by
+    setting include_thesis=False.
+    """
+    symbol = symbol.upper()
+    now = datetime.now()
+    warnings: List[str] = []
+    result: Dict[str, Any] = {
+        "symbol": symbol,
+        "timestamp": now.isoformat(),
+    }
+
+    # Quote
+    try:
+        ticker = yf.Ticker(symbol)
+        info = ticker.fast_info
+        quote = {
+            "price": info.last_price,
+            "change_pct": ((info.last_price - info.previous_close) / info.previous_close) * 100,
+            "volume": info.last_volume,
+        }
+    except Exception as e:
+        logger.warning(f"Failed to get quote for {symbol}: {e}")
+        quote = None
+        warnings.append("Failed to fetch current quote")
+    result["quote"] = quote
+
+    # Signal analysis
+    try:
+        engine = EnhancedSignalEngine(symbol)
+        signal_analysis = engine.combine_signals()
+        breakdown = signal_analysis.get("breakdown", {})
+        scores = {
+            "technical": breakdown.get("technical", {}).get("score", 0),
+            "projection": breakdown.get("projection", {}).get("score", 0),
+            "narrative": breakdown.get("narrative", {}).get("score", 0),
+            "combined": signal_analysis.get("confidence", 0),
+        }
+        combined_score = scores["combined"]
+        verdict = _verdict_from_score(combined_score)
+        result.update({
+            "composite_score": combined_score,
+            "verdict": verdict,
+            "scores": scores,
+            "breakdown": breakdown,
+        })
+    except Exception as e:
+        logger.error(f"Failed to get signal analysis for {symbol}: {e}")
+        warnings.append("Failed to generate signal analysis")
+        breakdown = {}
+        scores = {"technical": 0, "projection": 0, "narrative": 0, "combined": 0}
+        result.update({
+            "composite_score": 0,
+            "verdict": "N/A",
+            "scores": scores,
+            "breakdown": breakdown,
+        })
+
+    # DCF projection
+    try:
+        projector = DCFProjector(symbol)
+        projection = projector.calculate_price_targets()
+        result["projection"] = projection
+    except Exception as e:
+        logger.error(f"Failed to get DCF projections for {symbol}: {e}")
+        warnings.append("Failed to generate DCF projections")
+        result["projection"] = {}
+
+    # Narrative
+    try:
+        narrative_proj = NarrativeProjector(symbol)
+        narrative = narrative_proj.get_summary()
+        result["narrative"] = narrative
+    except Exception as e:
+        logger.error(f"Failed to get narrative projection for {symbol}: {e}")
+        warnings.append("Failed to generate narrative projection")
+        result["narrative"] = {}
+
+    # News
+    try:
+        result["news"] = _get_news(symbol)
+    except Exception as e:
+        logger.error(f"Failed to get news for {symbol}: {e}")
+        result["news"] = []
+
+    # Thesis (optional)
+    if include_thesis:
+        thesis_markdown, thesis_warnings = _generate_thesis(
+            symbol, quote, scores, breakdown,
+            result.get("projection", {}) or {},
+            result.get("narrative", {}) or {},
+            result.get("news", []) or [],
+        )
+        warnings.extend(thesis_warnings)
         result.update({
             "thesis_markdown": thesis_markdown,
-            "thesis_model": thesis_model,
-            "warnings": warnings
+            "thesis_model": THESIS_MODEL,
         })
-        
-        # Cache result
+
+    result["warnings"] = warnings
+    return result
+
+
+@deep_dive_router.get("/{symbol}")
+async def get_deep_dive(symbol: str) -> Dict[str, Any]:
+    """Get deep dive analysis for a symbol."""
+    symbol = symbol.upper()
+    now = datetime.now()
+
+    # Check cache
+    if symbol in _deep_dive_cache:
+        timestamp, cached_result = _deep_dive_cache[symbol]
+        if now - timestamp < timedelta(seconds=60):
+            logger.info(f"Cache hit for {symbol}")
+            return cached_result
+
+    try:
+        result = await _run_deep_dive(symbol, include_thesis=True)
         _deep_dive_cache[symbol] = (now, result)
-        
         return result
-        
     except Exception as e:
         logger.error(f"Deep dive failed for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

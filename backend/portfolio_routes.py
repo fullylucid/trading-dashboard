@@ -8,11 +8,14 @@ longer wired up.
 """
 
 from fastapi import APIRouter, Query, HTTPException
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
+import asyncio
 import logging
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 
 from snaptrade_portfolio import get_portfolio_instance, clear_portfolio_cache
+from deep_dive_routes import _run_deep_dive, _generate_thesis, THESIS_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -291,3 +294,164 @@ async def get_accounts() -> List[Dict[str, Any]]:
         logger.error(f"Error fetching accounts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ---------------------------------------------------------------------------
+# Bulk portfolio scan — runs deep-dive over every ticker in SnapTrade portfolio
+# ---------------------------------------------------------------------------
+
+_SCAN_CACHE: Dict[Tuple[int, bool], Tuple[datetime, Dict[str, Any]]] = {}
+_SCAN_TTL = timedelta(minutes=15)
+
+# Common non-equity / crypto tickers to skip in bulk scan
+_CRYPTO_SKIP = {
+    "BTC", "ETH", "XRP", "DOGE", "LTC", "BCH", "SOL", "ADA", "AVAX",
+    "MATIC", "DOT", "LINK", "UNI", "ATOM", "ETC", "XLM", "ALGO", "FIL",
+    "AAVE", "SHIB", "PEPE", "BTCUSD", "ETHUSD",
+}
+_TICKER_RE = re.compile(r"^[A-Z]{1,5}$")
+
+
+def _eligible_symbol(symbol: str) -> bool:
+    if not symbol:
+        return False
+    s = symbol.upper()
+    if s in _CRYPTO_SKIP:
+        return False
+    return bool(_TICKER_RE.match(s))
+
+
+def _signals_summary(breakdown: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key in ("technical", "projection", "narrative"):
+        section = breakdown.get(key) or {}
+        out[key] = {
+            "score": section.get("score", 0),
+            "reason": section.get("reason"),
+        }
+    return out
+
+
+@portfolio_router.get("/scan")
+async def scan_portfolio(
+    top_n: int = Query(20, ge=1, le=100, description="Top N entries by composite score"),
+    include_thesis: bool = Query(False, description="Run LLM thesis on top 5"),
+    refresh: bool = Query(False, description="Bypass 15-minute cache"),
+) -> Dict[str, Any]:
+    """
+    Bulk deep-dive scan across every equity ticker in the connected
+    SnapTrade portfolio. Returns ranked summary plus optional thesis on
+    the top 5 names.
+    """
+    cache_key = (top_n, include_thesis)
+    now = datetime.now()
+    if not refresh:
+        cached = _SCAN_CACHE.get(cache_key)
+        if cached and (now - cached[0]) < _SCAN_TTL:
+            logger.info(f"Portfolio scan cache hit ({top_n=}, {include_thesis=})")
+            return cached[1]
+
+    try:
+        portfolio = await get_portfolio_instance()
+        positions = await portfolio.get_positions()
+    except Exception as e:
+        logger.error(f"Portfolio scan: failed to fetch positions: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch portfolio: {e}")
+
+    # Deduplicate by symbol — sum units and market values across accounts
+    agg: Dict[str, Dict[str, float]] = {}
+    skipped: List[str] = []
+    for p in positions or []:
+        sym = str(p.get("symbol") or "").upper().strip()
+        if not _eligible_symbol(sym):
+            if sym:
+                skipped.append(sym)
+            continue
+        qty = float(p.get("quantity") or p.get("units") or 0)
+        mv = float(p.get("market_value") or p.get("current_value") or 0)
+        entry = agg.setdefault(sym, {"units": 0.0, "market_value": 0.0})
+        entry["units"] += qty
+        entry["market_value"] += mv
+
+    if skipped:
+        logger.info(f"Portfolio scan: skipped {len(skipped)} non-equity symbols: {sorted(set(skipped))}")
+
+    portfolio_value = sum(v["market_value"] for v in agg.values())
+    symbols = sorted(agg.keys())
+    logger.info(f"Portfolio scan: running deep-dive over {len(symbols)} symbols")
+
+    results: List[Dict[str, Any]] = []
+    failed: List[Dict[str, str]] = []
+
+    for sym in symbols:
+        try:
+            dd = await _run_deep_dive(sym, include_thesis=False)
+            mv = agg[sym]["market_value"]
+            pct = (mv / portfolio_value * 100) if portfolio_value else 0.0
+            entry = {
+                "symbol": sym,
+                "composite_score": dd.get("composite_score", 0),
+                "verdict": dd.get("verdict", "N/A"),
+                "scores": dd.get("scores", {}),
+                "quote": dd.get("quote"),
+                "projection": dd.get("projection", {}),
+                "narrative": dd.get("narrative", {}),
+                "signals_summary": _signals_summary(dd.get("breakdown", {}) or {}),
+                "market_value": mv,
+                "units": agg[sym]["units"],
+                "pct_of_portfolio": pct,
+                "warnings": dd.get("warnings", []),
+            }
+            results.append(entry)
+        except Exception as e:
+            logger.warning(f"Portfolio scan: deep-dive failed for {sym}: {e}")
+            failed.append({"symbol": sym, "error": str(e)})
+        await asyncio.sleep(0.05)
+
+    # Rank by composite score
+    results.sort(key=lambda r: r.get("composite_score", 0) or 0, reverse=True)
+
+    top_buys = [r for r in results if (r.get("composite_score") or 0) >= 6.0][:5]
+    top_sells = sorted(
+        [r for r in results if (r.get("composite_score") or 0) <= 4.0],
+        key=lambda r: r.get("composite_score", 0) or 0,
+    )[:5]
+    # Middle band 4.0 < score < 6.0
+    holds_band = [r for r in results if 4.0 < (r.get("composite_score") or 0) < 6.0]
+    holds_band.sort(key=lambda r: r.get("market_value", 0) or 0, reverse=True)
+    top_holds = holds_band[:5]
+
+    # Optional LLM thesis on top 5
+    if include_thesis and top_buys:
+        for entry in top_buys[:5]:
+            try:
+                thesis_md, thesis_warnings = _generate_thesis(
+                    entry["symbol"],
+                    entry.get("quote"),
+                    entry.get("scores", {}) or {},
+                    {k: {"reason": v.get("reason")} for k, v in (entry.get("signals_summary", {}) or {}).items()},
+                    entry.get("projection", {}) or {},
+                    entry.get("narrative", {}) or {},
+                    [],
+                )
+                entry["thesis_markdown"] = thesis_md
+                entry["thesis_model"] = THESIS_MODEL
+                if thesis_warnings:
+                    entry.setdefault("warnings", []).extend(thesis_warnings)
+            except Exception as e:
+                logger.warning(f"Thesis generation failed for {entry['symbol']}: {e}")
+
+    payload = {
+        "scanned_at": now.isoformat(),
+        "tickers_scanned": len(results),
+        "tickers_failed": len(failed),
+        "portfolio_value": portfolio_value,
+        "skipped_symbols": sorted(set(skipped)),
+        "top_buys": top_buys,
+        "top_sells": top_sells,
+        "top_holds": top_holds,
+        "ranked": results[:top_n],
+        "failed": failed,
+    }
+
+    _SCAN_CACHE[cache_key] = (now, payload)
+    return payload
