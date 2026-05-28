@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import '../styles/PortfolioPanel.css';
+import TickerDeepDive from './TickerDeepDive';
 
 interface Position {
   symbol: string;
@@ -317,42 +318,7 @@ const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ onRefresh }) => {
                 {/* Expanded Details */}
                 {expandedSymbol === pos.symbol && (
                   <div className="position-details">
-                    <div className="detail-row">
-                      <span className="label">Current Price:</span>
-                      <span className="value">{formatCurrency(pos.current_price)}</span>
-                    </div>
-                    <div className="detail-row">
-                      <span className="label">Avg Buy Price:</span>
-                      <span className="value">{formatCurrency(pos.average_buy_price)}</span>
-                    </div>
-                    <div className="detail-row">
-                      <span className="label">Cost Basis:</span>
-                      <span className="value">{formatCurrency(pos.cost_basis)}</span>
-                    </div>
-                    <div className="detail-row">
-                      <span className="label">Bid/Ask:</span>
-                      <span className="value">
-                        {formatCurrency(pos.bid_price)} / {formatCurrency(pos.ask_price)}
-                      </span>
-                    </div>
-                    {pos.pe_ratio && (
-                      <div className="detail-row">
-                        <span className="label">P/E Ratio:</span>
-                        <span className="value">{pos.pe_ratio}</span>
-                      </div>
-                    )}
-                    {pos.market_cap && (
-                      <div className="detail-row">
-                        <span className="label">Market Cap:</span>
-                        <span className="value">{pos.market_cap}</span>
-                      </div>
-                    )}
-                    {pos.account_name && (
-                      <div className="detail-row">
-                        <span className="label">Account:</span>
-                        <span className="value">{pos.account_name}</span>
-                      </div>
-                    )}
+                    <TickerDeepDive symbol={pos.symbol} compact />
                   </div>
                 )}
               </div>
@@ -370,4 +336,3 @@ const PortfolioPanel: React.FC<PortfolioPanelProps> = ({ onRefresh }) => {
 };
 
 export default PortfolioPanel;
-

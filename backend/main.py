@@ -46,6 +46,13 @@ except ImportError:
     logger.warning("Signal routes not available")
 
 try:
+    from deep_dive_routes import deep_dive_router
+    HAS_DEEP_DIVE_ROUTES = True
+except ImportError as _dd_err:
+    HAS_DEEP_DIVE_ROUTES = False
+    logging.getLogger(__name__).warning(f"Deep dive routes not available: {_dd_err}")
+
+try:
     from portfolio_routes import portfolio_router
     HAS_PORTFOLIO_ROUTES = True
 except ImportError:
@@ -208,6 +215,10 @@ app.include_router(market_router)
 
 if HAS_SIGNAL_ROUTES:
     app.include_router(signal_router)
+
+if HAS_DEEP_DIVE_ROUTES:
+    app.include_router(deep_dive_router)
+    logging.getLogger(__name__).info("Deep dive router registered at /api/research/deep/*")
 
 if HAS_PORTFOLIO_ROUTES:
     app.include_router(portfolio_router)

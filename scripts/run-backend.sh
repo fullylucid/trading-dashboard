@@ -26,6 +26,15 @@ source venv/bin/activate
 
 export PYTHONPATH="$REPO:$REPO/hermes"
 
+# Load Ollama Cloud credentials from Hermes .env if present
+if [ -f "$HOME/.hermes/.env" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$HOME/.hermes/.env"
+  set +a
+fi
+export OLLAMA_BASE_URL="${OLLAMA_BASE_URL:-https://ollama.com/v1}"
+
 exec python -m uvicorn main:app \
   --host 0.0.0.0 \
   --port 8000 \

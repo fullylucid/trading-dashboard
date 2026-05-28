@@ -1,9 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import useStore from '../store/useStore';
+import TickerDeepDive from './TickerDeepDive';
 
 function Watchlist() {
   const { watchlist } = useStore();
+  const [expandedSymbol, setExpandedSymbol] = useState(null);
 
   const getPriceColor = (change) => {
     if (change > 0) return 'text-green-400';
@@ -45,37 +47,48 @@ function Watchlist() {
             </tr>
           ) : (
             watchlist.map((item) => (
-              <tr
-                key={item.symbol}
-                className="border-b border-gray-700 hover:bg-gray-800/50 transition"
-              >
-                <td className="px-4 py-3 font-bold text-white">
-                  {item.symbol}
-                </td>
-                <td className="text-right px-4 py-3 font-mono">
-                  ${item.price?.toFixed(2) || 'N/A'}
-                </td>
-                <td className={`text-right px-4 py-3 font-semibold ${getPriceColor(item.change_percent)}`}>
-                  {item.change_percent > 0 ? '+' : ''}{item.change_percent?.toFixed(2) || '0.00'}%
-                </td>
-                <td className="text-right px-4 py-3 font-mono text-gray-400">
-                  {item.volume?.toLocaleString() || 'N/A'}
-                </td>
-                <td className="text-right px-4 py-3 font-mono text-gray-400">
-                  {item.bid?.toFixed(2) || 'N/A'} / {item.ask?.toFixed(2) || 'N/A'}
-                </td>
-                <td className="px-4 py-3">
-                  {getAlertBadge(item.alert_status)}
-                </td>
-                <td className="px-4 py-3">
-                  <Link
-                    to={`/chart/${item.symbol}`}
-                    className="inline-block px-3 py-1 bg-green-600 text-white rounded hover:bg-green-500 transition text-sm"
-                  >
-                    Chart →
-                  </Link>
-                </td>
-              </tr>
+              <>
+                <tr
+                  key={item.symbol}
+                  className="border-b border-gray-700 hover:bg-gray-800/50 transition cursor-pointer"
+                  onClick={() => setExpandedSymbol(expandedSymbol === item.symbol ? null : item.symbol)}
+                >
+                  <td className="px-4 py-3 font-bold text-white">
+                    {item.symbol}
+                  </td>
+                  <td className="text-right px-4 py-3 font-mono">
+                    ${item.price?.toFixed(2) || 'N/A'}
+                  </td>
+                  <td className={`text-right px-4 py-3 font-semibold ${getPriceColor(item.change_percent)}`}>
+                    {item.change_percent > 0 ? '+' : ''}{item.change_percent?.toFixed(2) || '0.00'}%
+                  </td>
+                  <td className="text-right px-4 py-3 font-mono text-gray-400">
+                    {item.volume?.toLocaleString() || 'N/A'}
+                  </td>
+                  <td className="text-right px-4 py-3 font-mono text-gray-400">
+                    {item.bid?.toFixed(2) || 'N/A'} / {item.ask?.toFixed(2) || 'N/A'}
+                  </td>
+                  <td className="px-4 py-3">
+                    {getAlertBadge(item.alert_status)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <Link
+                      to={`/chart/${item.symbol}`}
+                      className="inline-block px-3 py-1 bg-green-600 text-white rounded hover:bg-green-500 transition text-sm"
+                      onClick={(e) => e.stopPropagation()} // Prevent row expansion when clicking link
+                    >
+                      Chart →
+                    </Link>
+                  </td>
+                </tr>
+                {expandedSymbol === item.symbol && (
+                  <tr key={`${item.symbol}-deepdive`}>
+                    <td colSpan="7" className="p-0">
+                      <TickerDeepDive symbol={item.symbol} compact />
+                    </td>
+                  </tr>
+                )}
+              </>
             ))
           )}
         </tbody>
