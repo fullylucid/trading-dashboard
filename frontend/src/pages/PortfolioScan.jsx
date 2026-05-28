@@ -1,430 +1,348 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 
-const verdictColor = (verdict) => {
-  const v = (verdict || '').toUpperCase();
-  if (v.includes('STRONG BUY')) return 'bg-green-700 text-green-100';
-  if (v.includes('BUY')) return 'bg-green-900 text-green-200';
-  if (v.includes('STRONG SELL')) return 'bg-red-700 text-red-100';
-  if (v.includes('SELL')) return 'bg-red-900 text-red-200';
-  if (v.includes('HOLD')) return 'bg-yellow-900 text-yellow-200';
-  return 'bg-gray-700 text-gray-200';
-};
-
-const fmtMoney = (n) => {
-  if (n === null || n === undefined || isNaN(n)) return '—';
-  return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
-};
-
-const fmtPct = (n) => {
-  if (n === null || n === undefined || isNaN(n)) return '—';
-  return `${(n * (Math.abs(n) < 1 ? 100 : 1)).toFixed(2)}%`;
-};
-
-// Minimal markdown renderer (headings, bold, italic, lists, line breaks)
-const renderMarkdown = (md) => {
-  if (!md) return null;
-  const lines = md.split('\n');
-  const out = [];
-  let listBuf = [];
-  const flushList = () => {
-    if (listBuf.length) {
-      out.push(
-        <ul key={`ul-${out.length}`} className="list-disc list-inside my-2 text-gray-300 space-y-1">
-          {listBuf.map((li, i) => (
-            <li key={i} dangerouslySetInnerHTML={{ __html: inlineFmt(li) }} />
-          ))}
-        </ul>
-      );
-      listBuf = [];
-    }
-  };
-  const inlineFmt = (s) =>
-    s
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      .replace(/`(.+?)`/g, '<code class="bg-gray-900 px-1 rounded text-green-300">$1</code>');
-
-  lines.forEach((raw, idx) => {
-    const line = raw.trimEnd();
-    if (/^###\s+/.test(line)) {
-      flushList();
-      out.push(
-        <h3 key={idx} className="text-base font-semibold text-green-300 mt-3 mb-1">
-          {line.replace(/^###\s+/, '')}
-        </h3>
-      );
-    } else if (/^##\s+/.test(line)) {
-      flushList();
-      out.push(
-        <h2 key={idx} className="text-lg font-bold text-green-200 mt-4 mb-2">
-          {line.replace(/^##\s+/, '')}
-        </h2>
-      );
-    } else if (/^#\s+/.test(line)) {
-      flushList();
-      out.push(
-        <h1 key={idx} className="text-xl font-bold text-white mt-4 mb-2">
-          {line.replace(/^#\s+/, '')}
-        </h1>
-      );
-    } else if (/^\s*[-*]\s+/.test(line)) {
-      listBuf.push(line.replace(/^\s*[-*]\s+/, ''));
-    } else if (line.trim() === '') {
-      flushList();
-    } else {
-      flushList();
-      out.push(
-        <p
-          key={idx}
-          className="text-gray-300 text-sm leading-relaxed my-1"
-          dangerouslySetInnerHTML={{ __html: inlineFmt(line) }}
-        />
-      );
-    }
-  });
-  flushList();
-  return out;
-};
-
-function ResultCard({ item, expandable }) {
-  const [open, setOpen] = useState(false);
-  const hasThesis = expandable && item.thesis_markdown;
-  return (
-    <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-gray-600 transition">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-3">
-          <span className="text-lg font-bold text-white">{item.symbol}</span>
-          <span className={`px-2 py-0.5 rounded text-xs font-semibold ${verdictColor(item.verdict)}`}>
-            {item.verdict || '—'}
-          </span>
-        </div>
-        <div className="text-right">
-          <div className="text-sm text-gray-400">Score</div>
-          <div className="text-lg font-mono text-green-300">
-            {item.composite_score != null ? Number(item.composite_score).toFixed(2) : '—'}
-          </div>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3 text-sm">
-        <div>
-          <div className="text-xs text-gray-500">Market Value</div>
-          <div className="text-gray-200">{fmtMoney(item.market_value)}</div>
-        </div>
-        <div>
-          <div className="text-xs text-gray-500">% Portfolio</div>
-          <div className="text-gray-200">
-            {item.pct_of_portfolio != null ? `${Number(item.pct_of_portfolio).toFixed(2)}%` : '—'}
-          </div>
-        </div>
-        <div>
-          <div className="text-xs text-gray-500">Units</div>
-          <div className="text-gray-200">{item.units != null ? Number(item.units).toFixed(4) : '—'}</div>
-        </div>
-      </div>
-      {hasThesis && (
-        <div className="mt-3 border-t border-gray-700 pt-3">
-          <button
-            onClick={() => setOpen(!open)}
-            className="text-sm text-green-400 hover:text-green-300 font-medium"
-          >
-            {open ? '▼ Hide Thesis' : '▶ Show Thesis'}
-          </button>
-          {open && (
-            <div className="mt-2 bg-gray-900/50 rounded p-3 max-h-96 overflow-y-auto">
-              {renderMarkdown(item.thesis_markdown)}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Section({ title, items, expandable }) {
-  if (!items || items.length === 0) {
-    return (
-      <div>
-        <h2 className="text-xl font-bold text-white mb-3">{title}</h2>
-        <div className="text-gray-500 text-sm bg-gray-800 rounded-lg p-4">No items.</div>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <h2 className="text-xl font-bold text-white mb-3">
-        {title} <span className="text-gray-500 text-sm font-normal">({items.length})</span>
-      </h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {items.map((it, i) => (
-          <ResultCard key={`${it.symbol}-${i}`} item={it} expandable={expandable} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function PortfolioScan() {
+const PortfolioScan = () => {
   const [jobId, setJobId] = useState(null);
-  const [status, setStatus] = useState(null); // pending|running|complete|failed
+  const [status, setStatus] = useState('idle'); // idle, queued, running, complete, error
   const [progress, setProgress] = useState({ scanned: 0, total: 0 });
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
-  const [topN, setTopN] = useState(15);
-  const [includeThesis, setIncludeThesis] = useState(true);
-  const pollRef = useRef(null);
-
-  const isRunning = status === 'pending' || status === 'running';
+  const [expandedCards, setExpandedCards] = useState({});
+  const [expandedRows, setExpandedRows] = useState({});
+  const pollInterval = useRef(null);
 
   const clearPoll = () => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
+    if (pollInterval.current) {
+      clearInterval(pollInterval.current);
+      pollInterval.current = null;
     }
   };
 
-  useEffect(() => () => clearPoll(), []);
+  useEffect(() => {
+    return () => clearPoll();
+  }, []);
 
-  const startScan = async () => {
-    setError(null);
-    setResult(null);
-    setProgress({ scanned: 0, total: 0 });
+  const runScan = async () => {
     try {
-      const res = await axios.post(
-        `/api/portfolio/scan?top_n=${topN}&include_thesis=${includeThesis}`
-      );
-      const id = res.data.job_id;
-      setJobId(id);
-      setStatus(res.data.status || 'pending');
+      setStatus('queued');
+      setProgress({ scanned: 0, total: 0 });
+      setResult(null);
+      setError(null);
       clearPoll();
-      pollRef.current = setInterval(() => pollStatus(id), 4000);
-      // also poll immediately
-      pollStatus(id);
+
+      const response = await axios.post('/api/portfolio/scan?top_n=15&include_thesis=true');
+      setJobId(response.data.job_id);
+
+      pollInterval.current = setInterval(() => {
+        checkStatus(response.data.job_id);
+      }, 4000);
     } catch (err) {
-      console.error('Scan start failed:', err);
-      setError(err?.response?.data?.detail || err.message || 'Failed to start scan');
-      setStatus('failed');
+      setStatus('error');
+      setError(err.response?.data?.error || err.message || 'Failed to start scan');
+      clearPoll();
     }
   };
 
-  const pollStatus = async (id) => {
+  const checkStatus = async (id) => {
     try {
-      const res = await axios.get(`/api/portfolio/scan/${id}`);
-      const data = res.data;
+      const response = await axios.get(`/api/portfolio/scan/${id}`);
+      const data = response.data;
+
       setStatus(data.status);
-      if (data.progress) setProgress(data.progress);
+
+      if (data.status === 'running' || data.status === 'queued') {
+        if (data.progress) {
+          setProgress(data.progress);
+        }
+      }
+
       if (data.status === 'complete') {
-        setResult(data.result || null);
+        setResult(data.result);
         clearPoll();
-      } else if (data.status === 'failed') {
+      } else if (data.status === 'error') {
         setError(data.error || 'Scan failed');
         clearPoll();
       }
     } catch (err) {
-      console.error('Poll failed:', err);
-      setError(err?.response?.data?.detail || err.message || 'Polling error');
-      setStatus('failed');
+      setStatus('error');
+      setError(err.message || 'Failed to check status');
       clearPoll();
     }
   };
 
-  const progressPct =
-    progress.total > 0 ? Math.min(100, Math.round((progress.scanned / progress.total) * 100)) : 0;
+  const toggleCard = (ticker) => {
+    setExpandedCards(prev => ({
+      ...prev,
+      [ticker]: !prev[ticker]
+    }));
+  };
 
-  const allResults = result?.all_results || [];
-  const sortedAll = [...allResults].sort(
-    (a, b) => (b.composite_score ?? -Infinity) - (a.composite_score ?? -Infinity)
-  );
+  const toggleRow = (ticker) => {
+    setExpandedRows(prev => ({
+      ...prev,
+      [ticker]: !prev[ticker]
+    }));
+  };
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-      <div className="mb-6">
-        <h1 className="text-2xl sm:text-3xl font-bold text-white mb-1">📊 Portfolio Scan</h1>
-        <p className="text-gray-400 text-sm">
-          Run a composite quant scan across your portfolio and surface top buys, sells, and holds.
-        </p>
-      </div>
+  const actionColor = (action) => {
+    switch (action) {
+      case 'Strong Buy': return 'bg-green-700 text-green-100';
+      case 'Buy': return 'bg-green-900 text-green-200';
+      case 'Hold': return 'bg-yellow-900 text-yellow-200';
+      case 'Sell': return 'bg-red-900 text-red-200';
+      case 'Strong Sell': return 'bg-red-700 text-red-100';
+      default: return 'bg-gray-700 text-gray-200';
+    }
+  };
 
-      {/* Controls */}
-      <div className="bg-gray-800 rounded-lg p-4 mb-6 border border-gray-700">
-        <div className="flex flex-col sm:flex-row sm:items-end gap-4">
-          <div className="flex-1 grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Top N</label>
-              <input
-                type="number"
-                min="1"
-                max="50"
-                value={topN}
-                onChange={(e) => setTopN(parseInt(e.target.value || '15', 10))}
-                disabled={isRunning}
-                className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white disabled:opacity-50"
-              />
-            </div>
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 text-sm text-gray-300">
-                <input
-                  type="checkbox"
-                  checked={includeThesis}
-                  onChange={(e) => setIncludeThesis(e.target.checked)}
-                  disabled={isRunning}
-                  className="rounded"
-                />
-                Include AI thesis
-              </label>
-            </div>
-          </div>
-          <button
-            onClick={startScan}
-            disabled={isRunning}
-            className={`px-6 py-2 rounded font-semibold transition ${
-              isRunning
-                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                : 'bg-green-600 hover:bg-green-500 text-white'
-            }`}
-          >
-            {isRunning ? 'Scanning...' : '▶ Run Scan'}
-          </button>
-        </div>
-      </div>
+  const renderMarkdown = (markdown) => {
+    if (!markdown) return null;
+    return (
+      <div 
+        className="prose prose-invert max-w-none"
+        dangerouslySetInnerHTML={{ 
+          __html: markdown
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/\n/g, '<br />')
+        }} 
+      />
+    );
+  };
 
-      {/* Progress */}
-      {isRunning && (
-        <div className="bg-gray-800 rounded-lg p-4 mb-6 border border-gray-700">
-          <div className="flex justify-between text-sm mb-2">
-            <span className="text-gray-300">
-              Scanning {progress.scanned} / {progress.total || '?'} tickers...
+  const formatCurrency = (value) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(value);
+  };
+
+  const formatScore = (score) => {
+    return score !== undefined && score !== null ? score.toFixed(1) : 'N/A';
+  };
+
+  const getThesisText = (row) => {
+    if (row.thesis) return row.thesis;
+    if (result?.theses?.[row.ticker]) return result.theses[row.ticker];
+    return null;
+  };
+
+  const renderCard = (item, index) => (
+    <div 
+      key={`${item.ticker}-${index}`} 
+      className="bg-gray-700 rounded-lg p-4 border border-gray-600"
+    >
+      <div className="flex justify-between items-start">
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-xl font-bold">{item.ticker}</span>
+            <span className={`px-2 py-1 rounded text-xs font-medium ${actionColor(item.action)}`}>
+              {item.action}
             </span>
-            <span className="text-green-300 font-mono">{progressPct}%</span>
           </div>
-          <div className="w-full bg-gray-900 rounded-full h-2 overflow-hidden">
-            <div
-              className="bg-green-500 h-full transition-all duration-500"
-              style={{ width: `${progressPct}%` }}
-            />
+          <div className="text-3xl font-mono text-green-300 mb-3">
+            {formatScore(item.composite_score)}
           </div>
-          <div className="text-xs text-gray-500 mt-2">Status: {status}</div>
-        </div>
-      )}
-
-      {/* Error */}
-      {error && (
-        <div className="bg-red-900/40 border border-red-700 rounded-lg p-4 mb-6">
-          <p className="text-red-200 text-sm font-semibold">⚠️ {error}</p>
-        </div>
-      )}
-
-      {/* Result */}
-      {result && (
-        <div className="space-y-6">
-          {/* Header card */}
-          <div className="bg-gray-800 rounded-lg p-4 sm:p-6 border border-gray-700">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div>
-                <div className="text-xs text-gray-400">Portfolio Value</div>
-                <div className="text-xl sm:text-2xl font-bold text-green-300">
-                  {fmtMoney(result.portfolio_value)}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-gray-400">Tickers Scanned</div>
-                <div className="text-xl sm:text-2xl font-bold text-white">
-                  {result.tickers_scanned ?? '—'}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-gray-400">Tickers Failed</div>
-                <div className="text-xl sm:text-2xl font-bold text-red-300">
-                  {result.tickers_failed ?? 0}
-                </div>
-              </div>
-              <div>
-                <div className="text-xs text-gray-400">Scanned At</div>
-                <div className="text-sm text-gray-200 mt-1">
-                  {result.scanned_at ? new Date(result.scanned_at).toLocaleString() : '—'}
-                </div>
-              </div>
-            </div>
-            {result.skipped_symbols && result.skipped_symbols.length > 0 && (
-              <div className="mt-4 text-xs text-gray-500">
-                Skipped: {result.skipped_symbols.join(', ')}
-              </div>
-            )}
-          </div>
-
-          <Section title="🟢 Top Buys" items={result.top_buys} expandable />
-          <Section title="🔴 Top Sells" items={result.top_sells} expandable={false} />
-          <Section title="🟡 Top Holds" items={result.top_holds} expandable={false} />
-
-          {/* Full ranked table */}
-          {sortedAll.length > 0 && (
+          <div className="grid grid-cols-3 gap-2 text-sm">
             <div>
-              <h2 className="text-xl font-bold text-white mb-3">All Ranked Tickers</h2>
-              <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-                <div className="max-h-96 overflow-y-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-900 sticky top-0 z-10">
-                      <tr className="text-gray-400 text-xs uppercase">
-                        <th className="text-left px-3 py-2">#</th>
-                        <th className="text-left px-3 py-2">Symbol</th>
-                        <th className="text-right px-3 py-2">Score</th>
-                        <th className="text-left px-3 py-2">Verdict</th>
-                        <th className="text-right px-3 py-2">Price</th>
-                        <th className="text-right px-3 py-2">Change %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedAll.map((row, i) => {
-                        const price = row.quote?.price ?? row.quote?.last ?? row.price;
-                        const chg = row.quote?.change_pct ?? row.change_pct;
-                        return (
-                          <tr
-                            key={`${row.symbol}-${i}`}
-                            className="border-t border-gray-700 hover:bg-gray-700/30"
-                          >
-                            <td className="px-3 py-2 text-gray-500">{i + 1}</td>
-                            <td className="px-3 py-2 font-semibold text-white">{row.symbol}</td>
-                            <td className="px-3 py-2 text-right font-mono text-green-300">
-                              {row.composite_score != null
-                                ? Number(row.composite_score).toFixed(2)
-                                : '—'}
-                            </td>
-                            <td className="px-3 py-2">
-                              <span
-                                className={`px-2 py-0.5 rounded text-xs ${verdictColor(row.verdict)}`}
-                              >
-                                {row.verdict || '—'}
-                              </span>
-                            </td>
-                            <td className="px-3 py-2 text-right text-gray-200">
-                              {price != null ? fmtMoney(price) : '—'}
-                            </td>
-                            <td
-                              className={`px-3 py-2 text-right font-mono ${
-                                chg > 0 ? 'text-green-400' : chg < 0 ? 'text-red-400' : 'text-gray-400'
-                              }`}
-                            >
-                              {chg != null ? `${Number(chg).toFixed(2)}%` : '—'}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+              <div className="text-gray-400">Technical</div>
+              <div className="font-mono">{formatScore(item.technical_score)}</div>
             </div>
-          )}
+            <div>
+              <div className="text-gray-400">Projection</div>
+              <div className="font-mono">{formatScore(item.projection_score)}</div>
+            </div>
+            <div>
+              <div className="text-gray-400">Narrative</div>
+              <div className="font-mono">{formatScore(item.narrative_score)}</div>
+            </div>
+          </div>
         </div>
-      )}
-
-      {!result && !isRunning && !error && (
-        <div className="bg-gray-800/50 rounded-lg p-8 text-center text-gray-400 border border-dashed border-gray-700">
-          Click <span className="text-green-400 font-semibold">Run Scan</span> to begin.
+      </div>
+      
+      <button 
+        onClick={() => toggleCard(`${item.ticker}-${index}`)}
+        className="mt-3 text-green-400 hover:text-green-300 text-sm flex items-center"
+      >
+        {expandedCards[`${item.ticker}-${index}`] ? '▼ Hide Thesis' : '▶ Show Thesis'}
+      </button>
+      
+      {expandedCards[`${item.ticker}-${index}`] && (
+        <div className="mt-3 pt-3 border-t border-gray-600">
+          {renderMarkdown(getThesisText(item))}
         </div>
       )}
     </div>
   );
-}
+
+  const renderProgressBar = () => {
+    if (status !== 'queued' && status !== 'running') return null;
+
+    const hasProgress = progress.total > 0;
+    
+    if (hasProgress) {
+      const percentage = Math.round((progress.scanned / progress.total) * 100);
+      return (
+        <div className="mb-6">
+          <div className="flex justify-between text-sm text-gray-300 mb-1">
+            <span>Scanning {progress.scanned} / {progress.total} tickers</span>
+            <span>{percentage}%</span>
+          </div>
+          <div className="w-full bg-gray-700 rounded-full h-2.5">
+            <div 
+              className="bg-green-600 h-2.5 rounded-full transition-all duration-300" 
+              style={{ width: `${percentage}%` }}
+            ></div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="mb-6">
+        <div className="text-sm text-gray-300 mb-1">Working...</div>
+        <div className="w-full bg-gray-700 rounded-full h-2.5">
+          <div className="bg-green-600 h-2.5 rounded-full animate-pulse w-full"></div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+      <div className="bg-gray-800 border border-gray-700 rounded-lg p-6">
+        <h1 className="text-2xl font-bold text-white mb-6">Portfolio Scan</h1>
+        
+        {error && (
+          <div className="bg-red-900/50 border border-red-700 rounded-lg p-4 mb-6">
+            <div className="text-red-200">{error}</div>
+          </div>
+        )}
+
+        <button
+          onClick={runScan}
+          disabled={status === 'queued' || status === 'running'}
+          className={`w-full py-3 px-4 rounded-lg font-medium text-white mb-6 ${
+            status === 'queued' || status === 'running'
+              ? 'bg-green-700 cursor-not-allowed'
+              : 'bg-green-600 hover:bg-green-500'
+          }`}
+        >
+          {status === 'queued' || status === 'running' ? 'Scanning…' : '▶ Run Full Portfolio Scan'}
+        </button>
+
+        {renderProgressBar()}
+
+        {status === 'idle' && !result && (
+          <div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center text-gray-400">
+            Click Run Full Portfolio Scan to begin.
+          </div>
+        )}
+
+        {result && (
+          <div className="space-y-8">
+            <div className="text-center py-4">
+              <div className="text-gray-400 text-sm">Portfolio Value</div>
+              <div className="text-3xl font-bold text-white">
+                {formatCurrency(result.portfolio_value)}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div>
+                <h2 className="text-xl font-bold text-green-300 mb-4 flex items-center">
+                  <span className="mr-2">🟢</span> Top Buys
+                </h2>
+                <div className="space-y-4">
+                  {result.top_buys.map((item, index) => renderCard(item, index))}
+                </div>
+              </div>
+
+              <div>
+                <h2 className="text-xl font-bold text-red-300 mb-4 flex items-center">
+                  <span className="mr-2">🔴</span> Top Sells
+                </h2>
+                <div className="space-y-4">
+                  {result.top_sells.map((item, index) => renderCard(item, index))}
+                </div>
+              </div>
+
+              <div>
+                <h2 className="text-xl font-bold text-yellow-300 mb-4 flex items-center">
+                  <span className="mr-2">🟡</span> Top Holds
+                </h2>
+                <div className="space-y-4">
+                  {result.top_holds.map((item, index) => renderCard(item, index))}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h2 className="text-xl font-bold text-white mb-4">
+                All Ranked Tickers ({result.all_results.length})
+              </h2>
+              <div className="bg-gray-700 rounded-lg border border-gray-600 overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-gray-600 text-gray-300 text-sm">
+                    <tr>
+                      <th className="py-3 px-4 text-left">#</th>
+                      <th className="py-3 px-4 text-left">Ticker</th>
+                      <th className="py-3 px-4 text-left">Action</th>
+                      <th className="py-3 px-4 text-left">Composite</th>
+                      <th className="py-3 px-4 text-left">Technical</th>
+                      <th className="py-3 px-4 text-left">Projection</th>
+                      <th className="py-3 px-4 text-left">Narrative</th>
+                      <th className="py-3 px-4 text-left"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-600">
+                    {result.all_results
+                      .sort((a, b) => b.composite_score - a.composite_score)
+                      .map((item, index) => (
+                        <React.Fragment key={item.ticker}>
+                          <tr className="hover:bg-gray-600/50">
+                            <td className="py-3 px-4 text-gray-300">{index + 1}</td>
+                            <td className="py-3 px-4 font-medium">{item.ticker}</td>
+                            <td className="py-3 px-4">
+                              <span className={`px-2 py-1 rounded text-xs font-medium ${actionColor(item.action)}`}>
+                                {item.action}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-mono text-green-300">{formatScore(item.composite_score)}</td>
+                            <td className="py-3 px-4 font-mono">{formatScore(item.technical_score)}</td>
+                            <td className="py-3 px-4 font-mono">{formatScore(item.projection_score)}</td>
+                            <td className="py-3 px-4 font-mono">{formatScore(item.narrative_score)}</td>
+                            <td className="py-3 px-4">
+                              <button 
+                                onClick={() => toggleRow(item.ticker)}
+                                className="text-gray-400 hover:text-white"
+                              >
+                                {expandedRows[item.ticker] ? '▼' : '▶'}
+                              </button>
+                            </td>
+                          </tr>
+                          {expandedRows[item.ticker] && (
+                            <tr>
+                              <td colSpan="8" className="px-4 pb-4">
+                                <div className="pl-8 pr-4 pt-2 border-t border-gray-600">
+                                  {renderMarkdown(getThesisText(item))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export default PortfolioScan;
