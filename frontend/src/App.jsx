@@ -8,6 +8,7 @@ import Navigation from './components/Navigation';
 import Dashboard from './pages/Dashboard';
 import ChartView from './pages/ChartView';
 import SignalHistory from './pages/SignalHistory';
+import HermesPortal from './pages/HermesPortal';
 
 // Store
 import useStore from './store/useStore';
@@ -86,6 +87,7 @@ function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/chart/:symbol" element={<ChartView />} />
           <Route path="/signals" element={<SignalHistory />} />
+          <Route path="/portal" element={<HermesPortal />} />
         </Routes>
       </div>
     </Router>
