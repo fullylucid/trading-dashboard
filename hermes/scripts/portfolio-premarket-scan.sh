@@ -12,7 +12,7 @@ set -uo pipefail
 
 # --- config ---
 API_BASE="${API_BASE:-https://shaptech-3p3qo.ondigitalocean.app}"
-TOP_N="${TOP_N:-15}"
+TOP_N="${TOP_N:-10}"
 INCLUDE_THESIS="${INCLUDE_THESIS:-true}"
 MAX_POLLS="${MAX_POLLS:-40}"   # 40 * 5s = 200s max wait
 SLEEP_SEC="${SLEEP_SEC:-5}"
