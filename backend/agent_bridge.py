@@ -57,20 +57,21 @@ except ImportError:
 # Configuration
 # ============================================================================
 
-# Use logical db /1 so the agent bus never collides with / is evicted by the
-# (separate) cache that lives in db /0.
+# Use a separate logical db so the agent bus never collides with / is evicted
+# by the cache that lives in db /0.
+# NOTE: some managed Redis tiers expose only db 0. If so, set AGENT_BUS_REDIS_DB=0
+# and rely on the `agent:` key namespace + a no-evict maxmemory policy instead.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+AGENT_BUS_REDIS_DB = os.getenv("AGENT_BUS_REDIS_DB", "1")
 
 
 def _bus_redis_url() -> str:
-    """Force the agent bus onto logical db /1 regardless of the cache's db."""
-    url = REDIS_URL
-    # Replace a trailing /<db> with /1, or append /1 if none present.
-    if "://" in url:
-        head, _, tail = url.partition("://")
-        host_part, slash, _db = tail.partition("/")
-        return f"{head}://{host_part}/1"
-    return url
+    """Point the agent bus at its own logical db, preserving every other part of
+    the URL. Critically, TLS query params (e.g. ?ssl_cert_reqs=required on a
+    managed rediss:// endpoint) MUST survive — the old string-split dropped them."""
+    from urllib.parse import urlsplit, urlunsplit
+    parts = urlsplit(REDIS_URL)
+    return urlunsplit(parts._replace(path=f"/{AGENT_BUS_REDIS_DB}"))
 
 
 OWNER_PASSWORD_HASH = os.getenv("OWNER_PASSWORD_HASH", "")
