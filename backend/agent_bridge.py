@@ -317,13 +317,15 @@ async def enqueue(req: EnqueueRequest, request: Request):
 
 
 @router.get("/next")
-async def next_job(request: Request, wait: int = Query(25, ge=0, le=60)):
+async def next_job(request: Request, wait: int = Query(0, ge=0, le=60)):
+    # Non-blocking LPOP, NOT BLPOP. Upstash serverless Redis times out long
+    # blocking reads, so the worker short-polls (see worker POLL_INTERVAL).
+    # `wait` is accepted for backward-compat but ignored.
     require_worker_token(request)
     r = _require_ready()
-    result = await r.blpop(QUEUE_KEY, timeout=wait)
-    if result is None:
+    raw = await r.lpop(QUEUE_KEY)
+    if raw is None:
         return Response(status_code=204)
-    _key, raw = result
     job = json.loads(raw)
     await r.hset(f"agent:job:{job['job_id']}", "status", "running")
     return job
