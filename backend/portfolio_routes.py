@@ -8,13 +8,24 @@ longer wired up.
 """
 
 from fastapi import APIRouter, Query, HTTPException
+from fastapi.responses import JSONResponse
 from typing import Optional, List, Dict, Any, Tuple, Callable
 import asyncio
+import json
 import logging
+import os
 import re
+import tempfile
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+try:
+    # Py3.9+: zoneinfo in stdlib
+    from zoneinfo import ZoneInfo
+    _PT_TZ = ZoneInfo("America/Los_Angeles")
+except Exception:  # pragma: no cover - fallback if tzdata missing
+    _PT_TZ = timezone(timedelta(hours=-8))
 
 from snaptrade_portfolio import get_portfolio_instance, clear_portfolio_cache
 from deep_dive_routes import _run_deep_dive, _generate_thesis, THESIS_MODEL
@@ -522,6 +533,55 @@ def _gc_jobs() -> None:
         _scan_jobs.pop(jid, None)
 
 
+# ---------------------------------------------------------------------------
+# Daily-snapshot cache — persist the latest completed scan to disk so the
+# dashboard can render instantly without kicking off a fresh 3-min scan.
+# ---------------------------------------------------------------------------
+
+def _snapshot_path() -> str:
+    return os.environ.get("SCAN_SNAPSHOT_PATH", "/tmp/portfolio_scan_latest.json")
+
+
+def _save_scan_snapshot(result: Dict[str, Any]) -> Optional[str]:
+    """Atomically write the latest completed scan result + metadata to disk.
+
+    Returns the snapshot path on success, None on failure. Failures are logged
+    but never raised — caching is best-effort and must not break a scan job.
+    """
+    try:
+        path = _snapshot_path()
+        parent = os.path.dirname(path) or "."
+        os.makedirs(parent, exist_ok=True)
+        now_utc = datetime.now(timezone.utc)
+        try:
+            now_pt = now_utc.astimezone(_PT_TZ)
+        except Exception:
+            now_pt = now_utc
+        payload = {
+            "saved_at": now_utc.isoformat(),
+            "saved_at_pt": now_pt.isoformat(),
+            "result": result,
+        }
+        fd, tmp = tempfile.mkstemp(
+            prefix=".portfolio_scan_latest.", suffix=".json", dir=parent
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, default=str)
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+        logger.info(f"Portfolio scan snapshot written to {path}")
+        return path
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Failed to write scan snapshot: {e}")
+        return None
+
+
 async def _run_scan_job(job_id: str, top_n: int, include_thesis: bool, refresh: bool) -> None:
     """Background runner — drives _execute_scan and updates the job record."""
     _gc_jobs()
@@ -542,6 +602,12 @@ async def _run_scan_job(job_id: str, top_n: int, include_thesis: bool, refresh: 
         scanned = result.get("scanned", result.get("tickers_scanned", 0))
         total = job.get("progress", {}).get("total") or scanned
         job["progress"] = {"scanned": scanned, "total": total, "percent": 100}
+        # Best-effort: persist latest completed scan so the dashboard can load
+        # instantly from disk instead of waiting on a fresh 3-min scan.
+        try:
+            _save_scan_snapshot(result)
+        except Exception as snap_err:  # noqa: BLE001
+            logger.warning(f"Snapshot persist failed (non-fatal): {snap_err}")
     except Exception as e:  # noqa: BLE001
         job["status"] = "error"
         job["error"] = f"{type(e).__name__}: {e}"
@@ -571,6 +637,45 @@ async def start_scan_job(
     }
     asyncio.create_task(_run_scan_job(job_id, top_n, include_thesis, refresh))
     return {"job_id": job_id, "status": "queued", "message": "Scan started"}
+
+
+@portfolio_router.get("/scan/latest")
+async def get_scan_latest():
+    """Return the most recently persisted completed scan snapshot.
+
+    The snapshot is written to disk by the background job runner whenever
+    a scan finishes successfully (including the nightly cron run). The
+    dashboard hits this endpoint on mount so it can render instantly
+    instead of triggering a fresh 3-minute scan every visit.
+    """
+    path = _snapshot_path()
+    if not os.path.exists(path):
+        return JSONResponse(status_code=404, content={"error": "no snapshot available yet"})
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to read scan snapshot {path}: {e}")
+        return JSONResponse(status_code=500, content={"error": f"snapshot read failed: {e}"})
+
+    saved_at = data.get("saved_at")
+    age_minutes = 0
+    if saved_at:
+        try:
+            dt = datetime.fromisoformat(saved_at)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            delta = datetime.now(timezone.utc) - dt
+            age_minutes = int(delta.total_seconds() // 60)
+        except Exception:
+            age_minutes = 0
+
+    return {
+        "saved_at": data.get("saved_at"),
+        "saved_at_pt": data.get("saved_at_pt"),
+        "result": data.get("result"),
+        "age_minutes": age_minutes,
+    }
 
 
 @portfolio_router.get("/scan/{job_id}")
