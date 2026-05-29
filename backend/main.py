@@ -257,8 +257,10 @@ async def root():
 
 
 @app.get("/health")
+@app.get("/api/health")
 async def health():
-    """Health check endpoint"""
+    """Health check endpoint (served at both /health and /api/health;
+    DigitalOcean ingress forwards /api/* to this service with the prefix preserved)."""
     return {
         "status": "healthy",
         "service": "Trading Dashboard API",
