@@ -20,10 +20,12 @@ for _p in (str(_REPO_ROOT), str(_HERMES_DIR)):
         sys.path.insert(0, _p)
 # ----------------------------------------------------------------------------
 
+import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
 
 from news_aggregator import NewsAggregator
 from earnings_calendar import EarningsCalendar
@@ -69,6 +71,25 @@ except Exception as _hp_err:
     logger = logging.getLogger(__name__)
     logger.warning(f"Hermes Portal not available: {_hp_err!r}")
 
+try:
+    from agent_bridge import (
+        router as agent_router,
+        startup_event as agent_startup,
+        shutdown_event as agent_shutdown,
+        set_ws_manager as agent_set_ws_manager,
+        verify_ws_ticket as agent_verify_ws_ticket,
+    )
+    HAS_AGENT_BRIDGE = True
+except Exception as _ab_err:
+    HAS_AGENT_BRIDGE = False
+    agent_router = None
+    logging.getLogger(__name__).warning(f"Agent bridge not available: {_ab_err!r}")
+
+from websocket_manager import WebSocketManager
+
+# Shared WebSocket manager singleton (used by the agent bridge live stream).
+ws_manager = WebSocketManager()
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -95,6 +116,11 @@ class Settings:
     )
     OLLAMA_CLOUD_API_KEY = os.getenv("OLLAMA_CLOUD_API_KEY", "")
     OLLAMA_CLOUD_MODEL = os.getenv("OLLAMA_CLOUD_MODEL", "kimi-k-3-70b")
+
+    # Agent bridge (messenger -> local Claude) secrets
+    OWNER_PASSWORD_HASH = os.getenv("OWNER_PASSWORD_HASH", "")
+    SESSION_SECRET = os.getenv("SESSION_SECRET", "")
+    AGENT_WORKER_TOKEN = os.getenv("AGENT_WORKER_TOKEN", "")
     
     # API Settings
     CORS_ORIGINS = [
@@ -150,7 +176,16 @@ async def lifespan(app: FastAPI):
             logger.info("Hermes Portal initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize Hermes Portal: {e}")
-    
+
+    # Initialize Agent Bridge if available (fail loud: the bus must reach Redis)
+    if HAS_AGENT_BRIDGE:
+        try:
+            await agent_startup()
+            agent_set_ws_manager(ws_manager)
+            logger.info("Agent bridge initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Agent bridge: {e}")
+
     logger.info("All services initialized successfully")
     logger.info(f"CORS origins: {settings.CORS_ORIGINS}")
     
@@ -176,7 +211,15 @@ async def lifespan(app: FastAPI):
             logger.info("Hermes Portal shutdown complete")
         except Exception as e:
             logger.error(f"Error shutting down Hermes Portal: {e}")
-    
+
+    # Shutdown Agent Bridge if available
+    if HAS_AGENT_BRIDGE:
+        try:
+            await agent_shutdown()
+            logger.info("Agent bridge shutdown complete")
+        except Exception as e:
+            logger.error(f"Error shutting down Agent bridge: {e}")
+
     await news_agg.clear_cache()
     await earnings_cal.clear_cache()
     await market_dat.clear_cache()
@@ -225,6 +268,34 @@ if HAS_PORTFOLIO_ROUTES:
 if HAS_HERMES_PORTAL and hermes_router is not None:
     app.include_router(hermes_router)
     logger.info("Hermes Portal router registered at /api/portal/*")
+
+if HAS_AGENT_BRIDGE and agent_router is not None:
+    app.include_router(agent_router)
+    logger.info("Agent bridge router registered at /api/agent/*")
+
+
+# ============================================================================
+# Agent live-stream WebSocket
+# ============================================================================
+
+@app.websocket("/ws/agent")
+async def agent_websocket(websocket: WebSocket):
+    """
+    Live stream of agent chat events to the browser.
+
+    Authenticated by a short-lived ticket (issued from GET /api/agent/ws-ticket
+    by an already-session-authenticated browser) passed as ?ticket=...; the
+    session cookie is not reliably readable in the WS handshake.
+
+    After connecting, the client subscribes to its conversation channel(s) with
+    {"action": "subscribe", "symbols": ["chat:<conversation_id>"]}.
+    """
+    ticket = websocket.query_params.get("ticket", "")
+    if not (HAS_AGENT_BRIDGE and agent_verify_ws_ticket(ticket)):
+        await websocket.close(code=4401)
+        return
+    client_id = f"agent-{uuid.uuid4().hex[:12]}"
+    await ws_manager.handle_connection(websocket, client_id)
 
 
 # ============================================================================
@@ -319,12 +390,16 @@ app.openapi = custom_openapi
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
-    """Global exception handler"""
+    """Global exception handler.
+
+    Log the full trace server-side only; return a generic 500 so tracebacks
+    (which may contain tokens/secrets) never reach the client.
+    """
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    return {
-        "error": "Internal server error",
-        "detail": str(exc),
-    }
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error"},
+    )
 
 
 if __name__ == "__main__":

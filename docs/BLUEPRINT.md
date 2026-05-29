@@ -121,14 +121,15 @@ These are the recurring architectural decisions we standardize on. New work shou
 
 - 🔴 **No inbound auth** on any API endpoint (only CORS, which is moot same-origin in prod). Gating issue before any sensitive endpoint ships. → Cloudflare Access + bcrypt session (planned).
 - 🔴 **`main` not branch-protected** + `deploy_on_push: true` → anything reaching `main` deploys live, ungated.
-- 🟠 **`backend/main.py` global exception handler** returns `str(exc)` to clients (~L318–325) — leaks tracebacks/secrets. Fix planned.
-- 🟠 **GitHub PAT over-scoped** — classic `ghp_` with full `repo`+`gist`; should be fine-grained, this-repo-only.
-- 🟡 **`websocket_manager.py` dormant** — fully built, never registered; frontend never connects.
+- 🟢 **`backend/main.py` global exception handler** — *fixed in the agent-bridge PR*: no longer returns `str(exc)`; logs server-side + generic 500.
+- 🟠 **GitHub PAT over-scoped** — classic `ghp_` with full `repo`+`gist`; should be fine-grained, this-repo-only. (Prereq for agent-bridge go-live.)
+- 🟢 **`websocket_manager.py`** — *wired in the agent-bridge PR*: `/ws/agent` registered (ticket-auth), `broadcast_chat()` added.
+- 🟠 **Frontend half-migrated** — duplicate `App.jsx`/`App.tsx` + `index.jsx`/`index.tsx`; live entry is `index.tsx → App.tsx` (Vite). The `.jsx` pair + `useStore.js` are orphaned cruft; candidates for cleanup.
 - 🟠 **Doc sprawl** — ~39 redundant top-level `*.md`. This blueprint supersedes them; candidates for cleanup.
 
 ---
 
 ## 8. In-flight / planned
 
-- 🔵 **Agent-bridge + in-app messenger** — always-on Redis job-bus + WSL2 local worker (headless Claude under Max) + floating multi-conversation messenger widget. Routes Schyler's requests (code edits→PR, data summaries, brainstorm, trigger scans) to Claude on the box. **Plan:** `~/.claude/plans/jolly-gliding-yao.md`. **Status:** refined via Ultraplan, executing remotely, landing as a PR. Prereqs (do first): Cloudflare Access, branch-protect `main`, fine-grained PAT, fix exc handler.
+- 🟡 **Agent-bridge + in-app messenger** — always-on Redis job-bus (`agent_bridge.py`, db /1, `agent:` namespace) + WSL2 local worker (`worker/agent_worker.py`, headless Claude under Max) + floating multi-conversation messenger widget (`MessengerWidget/*.tsx`, zustand + react-rnd). Routes Schyler's requests (code edits→PR, data summaries, brainstorm, trigger scans) to Claude on the box. **Plan:** `~/.claude/plans/jolly-gliding-yao.md`. **Status: PR OPEN, reviewed, NOT merged** — gated on prereqs: Cloudflare Access, branch-protect `main`, fine-grained PAT, DO secrets (`AGENT_WORKER_TOKEN`/`SESSION_SECRET`/`OWNER_PASSWORD_HASH`), confirm managed Redis exposes db /1 (else set `AGENT_BUS_REDIS_DB=0`). Live-validate: `claude -p` JSON `session_id` extraction + `acceptEdits`-grants-Bash in headless mode.
 - 🔵 **Scanner nervous-system tier** — zero-token scanners → escalate via the bus on threshold → worker → Telegram/messenger.

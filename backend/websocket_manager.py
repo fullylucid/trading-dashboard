@@ -156,6 +156,46 @@ class WebSocketManager:
         
         return notified
 
+    async def broadcast_chat(self, conversation_id: str, payload: Dict[str, Any]) -> int:
+        """
+        Broadcast an agent chat event to clients subscribed to a conversation.
+
+        Clients subscribe with the channel token ``chat:{conversation_id}``
+        (via the same ``subscribe`` action used for symbols). Mirrors
+        broadcast_signal but keys off conversation_id instead of symbol.
+
+        Args:
+            conversation_id: Conversation the event belongs to
+            payload: Event dict (chunk/final/error/title_update)
+
+        Returns:
+            Number of clients notified
+        """
+        channel = f"chat:{conversation_id}"
+        disconnected = []
+        notified = 0
+
+        for client_id, connection in self.active_connections.items():
+            if channel not in connection.subscriptions and "*" not in connection.subscriptions:
+                continue
+
+            success = await connection.send_json({
+                "type": "chat",
+                "channel": channel,
+                "data": payload,
+                "timestamp": datetime.utcnow().isoformat(),
+            })
+
+            if success:
+                notified += 1
+            else:
+                disconnected.append(client_id)
+
+        for client_id in disconnected:
+            await self.disconnect(client_id)
+
+        return notified
+
     async def broadcast_hermes_signal(self, signal) -> int:
         """
         Broadcast a Hermes Signal object (rich format) to all clients.
