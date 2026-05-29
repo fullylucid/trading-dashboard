@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 import EnhancedDashboard from './components/EnhancedDashboard';
 import PortfolioScan from './pages/PortfolioScan';
+import MessengerWidget from './components/MessengerWidget/MessengerWidget';
 
 const ROUTES: { to: string; label: string; end?: boolean }[] = [
   { to: '/', label: '📈 Dashboard', end: true },
@@ -128,6 +129,7 @@ function App() {
           <Route path="/" element={<EnhancedDashboard />} />
           <Route path="/portfolio-scan" element={<PortfolioScan />} />
         </Routes>
+        <MessengerWidget />
       </div>
     </BrowserRouter>
   );

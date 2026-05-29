@@ -1,0 +1,33 @@
+# systemd unit for the agent worker on the always-on WSL2 box.
+#
+# Install:
+#   sudo cp worker/agent-bridge.service /etc/systemd/system/
+#   mkdir -p ~/.config/agent-bridge
+#   cat > ~/.config/agent-bridge/.env <<'EOF'
+#   AGENT_BACKEND_URL=https://your-app-domain
+#   AGENT_WORKER_TOKEN=<the 32-byte urlsafe token, same as DO console>
+#   AGENT_REPO_DIR=/home/user/trading-dashboard-agent
+#   EOF
+#   chmod 600 ~/.config/agent-bridge/.env
+#   sudo systemctl daemon-reload && sudo systemctl enable --now agent-bridge
+#
+# The dedicated clone (AGENT_REPO_DIR) must already be `gh auth`'d with a
+# fine-grained PAT scoped to Contents + Pull Requests: write on this one repo.
+
+[Unit]
+Description=Trading Dashboard agent worker (messenger -> local Claude)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user
+Environment=HOME=/home/user
+EnvironmentFile=/home/user/.config/agent-bridge/.env
+WorkingDirectory=/home/user/trading-dashboard-agent
+ExecStart=/usr/bin/python3 /home/user/trading-dashboard/worker/agent_worker.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
