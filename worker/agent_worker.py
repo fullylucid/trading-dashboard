@@ -48,6 +48,7 @@ BASE_BRANCH = os.environ.get("AGENT_BASE_BRANCH", "main")
 CLAUDE_BIN = os.environ.get("CLAUDE_BIN", "claude")
 JOB_TIMEOUT = int(os.environ.get("JOB_TIMEOUT_SECS", "1800"))
 POLL_WAIT = int(os.environ.get("POLL_WAIT_SECS", "25"))
+POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SECS", "2"))  # idle gap between non-blocking polls
 
 STATE_DIR = Path(HOME_DIR) / ".local" / "share" / "agent-bridge"
 CONV_DIR = STATE_DIR / "conversations"
@@ -79,9 +80,8 @@ def fetch_next(client: httpx.Client):
     try:
         resp = client.get(
             f"{BACKEND_URL}/api/agent/next",
-            params={"wait": POLL_WAIT},
             headers=_headers(),
-            timeout=POLL_WAIT + 10,
+            timeout=20,
         )
     except httpx.HTTPError as e:
         logger.warning(f"poll failed: {e}")
@@ -324,6 +324,7 @@ def main():
         while True:
             job = fetch_next(client)
             if job is None:
+                time.sleep(POLL_INTERVAL)
                 continue
             job_id = job.get("job_id", "")
             if already_seen(job_id):
