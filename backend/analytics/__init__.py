@@ -36,6 +36,30 @@ from .position import (
     position_vol,
     position_beta,
 )
+from .signals import (
+    roc,
+    relative_strength,
+    rsi,
+    macd,
+    detect_divergence,
+    ma_structure,
+    support_resistance,
+    rvol,
+    gap_pct,
+    pct_of_52w_range,
+    days_to_earnings,
+)
+from .insider import (
+    filter_open_market_buys,
+    cluster_buys,
+    score_insider_signal,
+    fetch_form4,
+    OPEN_MARKET_BUY_CODE,
+)
+from .regime import (
+    regime_bias,
+    get_regime_with_bias,
+)
 
 __all__ = [
     # risk.py
@@ -63,4 +87,25 @@ __all__ = [
     "days_held",
     "position_vol",
     "position_beta",
+    # signals.py
+    "roc",
+    "relative_strength",
+    "rsi",
+    "macd",
+    "detect_divergence",
+    "ma_structure",
+    "support_resistance",
+    "rvol",
+    "gap_pct",
+    "pct_of_52w_range",
+    "days_to_earnings",
+    # insider.py
+    "filter_open_market_buys",
+    "cluster_buys",
+    "score_insider_signal",
+    "fetch_form4",
+    "OPEN_MARKET_BUY_CODE",
+    # regime.py
+    "regime_bias",
+    "get_regime_with_bias",
 ]

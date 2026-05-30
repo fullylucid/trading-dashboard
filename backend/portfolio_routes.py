@@ -436,7 +436,7 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
     async def _scan_one(sym: str) -> Dict[str, Any]:
         async with sem:
             try:
-                dd = await _run_deep_dive(sym, include_thesis=False)
+                dd = await _run_deep_dive(sym, include_thesis=False, include_analytics=False)
                 return {"symbol": sym, "_dd": dd}
             except Exception as e:  # noqa: BLE001
                 return {"symbol": sym, "error": str(e)}
@@ -464,12 +464,14 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
     # Build SPY completed-bar return series ONCE (per-process cached fetch) so
     # every per-ticker beta computation can reuse it without re-fetching.
     _spy_returns = None
+    _spy_close = None
     if _scan_analytics is not None:
         try:
             _spy_df = _scan_analytics._completed(_scan_analytics._fetch_ohlcv(_scan_analytics._BENCHMARK))
             if _spy_df is not None:
                 _spy_adj = _scan_analytics._adj_close(_spy_df)
                 if _spy_adj is not None:
+                    _spy_close = _spy_adj  # completed-bar SPY adj close (relative strength + regime)
                     _spy_returns = _scan_analytics._daily_returns(_spy_adj)
         except Exception as se:  # noqa: BLE001
             logger.warning(f"Failed to build SPY return series for analytics: {se}")
@@ -525,6 +527,7 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
                     account_value=portfolio_value or None,
                     entry_date=None,  # SnapTrade exposes no true entry date
                     spy_returns=_spy_returns,
+                    spy_close=_spy_close,
                 )
                 if an:
                     entry["analytics"] = an
@@ -601,6 +604,15 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
         except Exception as pe:  # noqa: BLE001
             logger.warning(f"Portfolio risk analytics failed: {pe}")
 
+    # Additive payload-level market-regime block (label + size/stop bias),
+    # read off the once-fetched SPY series. Fully wrapped: never fails the scan.
+    regime_block = None
+    if _scan_analytics is not None:
+        try:
+            regime_block = await _scan_analytics.regime_block(_spy_close)
+        except Exception as re_:  # noqa: BLE001
+            logger.warning(f"Regime analytics failed: {re_}")
+
     payload = {
         "scanned_at": now.isoformat(),
         "tickers_scanned": len(results),
@@ -625,6 +637,8 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
     # Additive, non-breaking: only attach when computed.
     if portfolio_risk_block is not None:
         payload["portfolio_risk"] = portfolio_risk_block
+    if regime_block is not None:
+        payload["regime"] = regime_block
 
     _SCAN_CACHE[cache_key] = (now, payload)
     return payload
