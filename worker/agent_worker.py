@@ -27,10 +27,12 @@ import sys
 import json
 import time
 import uuid
+import fcntl
 import shlex
 import logging
 import subprocess
 from pathlib import Path
+from contextlib import contextmanager
 
 import httpx
 
@@ -53,8 +55,45 @@ POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SECS", "2"))  # idle gap betwe
 STATE_DIR = Path(HOME_DIR) / ".local" / "share" / "agent-bridge"
 CONV_DIR = STATE_DIR / "conversations"
 SEEN_FILE = STATE_DIR / "seen_jobs.txt"
+# Cross-instance lock so only one `code`/`approval` job touches the shared
+# AGENT_REPO_DIR clone at a time — read-only jobs (data/brainstorm/scan) never
+# take it, so they run fully in parallel across the worker pool.
+CODE_LOCK_FILE = STATE_DIR / "code.lock"
+
+# Pool: each systemd template instance passes its number via AGENT_WORKER_ID
+# (%i). Falls back to PID for a standalone run. Logged for traceability.
+WORKER_ID = os.environ.get("AGENT_WORKER_ID", str(os.getpid()))
+
+# Max-subscription throttle handling: when `claude -p` reports a usage/rate
+# limit, back off and retry the SAME job locally rather than failing it.
+THROTTLE_RETRIES = int(os.environ.get("CLAUDE_THROTTLE_RETRIES", "3"))
+THROTTLE_MARKERS = (
+    "usage limit", "rate limit", "rate_limit", "overloaded",
+    "limit reached", "too many requests", "429", "529",
+)
 
 READONLY_TOOLS = "Read,Glob,Grep,Bash(git diff:*),Bash(ls:*),Bash(cat:*),WebSearch,WebFetch"
+
+
+@contextmanager
+def code_lock():
+    """Serialize repo-mutating jobs across all pool instances (flock on a
+    shared lockfile). Read-only jobs do not acquire this."""
+    CODE_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    f = open(CODE_LOCK_FILE, "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(f, fcntl.LOCK_UN)
+        f.close()
+
+
+def _looks_throttled(text: str, stderr: str, returncode: int) -> bool:
+    if returncode == 0:
+        return False
+    blob = f"{text}\n{stderr}".lower()
+    return any(m in blob for m in THROTTLE_MARKERS)
 
 # Secrets that must never end up in a diff/PR
 SECRET_PATTERNS = [
@@ -158,22 +197,36 @@ def run_claude(prompt: str, allowed_tools: str = None, resume_session: str = Non
     if allow_edits:
         cmd += ["--permission-mode", "acceptEdits"]
     env = dict(os.environ, HOME=HOME_DIR)
-    logger.info(f"claude: {shlex.join(cmd[:4])} ... (edits={allow_edits})")
-    proc = subprocess.run(cmd, cwd=cwd or HOME_DIR, env=env,
-                          capture_output=True, text=True, timeout=JOB_TIMEOUT)
-    out = proc.stdout.strip()
-    session_id = None
-    text = out
-    # --output-format json yields a JSON envelope; extract result + session_id
-    try:
-        data = json.loads(out)
-        text = data.get("result", out)
-        session_id = data.get("session_id")
-    except json.JSONDecodeError:
-        pass
-    if proc.returncode != 0 and not text:
-        text = proc.stderr.strip() or f"claude exited {proc.returncode}"
-    return text, session_id
+    logger.info(f"[w{WORKER_ID}] claude: {shlex.join(cmd[:4])} ... (edits={allow_edits})")
+
+    attempt = 0
+    while True:
+        proc = subprocess.run(cmd, cwd=cwd or HOME_DIR, env=env,
+                              capture_output=True, text=True, timeout=JOB_TIMEOUT)
+        out = proc.stdout.strip()
+        session_id = None
+        text = out
+        # --output-format json yields a JSON envelope; extract result + session_id
+        try:
+            data = json.loads(out)
+            text = data.get("result", out)
+            session_id = data.get("session_id")
+        except json.JSONDecodeError:
+            pass
+
+        # Max-subscription throttle: back off and retry the same job rather
+        # than burning it. Capped retries; exponential backoff (30s, 60s, 120s).
+        if _looks_throttled(text, proc.stderr, proc.returncode) and attempt < THROTTLE_RETRIES:
+            backoff = min(30 * (2 ** attempt), 240)
+            logger.warning(f"[w{WORKER_ID}] claude throttled "
+                           f"(attempt {attempt + 1}/{THROTTLE_RETRIES}); backing off {backoff}s")
+            time.sleep(backoff)
+            attempt += 1
+            continue
+
+        if proc.returncode != 0 and not text:
+            text = proc.stderr.strip() or f"claude exited {proc.returncode}"
+        return text, session_id
 
 
 def generate_title(content: str) -> str:
@@ -270,7 +323,8 @@ def handle_job(job: dict, client: httpx.Client):
     content = job.get("content", "")
 
     if kind == "approval":
-        handle_approval(job, client)
+        with code_lock():  # gh pr merge/close touches the shared clone
+            handle_approval(job, client)
         return
 
     # Conversation continuity via claude --resume (session id supplied by backend)
@@ -290,10 +344,13 @@ def handle_job(job: dict, client: httpx.Client):
         return
 
     if kind == "code":
-        prepare_repo()
-        text, session_id = run_claude(content, resume_session=resume,
-                                      allow_edits=True, cwd=REPO_DIR)
-        pr_url, summary = open_pr_for_changes(job_id)
+        # Hold the lock across reset/edit/branch/push so two pool instances
+        # can't clobber the single shared clone. Result-posting stays outside.
+        with code_lock():
+            prepare_repo()
+            text, session_id = run_claude(content, resume_session=resume,
+                                          allow_edits=True, cwd=REPO_DIR)
+            pr_url, summary = open_pr_for_changes(job_id)
         body = f"{text}\n\n---\n{summary}"
         post_result(client, job_id, 1, "final", body,
                     conversation_id=conversation_id,
@@ -318,7 +375,7 @@ def main():
         logger.error("AGENT_BACKEND_URL and AGENT_WORKER_TOKEN are required")
         sys.exit(1)
     _ensure_dirs()
-    logger.info(f"agent worker online -> {BACKEND_URL} (repo={REPO_DIR})")
+    logger.info(f"[w{WORKER_ID}] agent worker online -> {BACKEND_URL} (repo={REPO_DIR})")
 
     with httpx.Client() as client:
         while True:
