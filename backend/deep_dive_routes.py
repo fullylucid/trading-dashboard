@@ -22,6 +22,16 @@ try:
 except ImportError:
     from charlotte.ollama_deep_analyzer import OllamaPrimaryClient
 
+# Wiring/IO layer for the additive analytics (signals, insider, regime) blocks.
+# Optional: if it cannot be imported the deep-dive simply omits those blocks.
+try:
+    import scan_analytics as _scan_analytics  # type: ignore
+except Exception:  # noqa: BLE001
+    try:
+        from backend import scan_analytics as _scan_analytics  # type: ignore
+    except Exception:  # noqa: BLE001
+        _scan_analytics = None
+
 # Cache for deep dive results
 _deep_dive_cache: Dict[str, tuple] = {}  # {symbol: (timestamp, result)}
 
@@ -181,7 +191,9 @@ DATA:
     return _generate_thesis_fallback(scores, projection), warnings
 
 
-async def _run_deep_dive(symbol: str, *, include_thesis: bool = True) -> Dict[str, Any]:
+async def _run_deep_dive(
+    symbol: str, *, include_thesis: bool = True, include_analytics: bool = True
+) -> Dict[str, Any]:
     """
     Run the deep-dive analyzer for a single symbol.
 
@@ -283,6 +295,44 @@ async def _run_deep_dive(symbol: str, *, include_thesis: bool = True) -> Dict[st
             "thesis_markdown": thesis_markdown,
             "thesis_model": THESIS_MODEL,
         })
+
+    # Additive analytics blocks (signals / insider / regime). The single-symbol
+    # deep-dive fetches its own SPY series for relative-strength + regime (the
+    # per-process cache makes this cheap). Fully wrapped — never breaks the dive.
+    if include_analytics and _scan_analytics is not None:
+        try:
+            _spy_close = None
+            _spy_returns = None
+            try:
+                _spy_df = _scan_analytics._completed(
+                    _scan_analytics._fetch_ohlcv(_scan_analytics._BENCHMARK)
+                )
+                if _spy_df is not None:
+                    _spy_adj = _scan_analytics._adj_close(_spy_df)
+                    if _spy_adj is not None:
+                        _spy_close = _spy_adj
+                        _spy_returns = _scan_analytics._daily_returns(_spy_adj)
+            except Exception as se:  # noqa: BLE001
+                logger.debug(f"deep_dive[{symbol}]: SPY series fetch failed: {se}")
+
+            cur_price = (quote or {}).get("price") if quote else None
+            an = _scan_analytics.per_ticker_analytics(
+                symbol,
+                avg_cost=None,          # deep-dive has no position context
+                current_price=cur_price,
+                account_value=None,
+                entry_date=None,
+                spy_returns=_spy_returns,
+                spy_close=_spy_close,
+            )
+            if an:
+                result["analytics"] = an
+
+            reg = await _scan_analytics.regime_block(_spy_close)
+            if reg is not None:
+                result["regime"] = reg
+        except Exception as ae:  # noqa: BLE001
+            logger.warning(f"deep_dive[{symbol}]: additive analytics failed: {ae}")
 
     result["warnings"] = warnings
     return result

@@ -13,6 +13,9 @@ services:
   - key: FINNHUB_API_KEY
     scope: RUN_AND_BUILD_TIME
     value: ${FINNHUB_API_KEY}
+  - key: SEC_EDGAR_USER_AGENT
+    scope: RUN_AND_BUILD_TIME
+    value: trading-dashboard schylermcnally@gmail.com
   - key: REDIS_URL
     scope: RUN_AND_BUILD_TIME
     value: ${REDIS_URL}
