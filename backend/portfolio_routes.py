@@ -705,6 +705,17 @@ def _snapshot_path() -> str:
     return os.environ.get("SCAN_SNAPSHOT_PATH", "/tmp/portfolio_scan_latest.json")
 
 
+# Redis-backed snapshot — durable across DO container restarts/deploys (the /tmp
+# disk snapshot is ephemeral and wiped every deploy, so the page kept finding no
+# cache and re-scanning). Instantiate with the REAL REDIS_URL, not CacheManager's
+# localhost default (which would silently fall back to per-instance in-memory).
+from cache_manager import CacheManager  # noqa: E402
+
+_snapshot_cache = CacheManager(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+_SNAPSHOT_REDIS_KEY = "portfolio:scan:latest"
+_SNAPSHOT_REDIS_TTL = 7 * 24 * 3600  # refreshed by every scan + the nightly cron
+
+
 def _save_scan_snapshot(result: Dict[str, Any]) -> Optional[str]:
     """Atomically write the latest completed scan result + metadata to disk.
 
@@ -738,6 +749,17 @@ def _save_scan_snapshot(result: Dict[str, Any]) -> Optional[str]:
             except OSError:
                 pass
             raise
+        # Durable copy in Redis (survives DO restarts/deploys; /tmp does not).
+        try:
+            rc = getattr(_snapshot_cache, "redis_client", None)
+            if rc is not None:
+                rc.setex(
+                    _SNAPSHOT_REDIS_KEY,
+                    _SNAPSHOT_REDIS_TTL,
+                    json.dumps(payload, default=str),
+                )
+        except Exception as _re:  # noqa: BLE001
+            logger.warning(f"Failed to write scan snapshot to Redis: {_re}")
         logger.info(f"Portfolio scan snapshot written to {path}")
         return path
     except Exception as e:  # noqa: BLE001
@@ -811,15 +833,27 @@ async def get_scan_latest():
     dashboard hits this endpoint on mount so it can render instantly
     instead of triggering a fresh 3-minute scan every visit.
     """
-    path = _snapshot_path()
-    if not os.path.exists(path):
-        return JSONResponse(status_code=404, content={"error": "no snapshot available yet"})
+    # Prefer the durable Redis copy; fall back to the ephemeral disk snapshot.
+    data = None
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to read scan snapshot {path}: {e}")
-        return JSONResponse(status_code=500, content={"error": f"snapshot read failed: {e}"})
+        rc = getattr(_snapshot_cache, "redis_client", None)
+        if rc is not None:
+            raw = rc.get(_SNAPSHOT_REDIS_KEY)
+            if raw:
+                data = json.loads(raw)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Redis snapshot read failed: {e}")
+
+    if data is None:
+        path = _snapshot_path()
+        if not os.path.exists(path):
+            return JSONResponse(status_code=404, content={"error": "no snapshot available yet"})
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.error(f"Failed to read scan snapshot {path}: {e}")
+            return JSONResponse(status_code=500, content={"error": f"snapshot read failed: {e}"})
 
     saved_at = data.get("saved_at")
     age_minutes = 0

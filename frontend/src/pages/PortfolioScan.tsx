@@ -548,7 +548,7 @@ const PortfolioScan: React.FC = () => {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
       <div className="bg-gray-800 border border-gray-700 rounded-lg p-6">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <h1 className="text-2xl font-bold text-white">Portfolio Scan</h1>
+          <h1 className="text-2xl font-bold text-white pl-12">Portfolio Scan</h1>
           <button
             onClick={() => void runScan()}
             disabled={scanning}
