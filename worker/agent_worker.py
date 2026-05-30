@@ -72,7 +72,17 @@ THROTTLE_MARKERS = (
     "limit reached", "too many requests", "429", "529",
 )
 
-READONLY_TOOLS = "Read,Glob,Grep,Bash(git diff:*),Bash(ls:*),Bash(cat:*),WebSearch,WebFetch"
+# Read-only tools for data/brainstorm/scan jobs. Includes the agent-native data
+# CLIs (printing-press) so analysis jobs can pull live FRED / Finnhub / SEC EDGAR
+# / USAspending data mid-reasoning. Each is read-only and keyed from the worker
+# env (FRED_API_KEY / FINNHUB_API_KEY; SEC + USAspending are keyless).
+READONLY_TOOLS = (
+    "Read,Glob,Grep,"
+    "Bash(git diff:*),Bash(ls:*),Bash(cat:*),"
+    "Bash(fred-pp-cli:*),Bash(finnhub-pp-cli:*),"
+    "Bash(sec-edgar-pp-cli:*),Bash(usaspending-pp-cli:*),"
+    "WebSearch,WebFetch"
+)
 
 
 @contextmanager
