@@ -549,15 +549,15 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
     holds_band.sort(key=lambda r: r.get("market_value", 0) or 0, reverse=True)
     top_holds = holds_band[:5]
 
-    # LLM thesis on top buys — DISABLED by default. This called Ollama Cloud
-    # (paid, ~16-19s per thesis, sequential) and saturated the 1-vCPU instance,
-    # freezing the whole app (charts, etc.) for minutes per scan. Theses are now
-    # on-demand via the agent-bridge (free local Claude under the Max sub).
-    # Re-enable the old Ollama path only by setting SCAN_OLLAMA_THESIS=true.
-    if include_thesis and top_buys and os.getenv("SCAN_OLLAMA_THESIS", "false").lower() == "true":
-        for entry in top_buys[:5]:
+    # Theses on the top buys — now free local Opus 4.8 via the agent-bridge
+    # worker pool (the work runs off the cloud box, so it no longer saturates
+    # the 1-vCPU instance the way the old sequential Ollama Cloud calls did).
+    # Opt-in per scan via the include_thesis flag; the calls fan out so the
+    # worker pool fulfils them concurrently instead of one-at-a-time.
+    if include_thesis and top_buys:
+        async def _thesis_for(entry: Dict[str, Any]) -> None:
             try:
-                thesis_md, thesis_warnings = _generate_thesis(
+                thesis_md, thesis_warnings = await _generate_thesis(
                     entry["symbol"],
                     entry.get("quote"),
                     entry.get("scores", {}) or {},
@@ -572,6 +572,8 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
                     entry.setdefault("warnings", []).extend(thesis_warnings)
             except Exception as e:
                 logger.warning(f"Thesis generation failed for {entry['symbol']}: {e}")
+
+        await asyncio.gather(*[_thesis_for(e) for e in top_buys[:5]])
 
     # Distinguish "empty portfolio" from "100% cash/crypto". portfolio_value
     # is the summed market value of *eligible* (scannable equity) holdings.

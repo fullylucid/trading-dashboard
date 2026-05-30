@@ -133,7 +133,7 @@ async def test_scan_include_thesis_runs_only_on_top_buys():
 
     thesis_calls = []
 
-    def fake_thesis(symbol, *args, **kwargs):
+    async def fake_thesis(symbol, *args, **kwargs):
         thesis_calls.append(symbol)
         return f"## Verdict\nBuy {symbol}", []
 

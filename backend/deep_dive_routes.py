@@ -17,10 +17,14 @@ except ImportError:
     from charlotte.projections import DCFProjector
     from charlotte.narrative_projector import NarrativeProjector
 
+# Free local Opus 4.8 via the agent-bridge worker pool (replaces Ollama Cloud).
 try:
-    from hermes.charlotte.ollama_deep_analyzer import OllamaPrimaryClient
-except ImportError:
-    from charlotte.ollama_deep_analyzer import OllamaPrimaryClient
+    import agent_bridge  # type: ignore
+except Exception:  # noqa: BLE001
+    try:
+        from backend import agent_bridge  # type: ignore
+    except Exception:  # noqa: BLE001
+        agent_bridge = None  # type: ignore
 
 # Wiring/IO layer for the additive analytics (signals, insider, regime) blocks.
 # Optional: if it cannot be imported the deep-dive simply omits those blocks.
@@ -35,37 +39,14 @@ except Exception:  # noqa: BLE001
 # Cache for deep dive results
 _deep_dive_cache: Dict[str, tuple] = {}  # {symbol: (timestamp, result)}
 
-# Singleton client for Ollama
-_ollama_client: Optional[OllamaPrimaryClient] = None
-
 logger = logging.getLogger(__name__)
 
 # Create router
 deep_dive_router = APIRouter(prefix="/api/research/deep", tags=["deep-dive"])
 
-THESIS_MODEL = "qwen3-coder:480b-cloud"
-
-
-def _get_ollama_client() -> OllamaPrimaryClient:
-    """Get or create singleton Ollama client."""
-    global _ollama_client
-    if _ollama_client is None:
-        try:
-            import os
-            api_key = (
-                os.environ.get("OLLAMA_API_KEY")
-                or os.environ.get("OLLAMA_CLOUD_API_KEY")
-                or ""
-            )
-            base_url = os.environ.get("OLLAMA_BASE_URL", "https://ollama.com/v1")
-            _ollama_client = OllamaPrimaryClient(
-                api_key=api_key,
-                base_url=base_url,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to initialize Ollama client: {e}")
-            _ollama_client = None
-    return _ollama_client
+# Label only — the thesis now runs on free local Opus 4.8 via the agent-bridge
+# worker pool, not a hosted model endpoint.
+THESIS_MODEL = "opus-4.8 (agent-bridge)"
 
 
 def _get_news(symbol: str) -> List[Dict[str, Any]]:
@@ -128,11 +109,15 @@ def _verdict_from_score(combined_score: float) -> str:
         return "Avoid"
 
 
-def _generate_thesis(symbol: str, quote: Optional[Dict[str, Any]],
-                     scores: Dict[str, float], breakdown: Dict[str, Any],
-                     projection: Dict[str, Any], narrative: Dict[str, Any],
-                     news: List[Dict[str, Any]]) -> tuple:
-    """Run LLM thesis call; returns (markdown, warnings_list)."""
+async def _generate_thesis(symbol: str, quote: Optional[Dict[str, Any]],
+                           scores: Dict[str, float], breakdown: Dict[str, Any],
+                           projection: Dict[str, Any], narrative: Dict[str, Any],
+                           news: List[Dict[str, Any]]) -> tuple:
+    """Generate the investment thesis via free local Opus (agent-bridge).
+
+    Returns (markdown, warnings_list). Falls back to a deterministic thesis if
+    the bus is unavailable or the job errors/times out.
+    """
     warnings: List[str] = []
     try:
         structured_data = {
@@ -175,16 +160,15 @@ No disclaimers. No price predictions outside the bear/base/bull range provided.
 
 DATA:
 {structured_data}"""
-        client = _get_ollama_client()
-        if client:
-            response = client.call_model(THESIS_MODEL, prompt, timeout=60)
+        if agent_bridge is not None:
+            response = await agent_bridge.run_agent_job(prompt, kind="data")
             if response and response.strip():
                 return response.strip(), warnings
-            logger.warning(f"LLM returned empty response for {symbol}")
-            warnings.append("LLM returned empty response, using fallback thesis")
+            logger.warning(f"Agent-bridge returned no thesis for {symbol}")
+            warnings.append("AI thesis unavailable, using fallback thesis")
         else:
-            logger.warning("Ollama client not available")
-            warnings.append("LLM unavailable, using fallback thesis")
+            logger.warning("Agent-bridge not available")
+            warnings.append("AI thesis unavailable, using fallback thesis")
     except Exception as e:
         logger.error(f"Failed to generate thesis for {symbol}: {e}")
         warnings.append("Failed to generate AI thesis, using fallback")
@@ -284,7 +268,7 @@ async def _run_deep_dive(
 
     # Thesis (optional)
     if include_thesis:
-        thesis_markdown, thesis_warnings = _generate_thesis(
+        thesis_markdown, thesis_warnings = await _generate_thesis(
             symbol, quote, scores, breakdown,
             result.get("projection", {}) or {},
             result.get("narrative", {}) or {},
