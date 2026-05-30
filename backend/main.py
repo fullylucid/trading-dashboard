@@ -102,6 +102,14 @@ except Exception as _chart_err:
     FinnhubPriceRelay = None  # type: ignore
     logging.getLogger(__name__).warning(f"Chart routes not available: {_chart_err!r}")
 
+try:
+    from ai_routes import router as ai_router
+    HAS_AI_ROUTES = True
+except Exception as _ai_err:  # noqa: BLE001
+    HAS_AI_ROUTES = False
+    ai_router = None
+    logging.getLogger(__name__).warning(f"AI explain routes not available: {_ai_err!r}")
+
 from websocket_manager import WebSocketManager
 
 # Shared WebSocket manager singleton (used by the agent bridge live stream and
@@ -295,6 +303,10 @@ app.include_router(news_router)
 app.include_router(research_router)
 app.include_router(earnings_router)
 app.include_router(market_router)
+
+if HAS_AI_ROUTES and ai_router is not None:
+    app.include_router(ai_router)
+    logger.info("AI explain router registered at /api/ai/*")
 
 if HAS_SIGNAL_ROUTES:
     app.include_router(signal_router)
