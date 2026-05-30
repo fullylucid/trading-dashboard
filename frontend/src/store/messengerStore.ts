@@ -107,6 +107,11 @@ interface MessengerState {
 
   // messaging
   send: (content: string, kind: JobKind) => Promise<void>;
+  // Start a fresh conversation, subscribe its live channel, and send one
+  // message in a single call. Returns the new conversation id, or null if not
+  // authenticated. Used by feature tabs (e.g. Options Strategist) that hand a
+  // pre-built prompt to Claude and want the reply to stream into the widget.
+  sendToClaude: (content: string, kind: JobKind) => Promise<string | null>;
   approve: (jobId: string, action: 'merge' | 'reject') => Promise<void>;
 
   // websocket
@@ -222,6 +227,22 @@ const useMessengerStore = create<MessengerState>((set, get) => ({
       method: 'POST',
       body: JSON.stringify({ conversation_id: cid, kind, content }),
     });
+  },
+
+  sendToClaude: async (content, kind) => {
+    if (!get().authed) return null;
+    await get().newConversation();
+    const cid = get().activeConversationId;
+    if (!cid) return null;
+    // The WS subscribes to known channels at connect time; a brand-new
+    // conversation won't be in that set, so subscribe its channel explicitly
+    // before sending or the streamed reply never arrives.
+    const ws = get().ws;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ action: 'subscribe', symbols: [`chat:${cid}`] }));
+    }
+    await get().send(content, kind);
+    return cid;
   },
 
   approve: async (jobId, action) => {
