@@ -230,6 +230,303 @@ def fibonacci_levels(
 
 
 # ============================================================================
+# Server-computed indicator series + markers for the /full endpoint
+# ============================================================================
+#
+# The /full endpoint enriches the raw candles with everything the frontend needs
+# to render TradingView-style overlays/panes WITHOUT re-deriving any TA math in
+# TypeScript. All indicator math is delegated to the tested ``analytics.signals``
+# package (RSI/MACD series, divergence, support/resistance) — this layer only
+# marshals already-fetched, COMPLETED-bar OHLC into time-keyed arrays and drops
+# warm-up NaNs. Every sub-block is independently exception-wrapped: a failure in
+# (say) the insider markers leaves the rest of the payload intact.
+#
+# No look-ahead: we compute on ``scan_analytics._completed(df)`` (the trailing,
+# possibly-partial bar is dropped), exactly like the scan does.
+
+# Per-bar MACD spans (mirror analytics.signals.macd defaults: 12/26/9).
+_MACD_FAST, _MACD_SLOW, _MACD_SIGNAL = 12, 26, 9
+_RSI_PERIOD = 14
+_DIVERGENCE_LOOKBACK = 60
+_RS_SERIES_BASELINE = 0.0  # rs line is rebased to 0% at the window's first bar
+
+
+def _epochs_for_index(df: pd.DataFrame) -> List[int]:
+    """UNIX epoch-seconds (int) for each row of ``df`` (DatetimeIndex assumed)."""
+    epochs: List[int] = []
+    for ts in df.index:
+        try:
+            if isinstance(ts, (pd.Timestamp, datetime)):
+                epochs.append(int(pd.Timestamp(ts).timestamp()))
+            else:
+                epochs.append(int(pd.Timestamp(str(ts)).timestamp()))
+        except (TypeError, ValueError):
+            epochs.append(0)
+    return epochs
+
+
+def _series_to_points(
+    epochs: List[int], values: "np.ndarray", nd: int = 4
+) -> List[Dict[str, Any]]:
+    """Zip epochs+values into ``[{time, value}]``, dropping NaN/inf warm-up bars."""
+    pts: List[Dict[str, Any]] = []
+    n = min(len(epochs), int(np.asarray(values).size))
+    arr = np.asarray(values, dtype=float).ravel()
+    for i in range(n):
+        v = arr[i]
+        if not np.isfinite(v) or epochs[i] == 0:
+            continue
+        pts.append({"time": epochs[i], "value": round(float(v), nd)})
+    return pts
+
+
+def _build_indicator_series(
+    epochs: List[int], adj_close: "np.ndarray"
+) -> Dict[str, Any]:
+    """Per-bar RSI[] and MACD{macd,signal,hist}[] from the adjusted-close series.
+
+    Reuses ``analytics.signals._rsi_series`` and replicates the package's MACD
+    construction via its exported ``_ema`` so the per-bar values are identical to
+    the single-value ``rsi``/``macd`` the scan reports for the latest bar. Warm-up
+    NaNs are dropped. Returns ``{"rsi": [...], "macd": [...]}``; either may be
+    empty on failure.
+    """
+    out: Dict[str, Any] = {"rsi": [], "macd": []}
+    try:
+        from analytics.signals import _rsi_series, _ema  # type: ignore
+    except Exception as e:  # pragma: no cover
+        logger.debug(f"chart/full: indicator import failed: {e}")
+        return out
+
+    c = np.asarray(adj_close, dtype=float).ravel()
+
+    # RSI series (Wilder).
+    try:
+        rsi_arr = _rsi_series(c, period=_RSI_PERIOD)
+        out["rsi"] = _series_to_points(epochs, rsi_arr, nd=2)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"chart/full: rsi series failed: {e}")
+
+    # MACD series (macd line, signal line, histogram) — one dict per bar.
+    try:
+        ema_fast = _ema(c, _MACD_FAST)
+        ema_slow = _ema(c, _MACD_SLOW)
+        macd_line = ema_fast - ema_slow
+        signal_line = _ema(macd_line, _MACD_SIGNAL)
+        hist = macd_line - signal_line
+        macd_pts: List[Dict[str, Any]] = []
+        n = min(len(epochs), macd_line.size)
+        # MACD needs ``slow`` bars of warm-up; mask the leading region.
+        warm = _MACD_SLOW - 1
+        for i in range(n):
+            if i < warm or epochs[i] == 0:
+                continue
+            mv, sv, hv = macd_line[i], signal_line[i], hist[i]
+            if not (np.isfinite(mv) and np.isfinite(sv) and np.isfinite(hv)):
+                continue
+            macd_pts.append(
+                {
+                    "time": epochs[i],
+                    "macd": round(float(mv), 4),
+                    "signal": round(float(sv), 4),
+                    "hist": round(float(hv), 4),
+                }
+            )
+        out["macd"] = macd_pts
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"chart/full: macd series failed: {e}")
+
+    return out
+
+
+def _build_signal_markers(
+    epochs: List[int], adj_close: "np.ndarray"
+) -> List[Dict[str, Any]]:
+    """Event markers: MACD signal-line crosses, MACD-zero crosses, RSI divergence.
+
+    Each marker is ``{time, type, label}`` where ``type`` in
+    ``{cross, divergence, breakout}``. Crosses are detected per-bar off the same
+    MACD construction as the series; the divergence marker reuses the tested
+    ``detect_divergence`` (RSI vs price) and is anchored to the most-recent
+    confirmed price pivot inside the lookback window (no look-ahead). Best-effort.
+    """
+    markers: List[Dict[str, Any]] = []
+    c = np.asarray(adj_close, dtype=float).ravel()
+    try:
+        from analytics.signals import _ema, _rsi_series, detect_divergence, _local_max_idx, _local_min_idx  # type: ignore
+    except Exception as e:  # pragma: no cover
+        logger.debug(f"chart/full: marker import failed: {e}")
+        return markers
+
+    # --- MACD crosses ---
+    try:
+        ema_fast = _ema(c, _MACD_FAST)
+        ema_slow = _ema(c, _MACD_SLOW)
+        macd_line = ema_fast - ema_slow
+        signal_line = _ema(macd_line, _MACD_SIGNAL)
+        warm = _MACD_SLOW + _MACD_SIGNAL
+        n = min(len(epochs), macd_line.size)
+        for i in range(max(1, warm), n):
+            if epochs[i] == 0:
+                continue
+            d_prev = macd_line[i - 1] - signal_line[i - 1]
+            d_now = macd_line[i] - signal_line[i]
+            if not (np.isfinite(d_prev) and np.isfinite(d_now)):
+                continue
+            if d_prev <= 0 < d_now:
+                markers.append({"time": epochs[i], "type": "cross", "label": "MACD bullish cross"})
+            elif d_prev >= 0 > d_now:
+                markers.append({"time": epochs[i], "type": "cross", "label": "MACD bearish cross"})
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"chart/full: macd cross markers failed: {e}")
+
+    # --- RSI divergence (single, most-recent read anchored to last price pivot) ---
+    try:
+        rsi_arr = _rsi_series(c, period=_RSI_PERIOD)
+        div = detect_divergence(c, rsi_arr, lookback=_DIVERGENCE_LOOKBACK)
+        label = div.get("signal")
+        if label:
+            # Anchor the marker at the most-recent confirmed price pivot in window.
+            win = min(_DIVERGENCE_LOOKBACK, c.size)
+            base = c.size - win
+            sub = c[-win:]
+            if label == "bearish":
+                idxs = _local_max_idx(sub, 3)
+            else:
+                idxs = _local_min_idx(sub, 3)
+            if idxs.size:
+                anchor = base + int(idxs[-1])
+                if 0 <= anchor < len(epochs) and epochs[anchor]:
+                    markers.append(
+                        {
+                            "time": epochs[anchor],
+                            "type": "divergence",
+                            "label": f"{label} RSI divergence",
+                        }
+                    )
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"chart/full: divergence marker failed: {e}")
+
+    markers.sort(key=lambda m: m["time"])
+    return markers
+
+
+def _build_insider_markers(sym: str) -> List[Dict[str, Any]]:
+    """Insider open-market-buy cluster markers ``[{time, label}]`` from EDGAR.
+
+    Reuses ``scan_analytics._fetch_insider_block`` (Form-4 -> open-market buys ->
+    clusters -> score), which is per-process cached and never raises. We surface
+    the strongest cluster's window (``start_date``) as a single dated marker so
+    the chart can flag insider accumulation. Returns ``[]`` when there's no
+    cluster or insider data is unavailable.
+    """
+    out: List[Dict[str, Any]] = []
+    try:
+        block = _scan_analytics._fetch_insider_block(sym)
+        if not block or not block.get("has_cluster"):
+            return out
+        start = block.get("start_date") or block.get("end_date")
+        if not start:
+            return out
+        try:
+            epoch = int(pd.Timestamp(str(start)).timestamp())
+        except (TypeError, ValueError):
+            return out
+        n_ins = block.get("num_insiders")
+        bucket = block.get("bucket")
+        label = f"Insider cluster buy ({n_ins} insiders)" if n_ins else "Insider cluster buy"
+        if bucket:
+            label = f"{label} [{bucket}]"
+        out.append({"time": epoch, "label": label})
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"chart/full[{sym}]: insider markers failed: {e}")
+    return out
+
+
+def _build_rs_vs_spy_series(
+    epochs: List[int], adj_close: "np.ndarray", spy_close: Optional[pd.Series]
+) -> List[Dict[str, Any]]:
+    """Relative-strength line vs SPY, rebased to 0% at the window start.
+
+    For each bar we plot the cumulative outperformance of the symbol vs SPY:
+    ``(asset_t/asset_0 - 1) - (spy_t/spy_0 - 1)`` in percentage points, aligned on
+    the trailing ``len(epochs)`` bars. This is the per-bar, render-ready cousin of
+    the scan's scalar ``relative_strength`` (which uses ``roc`` differences).
+    Returns ``[{time, value}]`` (value = pct points) or ``[]`` if SPY is missing.
+    """
+    if spy_close is None:
+        return []
+    try:
+        asset = np.asarray(adj_close, dtype=float).ravel()
+        spy = pd.to_numeric(spy_close, errors="coerce").to_numpy(dtype=float).ravel()
+        n = min(len(epochs), asset.size, spy.size)
+        if n < 2:
+            return []
+        a = asset[-n:]
+        s = spy[-n:]
+        ep = epochs[-n:]
+        a0 = a[0]
+        s0 = s[0]
+        if not (np.isfinite(a0) and np.isfinite(s0)) or a0 == 0 or s0 == 0:
+            return []
+        pts: List[Dict[str, Any]] = []
+        for i in range(n):
+            if not (np.isfinite(a[i]) and np.isfinite(s[i])) or ep[i] == 0:
+                continue
+            rs = ((a[i] / a0 - 1.0) - (s[i] / s0 - 1.0)) * 100.0
+            pts.append({"time": ep[i], "value": round(float(rs), 3)})
+        return pts
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"chart/full: rs-vs-spy series failed: {e}")
+        return []
+
+
+def _current_confluence(sym: str, df: pd.DataFrame, adj: pd.Series, spy_close: Optional[pd.Series]) -> Optional[Dict[str, Any]]:
+    """Single current confluence summary (NOT per-bar — too heavy to score every bar).
+
+    Reuses the scan's ``_build_signals_block`` + ``_fetch_insider_block`` +
+    ``sector_rotation_tags`` and folds them through the tested ``analytics.alerts``
+    scorer (the same fusion the portfolio scan uses), yielding one
+    ``{confidence, bucket, reason, direction, ...}`` for the latest completed bar.
+
+    Per-bar full alert scoring is deliberately avoided: the alert scorer fuses
+    insider/sector/regime context that is only meaningful "as of now", and
+    re-running it for every historical bar would be both look-ahead-leaky and
+    expensive. The per-bar RSI/MACD series + event markers carry the historical
+    signal; this carries the live confluence read.
+    """
+    try:
+        signals = _scan_analytics._build_signals_block(sym, df, adj, spy_close=spy_close)
+    except Exception:  # noqa: BLE001
+        signals = {}
+    insider: Dict[str, Any] = {}
+    try:
+        insider = _scan_analytics._fetch_insider_block(sym) or {}
+    except Exception:  # noqa: BLE001
+        insider = {}
+    sector = None
+    try:
+        sector = (_scan_analytics.sector_rotation_tags([sym]) or {}).get(sym)
+    except Exception:  # noqa: BLE001
+        sector = None
+    try:
+        from analytics.alerts import score_alert  # type: ignore
+        alert = score_alert(
+            symbol=sym,
+            signals=signals or {},
+            insider=insider or {},
+            regime=None,
+            risk={},
+            sector_rotation=sector,
+            composite_score=None,
+        )
+        return alert
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"chart/full[{sym}]: confluence failed: {e}")
+        return None
+
+
+# ============================================================================
 # Router
 # ============================================================================
 
@@ -284,6 +581,333 @@ async def get_chart(
         "interval": "1d",
         "candles": candles,
         "count": len(candles),
+    }
+    try:
+        await _cache.set(cache_key, json.dumps(payload), ttl=_CHART_CACHE_TTL)
+    except Exception:  # noqa: BLE001
+        pass
+    return payload
+
+
+@router.get("/{symbol}/full")
+async def get_chart_full(
+    request: Request,
+    symbol: str = PathParam(..., description="Ticker symbol"),
+    range: str = Query("1y", description="5d|1m|3m|6m|1y|2y|5y|max"),
+    interval: str = Query("1d", description="Bar interval (daily only for now)"),
+) -> Dict[str, Any]:
+    """Server-enriched chart payload so the frontend is pure rendering.
+
+    Returns the same candles as ``GET /{symbol}`` PLUS server-computed (all reusing
+    the tested ``analytics`` package, completed-bars only, no look-ahead):
+
+    - ``overlays`` : ``{fib_levels, support_resistance}``
+    - ``indicators`` : ``{rsi: [{time,value}], macd: [{time,macd,signal,hist}]}``
+    - ``markers`` : ``{signal_events: [{time,type,label}], insider_buys: [{time,label}]}``
+    - ``rs_vs_spy`` : ``[{time, value}]`` (cumulative % outperformance vs SPY)
+    - ``context`` : ``{regime, sector_rotation}`` (sector read for this symbol)
+    - ``confluence`` : single CURRENT alert summary (per-bar scoring is intentionally
+      skipped as too heavy / look-ahead-leaky — see ``_current_confluence``).
+
+    Every sub-block is independently optional: a failure in one leaves the rest of
+    the payload intact (the offending key is omitted or empty, with a note in
+    ``data_gaps``). Reuses the cached ``_fetch_ohlcv``; behind the session.
+    """
+    if not HAS_AGENT_BRIDGE:
+        raise HTTPException(status_code=503, detail="Chart routes unavailable")
+    require_session(request)
+
+    sym = _validate_symbol(symbol)
+    if interval.lower() not in _VALID_INTERVALS:
+        raise HTTPException(status_code=400, detail="Unsupported interval (daily only)")
+    days = _resolve_days(range)
+
+    cache_key = f"chartfull:{sym}:{days}:d"
+    cached = await _cache.get(cache_key)
+    if cached:
+        try:
+            return json.loads(cached)
+        except json.JSONDecodeError:
+            pass
+
+    def _compute() -> Dict[str, Any]:
+        """All sync, IO-bound work — run off the event loop in one thread hop."""
+        data_gaps: List[str] = []
+        raw = _scan_analytics._fetch_ohlcv(sym, days)
+        if raw is None or len(raw) == 0:
+            return {"_empty": True}
+
+        # Visual candles use the RAW (through-now) frame so the live edge shows;
+        # all TA is computed on COMPLETED bars only (drop the trailing partial).
+        candles = _df_to_candles(raw)
+        cdf = _scan_analytics._completed(raw)
+        if cdf is None:
+            return {
+                "candles": candles,
+                "indicators": {"rsi": [], "macd": []},
+                "overlays": {},
+                "markers": {"signal_events": [], "insider_buys": []},
+                "rs_vs_spy": [],
+                "context": {},
+                "confluence": None,
+                "data_gaps": ["completed_bars_unavailable"],
+            }
+
+        epochs = _epochs_for_index(cdf)
+        adj = _scan_analytics._adj_close(cdf)
+        adj_arr = adj.to_numpy(dtype=float) if adj is not None else np.asarray([])
+
+        # SPY (completed) once, reused for rs line + signals + regime.
+        spy_close: Optional[pd.Series] = None
+        try:
+            spy_df = _scan_analytics._completed(_scan_analytics._fetch_ohlcv(_scan_analytics._BENCHMARK, days))
+            if spy_df is not None:
+                spy_close = _scan_analytics._adj_close(spy_df)
+        except Exception:  # noqa: BLE001
+            data_gaps.append("spy_unavailable")
+
+        # --- Overlays (fib + S/R) from raw OHLC swings ---
+        overlays: Dict[str, Any] = {}
+        try:
+            from analytics.signals import support_resistance  # type: ignore
+            high = pd.to_numeric(cdf["High"], errors="coerce").to_numpy(dtype=float)
+            low = pd.to_numeric(cdf["Low"], errors="coerce").to_numpy(dtype=float)
+            close = pd.to_numeric(cdf["Close"], errors="coerce").to_numpy(dtype=float)
+            overlays["fib_levels"] = fibonacci_levels(high, low, close)
+            overlays["support_resistance"] = support_resistance(high, low, close)
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"chart/full[{sym}]: overlays failed: {e}")
+            data_gaps.append("overlays_failed")
+
+        # --- Indicator series ---
+        if adj is not None and adj_arr.size:
+            indicators = _build_indicator_series(epochs, adj_arr)
+        else:
+            indicators = {"rsi": [], "macd": []}
+            data_gaps.append("adj_close_unavailable")
+
+        # --- Markers ---
+        signal_events: List[Dict[str, Any]] = []
+        if adj is not None and adj_arr.size:
+            signal_events = _build_signal_markers(epochs, adj_arr)
+        insider_buys = _build_insider_markers(sym)
+
+        # --- Relative-strength line vs SPY ---
+        rs_line: List[Dict[str, Any]] = []
+        if adj is not None and adj_arr.size:
+            rs_line = _build_rs_vs_spy_series(epochs, adj_arr, spy_close)
+
+        # --- Confluence (single current read) ---
+        confluence = None
+        if adj is not None and adj_arr.size:
+            confluence = _current_confluence(sym, cdf, adj, spy_close)
+
+        return {
+            "candles": candles,
+            "indicators": indicators,
+            "overlays": overlays,
+            "markers": {"signal_events": signal_events, "insider_buys": insider_buys},
+            "rs_vs_spy": rs_line,
+            "spy_close": spy_close,  # passed out for the async regime/context step
+            "confluence": confluence,
+            "data_gaps": data_gaps,
+        }
+
+    try:
+        computed = await asyncio.to_thread(_compute)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"chart/full[{sym}]: compute failed: {e}")
+        raise HTTPException(status_code=502, detail="Chart data unavailable") from None
+
+    if computed.get("_empty"):
+        raise HTTPException(status_code=404, detail="No chart data for symbol")
+
+    # --- Context: regime (async) + sector rotation for this symbol ---
+    spy_close = computed.pop("spy_close", None)
+    context: Dict[str, Any] = {}
+    try:
+        context["regime"] = await _scan_analytics.regime_block(spy_close)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"chart/full[{sym}]: regime failed: {e}")
+        context["regime"] = None
+    try:
+        context["sector_rotation"] = (
+            await asyncio.to_thread(_scan_analytics.sector_rotation_tags, [sym])
+        ).get(sym)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"chart/full[{sym}]: sector rotation failed: {e}")
+        context["sector_rotation"] = None
+
+    payload: Dict[str, Any] = {
+        "symbol": sym,
+        "range": range.lower(),
+        "interval": "1d",
+        "count": len(computed.get("candles") or []),
+        "candles": computed.get("candles") or [],
+        "indicators": computed.get("indicators") or {"rsi": [], "macd": []},
+        "overlays": computed.get("overlays") or {},
+        "markers": computed.get("markers") or {"signal_events": [], "insider_buys": []},
+        "rs_vs_spy": computed.get("rs_vs_spy") or [],
+        "context": context,
+        "confluence": computed.get("confluence"),
+        "data_gaps": computed.get("data_gaps") or [],
+    }
+    try:
+        await _cache.set(cache_key, json.dumps(payload), ttl=_CHART_CACHE_TTL)
+    except Exception:  # noqa: BLE001
+        pass
+    return payload
+
+
+@router.get("/portfolio")
+async def get_chart_portfolio(
+    request: Request,
+    range: str = Query("1y", description="5d|1m|3m|6m|1y|2y|5y|max"),
+) -> Dict[str, Any]:
+    """Portfolio-weighted, normalized equity/return series for the 'whole portfolio' view.
+
+    Builds one blended return line from CURRENT SnapTrade holdings: each holding's
+    adjusted-return series (completed bars) is weighted by its live portfolio
+    weight (``market_value`` share) and summed bar-by-bar. The result is presented
+    two ways on a common, intersected trading-day axis:
+
+    - ``equity`` : ``[{time, value}]`` growth of $1 (index = 1.0 at window start)
+    - ``returns``: ``[{time, value}]`` cumulative % return rebased to 0% at start
+
+    Reuses ``snaptrade_portfolio.get_portfolio_instance`` (weights) and the cached
+    ``_fetch_ohlcv``. Degrades gracefully: names with no OHLC are dropped (and
+    listed in ``skipped``), weights are renormalized over the survivors, and an
+    empty book yields empty series rather than an error. Behind the session.
+    """
+    if not HAS_AGENT_BRIDGE:
+        raise HTTPException(status_code=503, detail="Chart routes unavailable")
+    require_session(request)
+
+    days = _resolve_days(range)
+
+    cache_key = f"chartportfolio:{days}:d"
+    cached = await _cache.get(cache_key)
+    if cached:
+        try:
+            return json.loads(cached)
+        except json.JSONDecodeError:
+            pass
+
+    # --- Pull current holdings + weights (SnapTrade is source of truth). ---
+    try:
+        from snaptrade_portfolio import get_portfolio_instance  # type: ignore
+        portfolio = await get_portfolio_instance()
+        pdata = await portfolio.get_portfolio()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"chart/portfolio: holdings unavailable: {e}")
+        raise HTTPException(status_code=502, detail="Portfolio data unavailable") from None
+
+    positions = (pdata or {}).get("positions") or []
+    # Aggregate weights by symbol (a symbol can appear across multiple accounts).
+    weights: Dict[str, float] = {}
+    for p in positions:
+        sym = (p.get("symbol") or "").strip().upper()
+        if not sym or sym == "?":
+            continue
+        try:
+            mv = float(p.get("market_value") or 0.0)
+        except (TypeError, ValueError):
+            mv = 0.0
+        if mv <= 0:
+            continue
+        weights[sym] = weights.get(sym, 0.0) + mv
+    total_mv = sum(weights.values())
+    if not weights or total_mv <= 0:
+        empty = {
+            "range": range.lower(),
+            "interval": "1d",
+            "equity": [],
+            "returns": [],
+            "holdings": [],
+            "skipped": [],
+            "count": 0,
+            "note": "no_holdings",
+        }
+        return empty
+    for s in list(weights.keys()):
+        weights[s] = weights[s] / total_mv
+
+    def _compute_portfolio() -> Dict[str, Any]:
+        """Sync: fetch each holding's returns, weight-blend on a common axis."""
+        ret_series: Dict[str, pd.Series] = {}
+        skipped: List[str] = []
+        for sym in weights:
+            try:
+                cdf = _scan_analytics._completed(_scan_analytics._fetch_ohlcv(sym, days))
+                if cdf is None:
+                    skipped.append(sym)
+                    continue
+                adj = _scan_analytics._adj_close(cdf)
+                if adj is None or len(adj) < 2:
+                    skipped.append(sym)
+                    continue
+                ret_series[sym] = adj.pct_change()
+            except Exception:  # noqa: BLE001
+                skipped.append(sym)
+
+        if not ret_series:
+            return {"equity": [], "returns": [], "skipped": skipped, "used": []}
+
+        # Renormalize weights over the survivors.
+        used = list(ret_series.keys())
+        surv_total = sum(weights[s] for s in used) or 1.0
+        norm_w = {s: weights[s] / surv_total for s in used}
+
+        # Align on the intersection of trading days (inner join), drop warm-up NaNs.
+        rets_df = pd.DataFrame(ret_series).dropna(how="any")
+        if rets_df.empty:
+            return {"equity": [], "returns": [], "skipped": skipped, "used": used}
+
+        w_vec = pd.Series(norm_w)
+        port_ret = (rets_df[used] * w_vec[used]).sum(axis=1)
+
+        equity = (1.0 + port_ret).cumprod()
+        cum_ret_pct = (equity - 1.0) * 100.0
+
+        eq_pts: List[Dict[str, Any]] = []
+        rp_pts: List[Dict[str, Any]] = []
+        for ts, ev in equity.items():
+            try:
+                epoch = int(pd.Timestamp(ts).timestamp())
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(ev):
+                continue
+            eq_pts.append({"time": epoch, "value": round(float(ev), 6)})
+            rp = cum_ret_pct.loc[ts]
+            rp_pts.append({"time": epoch, "value": round(float(rp), 4)})
+
+        return {
+            "equity": eq_pts,
+            "returns": rp_pts,
+            "skipped": skipped,
+            "used": used,
+            "weights_used": {s: round(norm_w[s], 6) for s in used},
+        }
+
+    try:
+        result = await asyncio.to_thread(_compute_portfolio)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"chart/portfolio: compute failed: {e}")
+        raise HTTPException(status_code=502, detail="Portfolio series unavailable") from None
+
+    used = result.get("used") or []
+    payload = {
+        "range": range.lower(),
+        "interval": "1d",
+        "equity": result.get("equity") or [],
+        "returns": result.get("returns") or [],
+        "holdings": [
+            {"symbol": s, "weight": round(weights.get(s, 0.0), 6)} for s in used
+        ],
+        "weights_used": result.get("weights_used") or {},
+        "skipped": result.get("skipped") or [],
+        "count": len(result.get("equity") or []),
     }
     try:
         await _cache.set(cache_key, json.dumps(payload), ttl=_CHART_CACHE_TTL)

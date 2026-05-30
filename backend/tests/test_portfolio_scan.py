@@ -59,7 +59,7 @@ async def test_scan_filters_sorts_and_collects_failures():
 
     scores = {"AAPL": 7.5, "MSFT": 5.5, "NVDA": 3.0}
 
-    async def fake_run_deep_dive(symbol, *, include_thesis=True):
+    async def fake_run_deep_dive(symbol, *, include_thesis=True, include_analytics=True):
         if symbol == "FAIL":
             raise RuntimeError("boom")
         return _mk_dd(symbol, scores[symbol])
@@ -102,7 +102,7 @@ async def test_scan_cache_hit_when_not_refresh():
         {"symbol": "AAPL", "quantity": 10, "market_value": 1000.0},
     ])
 
-    async def fake_dd(symbol, *, include_thesis=True):
+    async def fake_dd(symbol, *, include_thesis=True, include_analytics=True):
         return _mk_dd(symbol, 7.0)
 
     with patch.object(portfolio_routes, "get_portfolio_instance", AsyncMock(return_value=mock_portfolio)), \
@@ -128,7 +128,7 @@ async def test_scan_include_thesis_runs_only_on_top_buys():
     mock_portfolio = MagicMock()
     mock_portfolio.get_positions = AsyncMock(return_value=positions)
 
-    async def fake_dd(symbol, *, include_thesis=True):
+    async def fake_dd(symbol, *, include_thesis=True, include_analytics=True):
         return _mk_dd(symbol, score_map[symbol])
 
     thesis_calls = []
