@@ -27,6 +27,9 @@ function Navigation({ isConnected }) {
               <Link to="/portfolio-scan" className="text-gray-300 hover:text-white transition">
                 📊 Portfolio Scan
               </Link>
+              <Link to="/sector-rotation" className="text-gray-300 hover:text-white transition">
+                🔄 Sector Rotation
+              </Link>
             </div>
           </div>
 

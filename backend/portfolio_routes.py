@@ -631,6 +631,20 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
         except Exception as re_:  # noqa: BLE001
             logger.warning(f"Regime analytics failed: {re_}")
 
+    # Additive ranked multi-signal alerts: fuse each ticker's signals + insider +
+    # risk + sector-rotation + regime into a weighted confluence score, ranked
+    # into alert(>=80)/watch(60-79)/log(<60) buckets. Computed from the already-
+    # assembled `results` (with their analytics + sector_rotation blocks) so no
+    # extra fetching occurs. Fully wrapped — never fails the scan.
+    alerts_block = None
+    if _scan_analytics is not None and results:
+        try:
+            alerts_block = _scan_analytics.build_alerts(
+                results, regime=regime_block, top_n=10
+            )
+        except Exception as ale:  # noqa: BLE001
+            logger.warning(f"Alerts analytics failed: {ale}")
+
     payload = {
         "scanned_at": now.isoformat(),
         "tickers_scanned": len(results),
@@ -657,6 +671,8 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
         payload["portfolio_risk"] = portfolio_risk_block
     if regime_block is not None:
         payload["regime"] = regime_block
+    if alerts_block:
+        payload["alerts"] = alerts_block
 
     _SCAN_CACHE[cache_key] = (now, payload)
     return payload

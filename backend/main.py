@@ -22,7 +22,7 @@ for _p in (str(_REPO_ROOT), str(_HERMES_DIR)):
 
 import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
@@ -93,10 +93,24 @@ except Exception as _ab_err:
     agent_router = None
     logging.getLogger(__name__).warning(f"Agent bridge not available: {_ab_err!r}")
 
+try:
+    from chart_routes import router as chart_router, FinnhubPriceRelay
+    HAS_CHART_ROUTES = True
+except Exception as _chart_err:
+    HAS_CHART_ROUTES = False
+    chart_router = None
+    FinnhubPriceRelay = None  # type: ignore
+    logging.getLogger(__name__).warning(f"Chart routes not available: {_chart_err!r}")
+
 from websocket_manager import WebSocketManager
 
-# Shared WebSocket manager singleton (used by the agent bridge live stream).
+# Shared WebSocket manager singleton (used by the agent bridge live stream and
+# the live-price relay).
 ws_manager = WebSocketManager()
+
+# Live-price relay (Finnhub WS -> ws_manager -> browser). Constructed in
+# lifespan once the API key is loaded; None until then.
+price_relay = None
 
 # Configure logging
 logging.basicConfig(
@@ -194,6 +208,16 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to initialize Agent bridge: {e}")
 
+    # Start the live-price relay (Finnhub WS -> ws_manager -> browser).
+    if HAS_CHART_ROUTES and FinnhubPriceRelay is not None:
+        try:
+            global price_relay
+            price_relay = FinnhubPriceRelay(settings.FINNHUB_API_KEY, ws_manager)
+            await price_relay.start()
+            logger.info("Live-price relay initialized")
+        except Exception as e:
+            logger.error(f"Failed to start live-price relay: {e}")
+
     logger.info("All services initialized successfully")
     logger.info(f"CORS origins: {settings.CORS_ORIGINS}")
     
@@ -227,6 +251,14 @@ async def lifespan(app: FastAPI):
             logger.info("Agent bridge shutdown complete")
         except Exception as e:
             logger.error(f"Error shutting down Agent bridge: {e}")
+
+    # Stop the live-price relay
+    if price_relay is not None:
+        try:
+            await price_relay.stop()
+            logger.info("Live-price relay shutdown complete")
+        except Exception as e:
+            logger.error(f"Error stopping live-price relay: {e}")
 
     await news_agg.clear_cache()
     await earnings_cal.clear_cache()
@@ -284,6 +316,10 @@ if HAS_AGENT_BRIDGE and agent_router is not None:
     app.include_router(agent_router)
     logger.info("Agent bridge router registered at /api/agent/*")
 
+if HAS_CHART_ROUTES and chart_router is not None:
+    app.include_router(chart_router)
+    logger.info("Chart router registered at /api/chart/*")
+
 
 # ============================================================================
 # Agent live-stream WebSocket
@@ -307,6 +343,77 @@ async def agent_websocket(websocket: WebSocket):
         return
     client_id = f"agent-{uuid.uuid4().hex[:12]}"
     await ws_manager.handle_connection(websocket, client_id)
+
+
+# ============================================================================
+# Live-price WebSocket
+# ============================================================================
+
+@app.websocket("/ws/prices")
+async def prices_websocket(websocket: WebSocket):
+    """Live trade/price stream for the cockpit charts.
+
+    Authenticated by the same short-lived agent-bridge WS ticket as /ws/agent
+    (issued from GET /api/agent/ws-ticket to a session-authenticated browser).
+    The client subscribes/unsubscribes by symbol:
+        {"action": "subscribe",   "symbols": ["AAPL", "MSFT"]}
+        {"action": "unsubscribe", "symbols": ["AAPL"]}
+    Subscriptions are tracked on the WebSocketManager (for fan-out routing) and
+    reflected into the shared FinnhubPriceRelay refcount (for upstream
+    subscribe/unsubscribe). Price ticks arrive as {"type": "price", ...}.
+    """
+    import json as _json
+
+    ticket = websocket.query_params.get("ticket", "")
+    if not (HAS_AGENT_BRIDGE and agent_verify_ws_ticket(ticket)):
+        await websocket.close(code=4401)
+        return
+
+    client_id = f"price-{uuid.uuid4().hex[:12]}"
+    connection = await ws_manager.connect(websocket, client_id)
+    client_symbols: set = set()
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                message = _json.loads(raw)
+            except _json.JSONDecodeError:
+                continue
+            action = message.get("action", "")
+            symbols = [str(s).upper() for s in message.get("symbols", []) if s]
+
+            if action == "subscribe":
+                await ws_manager.subscribe(client_id, symbols)
+                if price_relay is not None and symbols:
+                    await price_relay.subscribe(symbols)
+                client_symbols.update(symbols)
+                await connection.send_json({
+                    "type": "subscription_confirmed",
+                    "symbols": list(connection.subscriptions),
+                })
+            elif action == "unsubscribe":
+                await ws_manager.unsubscribe(client_id, symbols)
+                if price_relay is not None and symbols:
+                    await price_relay.unsubscribe(symbols)
+                client_symbols.difference_update(symbols)
+                await connection.send_json({
+                    "type": "unsubscription_confirmed",
+                    "symbols": list(connection.subscriptions),
+                })
+            elif action == "ping":
+                await connection.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.warning(f"Price WS error for {client_id}: {e}")
+    finally:
+        # Release upstream refcounts for whatever this client still held.
+        if price_relay is not None and client_symbols:
+            try:
+                await price_relay.unsubscribe(list(client_symbols))
+            except Exception:
+                pass
+        await ws_manager.disconnect(client_id)
 
 
 # ============================================================================

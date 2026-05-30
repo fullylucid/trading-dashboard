@@ -425,6 +425,72 @@ async def regime_block(spy_close: Optional[pd.Series] = None) -> Optional[Dict[s
 
 
 # --------------------------------------------------------------------------- #
+# Ranked multi-signal alerts (additive, exception-wrapped — never breaks a scan)
+# --------------------------------------------------------------------------- #
+def build_alerts(
+    results: List[Dict[str, Any]],
+    *,
+    regime: Optional[Dict[str, Any]] = None,
+    top_n: int = 10,
+) -> List[Dict[str, Any]]:
+    """Rank per-ticker multi-signal alerts from already-assembled scan entries.
+
+    Pure-math fusion is delegated to ``analytics.score_alert``; this wiring only
+    marshals the per-entry ``signals`` / ``insider`` / risk / ``sector_rotation``
+    blocks (already attached to each result) plus the payload-level ``regime``.
+
+    Each entry's ``analytics`` block holds the ``signals`` + ``insider`` + risk
+    fields; ``sector_rotation`` is attached directly on the entry. We fold all of
+    them into a single ranked alert per ticker, then return the top ``top_n`` by
+    confidence (alert/watch buckets first).
+
+    Never raises: any per-ticker scoring failure is skipped; a total failure
+    returns ``[]`` so the scan proceeds without an alerts block.
+    """
+    try:
+        A = _import_analytics()
+        scored: List[Dict[str, Any]] = []
+        for r in results or []:
+            try:
+                sym = r.get("symbol")
+                analytics = r.get("analytics") or {}
+                signals = analytics.get("signals") or {}
+                insider = analytics.get("insider") or {}
+                # Per-ticker risk fields live at the top of the analytics block.
+                risk = {
+                    "unrealized_r": analytics.get("unrealized_r"),
+                    "distance_to_stop_pct": analytics.get("distance_to_stop_pct"),
+                    "beta_to_spy": analytics.get("beta_to_spy"),
+                }
+                alert = A.score_alert(
+                    symbol=sym,
+                    signals=signals,
+                    insider=insider,
+                    regime=regime,
+                    risk=risk,
+                    sector_rotation=r.get("sector_rotation"),
+                    composite_score=r.get("composite_score"),
+                )
+                # Only surface names that cleared at least the 'log' floor with
+                # some directional conviction (confidence > 0).
+                if alert.get("confidence", 0) > 0:
+                    scored.append(alert)
+            except Exception as e:  # noqa: BLE001
+                logger.debug(f"build_alerts: scoring {r.get('symbol')} failed: {e}")
+                continue
+
+        # Rank: alert > watch > log, then by confidence desc.
+        _bucket_rank = {"alert": 0, "watch": 1, "log": 2}
+        scored.sort(
+            key=lambda a: (_bucket_rank.get(a.get("bucket"), 3), -(a.get("confidence") or 0.0))
+        )
+        return scored[: max(0, int(top_n))]
+    except Exception as e:  # noqa: BLE001 - alerts must never break a scan
+        logger.warning(f"build_alerts failed: {e}")
+        return []
+
+
+# --------------------------------------------------------------------------- #
 # Sector-rotation tagging (additive, exception-wrapped — never breaks a scan)
 # --------------------------------------------------------------------------- #
 def sector_rotation_tags(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
