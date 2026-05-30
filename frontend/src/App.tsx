@@ -3,11 +3,13 @@ import { useState, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
 import EnhancedDashboard from './components/EnhancedDashboard';
 import PortfolioScan from './pages/PortfolioScan';
+import SectorRotation from './pages/SectorRotation';
 import MessengerWidget from './components/MessengerWidget/MessengerWidget';
 
 const ROUTES: { to: string; label: string; end?: boolean }[] = [
   { to: '/', label: '📈 Dashboard', end: true },
   { to: '/portfolio-scan', label: '📊 Portfolio Scan' },
+  { to: '/sector-rotation', label: '🔄 Sector Rotation' },
 ];
 
 function NavMenu() {
@@ -128,6 +130,7 @@ function App() {
         <Routes>
           <Route path="/" element={<EnhancedDashboard />} />
           <Route path="/portfolio-scan" element={<PortfolioScan />} />
+          <Route path="/sector-rotation" element={<SectorRotation />} />
         </Routes>
         <MessengerWidget />
       </div>

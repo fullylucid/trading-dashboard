@@ -60,6 +60,13 @@ from .regime import (
     regime_bias,
     get_regime_with_bias,
 )
+from .alerts import (
+    score_alert,
+    what_if_add,
+    rebalancing_suggestions,
+    ALERT_THRESHOLD,
+    WATCH_THRESHOLD,
+)
 
 __all__ = [
     # risk.py
@@ -108,4 +115,10 @@ __all__ = [
     # regime.py
     "regime_bias",
     "get_regime_with_bias",
+    # alerts.py
+    "score_alert",
+    "what_if_add",
+    "rebalancing_suggestions",
+    "ALERT_THRESHOLD",
+    "WATCH_THRESHOLD",
 ]
