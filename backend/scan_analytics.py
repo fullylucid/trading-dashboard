@@ -1,0 +1,426 @@
+"""Wiring layer: turn portfolio holdings + OHLC into analytics blocks.
+
+This is the IO/glue layer that sits between the PURE, deterministic analytics
+functions in ``backend/analytics/`` (which never touch the network) and the
+portfolio scan in ``portfolio_routes.py``. Everything network-touching lives
+here: it pulls adjusted-close OHLC via ``hermes.charlotte.data_fetch.fetch_ohlcv``
+(per-process cached, so repeated calls within a scan are cheap) and assembles
+the additive ``portfolio_risk`` and per-ticker ``analytics`` blocks.
+
+Design rules honoured here:
+- ADJUSTED-close semantics: returns/beta/vol/correlation/VaR/Sharpe/Sortino are
+  computed off the ``Adj Close`` column. ATR-based price levels (stop/target)
+  use raw OHLC so they line up with SnapTrade's raw ``average_buy_price``.
+- COMPLETED BARS ONLY: the most recent (possibly in-progress, e.g. intraday
+  today) bar is dropped before any signal/return computation to avoid
+  look-ahead. ``fetch_ohlcv`` returns through "now", so the tail bar can be
+  partial during market hours.
+- DEGRADE GRACEFULLY: a missing OHLC series for one name skips that name; it
+  never raises into the scan. Every public entry point is wrapped so analytics
+  failures become absent/null fields, not a failed scan.
+- ~1-month rolling correlation (21 trading bars), not multi-year.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+# Annualization + risk constants
+_TRADING_DAYS = 252
+_RISK_FREE_ANNUAL = 0.045
+_CORR_WINDOW = 21          # ~1 trading month
+_RISK_PCT = 0.025          # 2.5% fixed-fractional risk per trade (Schyler's default)
+_ATR_PERIOD = 14
+_ATR_STOP_MULT = 2.0
+_ATR_TARGET_MULT = 3.0
+_BENCHMARK = "SPY"
+_MIN_RETURN_OBS = 20       # need a meaningful sample before reporting beta/vol
+
+
+def _import_analytics():
+    """Import the pure analytics package, handling both run contexts.
+
+    The backend is sometimes run with ``backend/`` on sys.path (so
+    ``analytics`` is top-level) and sometimes as ``backend.analytics``.
+    """
+    try:
+        import analytics as A  # type: ignore
+        return A
+    except Exception:  # pragma: no cover - fallback for package context
+        from backend import analytics as A  # type: ignore
+        return A
+
+
+def _fetch_ohlcv(symbol: str, days: int = 420):
+    """Cached adjusted OHLCV pull. Returns a DataFrame or None (never raises)."""
+    try:
+        from hermes.charlotte.data_fetch import fetch_ohlcv
+    except Exception:  # pragma: no cover
+        try:
+            from charlotte.data_fetch import fetch_ohlcv  # type: ignore
+        except Exception as e:
+            logger.warning(f"scan_analytics: data_fetch unavailable: {e}")
+            return None
+    try:
+        return fetch_ohlcv(symbol, days=days)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"scan_analytics: fetch_ohlcv({symbol}) failed: {e}")
+        return None
+
+
+def _completed(df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+    """Drop the most recent (possibly in-progress) bar to avoid look-ahead.
+
+    ``fetch_ohlcv`` pulls through 'now'; during market hours the last row is a
+    partial bar. We compute everything on completed bars only.
+    """
+    if df is None or len(df) < 2:
+        return None
+    return df.iloc[:-1]
+
+
+def _adj_close(df: pd.DataFrame) -> Optional[pd.Series]:
+    col = "Adj Close" if "Adj Close" in df.columns else ("Close" if "Close" in df.columns else None)
+    if col is None:
+        return None
+    s = pd.to_numeric(df[col], errors="coerce").dropna()
+    return s if len(s) >= 2 else None
+
+
+def _daily_returns(adj_close: pd.Series) -> pd.Series:
+    return adj_close.pct_change().dropna()
+
+
+# --------------------------------------------------------------------------- #
+# Per-ticker analytics block
+# --------------------------------------------------------------------------- #
+def per_ticker_analytics(
+    symbol: str,
+    *,
+    avg_cost: Optional[float] = None,
+    current_price: Optional[float] = None,
+    account_value: Optional[float] = None,
+    entry_date: Optional[str] = None,
+    df: Optional[pd.DataFrame] = None,
+    spy_returns: Optional[pd.Series] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build the additive per-ticker ``analytics`` block.
+
+    All fields are best-effort; any sub-metric that cannot be sourced is set to
+    ``None`` (and the reason flagged in ``data_gaps``). Returns ``None`` only if
+    OHLC is entirely missing (caller omits the block).
+
+    Parameters
+    ----------
+    symbol : str
+    avg_cost : float, optional
+        SnapTrade ``average_buy_price`` (raw price space). Drives R-multiple,
+        distance-to-stop, unrealized R when present.
+    current_price : float, optional
+        Latest price (from the scan's quote). Falls back to the last completed
+        adjusted close if absent.
+    account_value : float, optional
+        Total portfolio value, for fixed-fractional position sizing.
+    entry_date : str, optional
+        ISO entry date. SnapTrade positions do NOT expose this, so it is almost
+        always None -> ``days_held`` omitted and flagged.
+    df : DataFrame, optional
+        Pre-fetched OHLCV (reuses the scan's cached pull). Fetched if None.
+    spy_returns : pd.Series, optional
+        Completed-bar SPY daily returns for beta. Beta omitted if absent.
+    """
+    try:
+        A = _import_analytics()
+        if df is None:
+            df = _fetch_ohlcv(symbol)
+        df = _completed(df)
+        if df is None:
+            return None
+
+        adj = _adj_close(df)
+        if adj is None:
+            return None
+        rets = _daily_returns(adj)
+
+        data_gaps: List[str] = []
+        block: Dict[str, Any] = {
+            "as_of_bar": str(adj.index[-1].date()) if hasattr(adj.index[-1], "date") else str(adj.index[-1]),
+            "risk_pct_used": _RISK_PCT,
+        }
+
+        last_completed_close = float(adj.iloc[-1])
+        px = float(current_price) if (current_price and np.isfinite(current_price)) else last_completed_close
+
+        # ATR + ATR-based stop/target (raw OHLC, real-price space to match avg_cost)
+        atr_val = None
+        try:
+            high = pd.to_numeric(df["High"], errors="coerce").to_numpy()
+            low = pd.to_numeric(df["Low"], errors="coerce").to_numpy()
+            close = pd.to_numeric(df["Close"], errors="coerce").to_numpy()
+            atr_val = A.atr(high, low, close, period=_ATR_PERIOD)
+            if atr_val is not None and np.isfinite(atr_val):
+                # Anchor stop/target on the current price (entry-to-add reference).
+                levels = A.atr_levels(
+                    px, atr_val,
+                    stop_mult=_ATR_STOP_MULT,
+                    target_mult=_ATR_TARGET_MULT,
+                    direction="long",
+                )
+                block["atr"] = float(atr_val)
+                block["atr_period"] = _ATR_PERIOD
+                block["atr_levels"] = {
+                    "reference_price": px,
+                    "stop": levels["stop"],
+                    "target": levels["target"],
+                    "stop_mult": _ATR_STOP_MULT,
+                    "target_mult": _ATR_TARGET_MULT,
+                }
+            else:
+                atr_val = None
+                data_gaps.append("atr_insufficient_bars")
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"scan_analytics[{symbol}]: ATR failed: {e}")
+            data_gaps.append("atr_error")
+
+        # R-multiple / distance-to-stop / unrealized R — needs entry (avg_cost)
+        if avg_cost and np.isfinite(avg_cost) and avg_cost > 0:
+            block["entry_price"] = float(avg_cost)
+            if atr_val is not None and np.isfinite(atr_val):
+                # Stop is placed relative to the ACTUAL entry for R geometry.
+                entry_levels = A.atr_levels(
+                    float(avg_cost), atr_val,
+                    stop_mult=_ATR_STOP_MULT, target_mult=_ATR_TARGET_MULT,
+                    direction="long",
+                )
+                stop = entry_levels["stop"]
+                block["stop_from_entry"] = stop
+                block["distance_to_stop_pct"] = A.distance_to_stop_pct(float(avg_cost), stop)
+                block["unrealized_r"] = A.unrealized_r(px, float(avg_cost), stop)
+                block["r_multiple"] = block["unrealized_r"]
+                per_share_risk = abs(float(avg_cost) - stop)
+                if account_value and np.isfinite(account_value) and account_value > 0:
+                    block["suggested_size_shares"] = A.position_size_fixed_fractional(
+                        float(account_value), _RISK_PCT, per_share_risk
+                    )
+                    block["suggested_risk_dollars"] = float(account_value) * _RISK_PCT
+                else:
+                    data_gaps.append("no_account_value_for_sizing")
+            else:
+                data_gaps.append("no_atr_for_r_multiple")
+        else:
+            data_gaps.append("no_entry_avg_cost")
+
+        # Position vol + beta (adjusted returns)
+        if len(rets) >= _MIN_RETURN_OBS:
+            block["annualized_vol"] = A.position_vol(rets.to_numpy(), _TRADING_DAYS)
+            if spy_returns is not None and len(spy_returns) >= _MIN_RETURN_OBS:
+                aligned = pd.concat([rets.rename("a"), spy_returns.rename("m")], axis=1, join="inner").dropna()
+                if len(aligned) >= _MIN_RETURN_OBS:
+                    block["beta_to_spy"] = A.position_beta(
+                        aligned["a"].to_numpy(), aligned["m"].to_numpy()
+                    )
+                else:
+                    data_gaps.append("insufficient_overlap_for_beta")
+            else:
+                data_gaps.append("no_spy_returns_for_beta")
+        else:
+            data_gaps.append("insufficient_returns")
+
+        # days_held — SnapTrade gives no entry date, so this is almost always absent.
+        if entry_date:
+            try:
+                block["days_held"] = A.days_held(entry_date, pd.Timestamp.utcnow())
+            except Exception:
+                data_gaps.append("bad_entry_date")
+        else:
+            data_gaps.append("no_entry_date_available")
+
+        if data_gaps:
+            block["data_gaps"] = data_gaps
+        return block
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"scan_analytics: per_ticker_analytics({symbol}) failed: {e}")
+        return None
+
+
+# --------------------------------------------------------------------------- #
+# Portfolio-level risk block
+# --------------------------------------------------------------------------- #
+def portfolio_risk(
+    holdings: List[Dict[str, Any]],
+    portfolio_value: float,
+    *,
+    ohlc_cache: Optional[Dict[str, pd.DataFrame]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build the additive portfolio-level ``portfolio_risk`` block.
+
+    Parameters
+    ----------
+    holdings : list of dict
+        Each dict needs ``symbol``, ``market_value`` and (optionally) ``sector``.
+    portfolio_value : float
+        Sum of eligible-equity market values (the scan's ``portfolio_value``).
+    ohlc_cache : dict, optional
+        Symbol -> completed-bar DataFrame, to reuse the scan's pulls. Anything
+        missing is fetched here (per-process cached).
+
+    Returns
+    -------
+    dict or None
+        ``None`` if nothing could be sourced. Otherwise a dict with whatever
+        could be computed; sub-blocks that fail are omitted, and ``data_gaps``
+        flags what was skipped. Never raises.
+    """
+    try:
+        A = _import_analytics()
+        ohlc_cache = ohlc_cache or {}
+        data_gaps: List[str] = []
+
+        if not portfolio_value or not np.isfinite(portfolio_value) or portfolio_value <= 0:
+            return None
+
+        # 1) gather completed-bar adjusted-close return series per holding
+        returns_by_sym: Dict[str, pd.Series] = {}
+        weights: Dict[str, float] = {}
+        sectors: List[Dict[str, Any]] = []
+        skipped: List[str] = []
+
+        for h in holdings:
+            sym = str(h.get("symbol") or "").upper()
+            mv = float(h.get("market_value") or 0.0)
+            if not sym or mv <= 0:
+                continue
+            df = ohlc_cache.get(sym)
+            if df is None:
+                df = _completed(_fetch_ohlcv(sym))
+            if df is None:
+                skipped.append(sym)
+                continue
+            adj = _adj_close(df)
+            if adj is None:
+                skipped.append(sym)
+                continue
+            r = _daily_returns(adj)
+            if len(r) < _MIN_RETURN_OBS:
+                skipped.append(sym)
+                continue
+            returns_by_sym[sym] = r
+            weights[sym] = mv / portfolio_value
+            sectors.append({"sector": h.get("sector") or "Unknown", "weight": mv / portfolio_value})
+
+        if skipped:
+            data_gaps.append(f"no_ohlc_for:{','.join(sorted(set(skipped)))}")
+
+        out: Dict[str, Any] = {
+            "benchmark": _BENCHMARK,
+            "periods_per_year": _TRADING_DAYS,
+            "holdings_used": sorted(returns_by_sym.keys()),
+            "correlation_window_bars": _CORR_WINDOW,
+        }
+
+        # 2) concentration (works off weights alone — always available)
+        if weights:
+            w_syms = sorted(weights.keys())
+            w_arr = np.array([weights[s] for s in w_syms], dtype=float)
+            out["hhi"] = A.hhi(w_arr)
+            out["effective_number"] = A.effective_number(w_arr)
+            out["weights"] = {s: float(weights[s]) for s in w_syms}
+        # sector exposure (Unknown unless caller supplied sector — SnapTrade does not)
+        if sectors:
+            out["sector_exposure"] = A.sector_exposure(sectors)
+            if all(s["sector"] == "Unknown" for s in sectors):
+                data_gaps.append("no_sector_data")
+
+        # 3) SPY benchmark returns (completed bars)
+        spy_df = ohlc_cache.get(_BENCHMARK) or _completed(_fetch_ohlcv(_BENCHMARK))
+        spy_rets = None
+        if spy_df is not None:
+            spy_adj = _adj_close(spy_df)
+            if spy_adj is not None:
+                spy_rets = _daily_returns(spy_adj)
+        if spy_rets is None:
+            data_gaps.append("no_spy_benchmark")
+
+        # 4) build an aligned returns frame across holdings (inner join on dates)
+        if returns_by_sym:
+            frame = pd.DataFrame(returns_by_sym).dropna(how="all")
+            # weighted portfolio return series (only over names with data)
+            common = frame.dropna()
+            if not common.empty:
+                used_syms = list(common.columns)
+                w_used = np.array([weights[s] for s in used_syms], dtype=float)
+                w_norm = w_used / w_used.sum() if w_used.sum() > 0 else w_used
+                port_ret = (common[used_syms].to_numpy() @ w_norm)
+                port_ret = pd.Series(port_ret, index=common.index)
+
+                out["annualized_vol"] = A.annualized_volatility(port_ret.to_numpy(), _TRADING_DAYS)
+                var = A.value_at_risk(port_ret.to_numpy(), conf=0.95)
+                out["var_95"] = {
+                    "historical": var["historical"],
+                    "parametric": var["parametric"],
+                    "confidence": 0.95,
+                    "horizon": "1d",
+                    "units": "fraction_of_portfolio_loss",
+                }
+                out["sharpe"] = A.sharpe(port_ret.to_numpy(), _RISK_FREE_ANNUAL, _TRADING_DAYS)
+                out["sortino"] = A.sortino(port_ret.to_numpy(), 0.0, _TRADING_DAYS)
+
+                # max drawdown from a growth-of-$1 equity curve built from returns
+                equity = (1.0 + port_ret).cumprod()
+                out["max_drawdown"] = A.max_drawdown(equity.to_numpy())
+                out["max_drawdown_note"] = (
+                    "synthetic: cumulative product of current-holdings weighted returns, "
+                    "NOT realized account equity (true equity history unavailable)"
+                )
+
+                # portfolio beta-to-SPY: weighted sum of per-name betas
+                if spy_rets is not None:
+                    betas = {}
+                    for s in used_syms:
+                        al = pd.concat(
+                            [frame[s].rename("a"), spy_rets.rename("m")], axis=1, join="inner"
+                        ).dropna()
+                        if len(al) >= _MIN_RETURN_OBS:
+                            betas[s] = A.beta(al["a"].to_numpy(), al["m"].to_numpy())
+                    if betas:
+                        bsum = 0.0
+                        wsum = 0.0
+                        for s, b in betas.items():
+                            if b is not None and np.isfinite(b):
+                                bsum += weights[s] * b
+                                wsum += weights[s]
+                        out["beta_to_spy"] = float(bsum / wsum) if wsum > 0 else None
+                        out["per_holding_beta"] = {s: float(b) for s, b in betas.items() if np.isfinite(b)}
+            else:
+                data_gaps.append("no_common_dates_across_holdings")
+
+            # 5) rolling ~1-month correlation matrix
+            if frame.shape[1] >= 2:
+                window = frame.tail(_CORR_WINDOW)
+                corr = A.correlation_matrix(window)
+                # JSON-friendly nested dict, NaN -> None
+                corr_clean = corr.where(pd.notnull(corr), None)
+                out["correlation_matrix"] = {
+                    str(i): {str(j): (None if pd.isna(corr.loc[i, j]) else float(corr.loc[i, j]))
+                             for j in corr.columns}
+                    for i in corr.index
+                }
+            else:
+                data_gaps.append("need_2plus_holdings_for_correlation")
+
+        if data_gaps:
+            out["data_gaps"] = data_gaps
+
+        # Nothing meaningful computed? signal absence.
+        if not any(k in out for k in ("annualized_vol", "hhi", "beta_to_spy")):
+            return None
+        return out
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"scan_analytics: portfolio_risk failed: {e}")
+        return None
