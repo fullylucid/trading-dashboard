@@ -604,6 +604,24 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
         except Exception as pe:  # noqa: BLE001
             logger.warning(f"Portfolio risk analytics failed: {pe}")
 
+    # Additive per-ticker sector-rotation tag: each holding's sector rotation
+    # status (rotating-IN tailwind / rotating-OUT risk), joined from the daily
+    # sector-rotation snapshot via map_to_companies. Computed ONCE for all
+    # scanned symbols (one snapshot read, cached sector lookups) then attached
+    # per entry. Fully wrapped — a tagging failure never breaks the scan.
+    if _scan_analytics is not None and results:
+        try:
+            _rot_tags = _scan_analytics.sector_rotation_tags(
+                [r["symbol"] for r in results]
+            )
+            if _rot_tags:
+                for r in results:
+                    tag = _rot_tags.get(r["symbol"])
+                    if tag:
+                        r["sector_rotation"] = tag
+        except Exception as ge:  # noqa: BLE001
+            logger.warning(f"Sector-rotation tagging failed: {ge}")
+
     # Additive payload-level market-regime block (label + size/stop bias),
     # read off the once-fetched SPY series. Fully wrapped: never fails the scan.
     regime_block = None
