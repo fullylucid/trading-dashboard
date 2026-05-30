@@ -1,0 +1,36 @@
+# Templated systemd unit for a POOL of agent workers on the always-on box.
+# Each instance (agent-bridge@1, @2, @3) long-polls the same queue; atomic LPOP
+# hands each job to exactly one worker, and `code`/`approval` jobs take a shared
+# flock (CODE_LOCK_FILE) so they never clobber the one AGENT_REPO_DIR clone.
+# Read-only jobs (data/brainstorm/scan — theses, narratives, explanations) run
+# fully in parallel. Keep the pool small (3-4): the ceiling is the Max rolling
+# usage limit, not the box; the worker backs off and retries on throttle.
+#
+# Migrate from the single agent-bridge.service to the pool:
+#   sudo systemctl disable --now agent-bridge        # stop the old singleton
+#   sudo cp worker/agent-bridge@.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now agent-bridge@1 agent-bridge@2 agent-bridge@3
+#   systemctl status 'agent-bridge@*' --no-pager
+#
+# The dedicated clone (AGENT_REPO_DIR) must already be `gh auth`'d. Tune the
+# pool size by enabling/disabling instances; CLAUDE_THROTTLE_RETRIES is optional.
+
+[Unit]
+Description=Trading Dashboard agent worker %i (messenger -> local Claude)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user
+Environment=HOME=/home/user
+Environment=AGENT_WORKER_ID=%i
+EnvironmentFile=/home/user/.config/agent-bridge/.env
+WorkingDirectory=/home/user/trading-dashboard-agent
+ExecStart=/home/user/.config/agent-bridge/venv/bin/python /home/user/trading-dashboard-agent/worker/agent_worker.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
