@@ -52,7 +52,7 @@ async def test_post_returns_202_with_uuid_job_id():
     import portfolio_routes
 
     # Stub execute_scan so the background task is fast and harmless
-    async def fake_exec(top_n, include_thesis, refresh):
+    async def fake_exec(top_n, include_thesis, refresh, progress_cb=None):
         return _fake_result()
 
     with patch.object(portfolio_routes, "_execute_scan", side_effect=fake_exec):
@@ -85,7 +85,7 @@ async def test_get_right_after_post_returns_queued_or_running():
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def slow_exec(top_n, include_thesis, refresh):
+    async def slow_exec(top_n, include_thesis, refresh, progress_cb=None):
         started.set()
         await release.wait()
         return _fake_result()
@@ -109,7 +109,7 @@ async def test_get_right_after_post_returns_queued_or_running():
 async def test_job_completes_with_result():
     import portfolio_routes
 
-    async def fake_exec(top_n, include_thesis, refresh):
+    async def fake_exec(top_n, include_thesis, refresh, progress_cb=None):
         return _fake_result()
 
     with patch.object(portfolio_routes, "_execute_scan", side_effect=fake_exec):
@@ -135,7 +135,7 @@ async def test_job_completes_with_result():
 async def test_job_error_path():
     import portfolio_routes
 
-    async def boom(top_n, include_thesis, refresh):
+    async def boom(top_n, include_thesis, refresh, progress_cb=None):
         raise RuntimeError("kaboom")
 
     with patch.object(portfolio_routes, "_execute_scan", side_effect=boom):

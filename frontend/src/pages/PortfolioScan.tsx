@@ -6,10 +6,12 @@
  *
  *   - RegimeBanner       (payload.regime)
  *   - RiskGauges         (payload.portfolio_risk)
- *   - CorrelationHeatmap (payload.portfolio_risk.correlation_matrix)
+ *   - RedundancyCallout  (compact concentration/redundancy read off
+ *                         payload.portfolio_risk — replaces the old N×N heatmap)
  *   - AlertTimeline      (payload.alerts)
- *   - ChartPanel         (live candles via /api/chart + Fib/S-R/AI-read overlays,
- *                         live price via useLivePrice) for the selected ticker
+ *   - ChartWorkspace     (the CENTERPIECE — TradingView-style workspace with
+ *                         custom AI indicators, individual/compare/portfolio
+ *                         modes, sourced from /api/chart endpoints)
  *   - SignalRadar        (selected ticker's analytics.signals)
  *
  * Everything analytics-side is additive + null-guarded: the page renders fully
@@ -21,16 +23,12 @@ import axios from 'axios';
 
 import RegimeBanner from '../components/analytics/RegimeBanner';
 import RiskGauges from '../components/analytics/RiskGauges';
-import CorrelationHeatmap from '../components/analytics/CorrelationHeatmap';
+import RedundancyCallout from '../components/analytics/RedundancyCallout';
 import AlertTimeline from '../components/analytics/AlertTimeline';
 import SignalRadar from '../components/analytics/SignalRadar';
 import type { SignalsBlock, RegimeBlock } from '../components/analytics/types';
 
-import ChartPanel from '../components/charts/ChartPanel';
-import type { Candle } from '../components/charts/types';
-import type { ScanSignalsBlock } from '../components/charts/PatternAnnotations';
-import type { ScanSupportResistance } from '../components/charts/SupportResistanceOverlay';
-import { getChart } from '../lib/chartApi';
+import ChartWorkspace from '../components/charts/ChartWorkspace';
 
 import type {
   PortfolioRisk,
@@ -138,45 +136,6 @@ function signalsBlockOf(item: ScanItem | null): SignalsBlock | null {
   return raw as unknown as SignalsBlock;
 }
 
-/**
- * Adapt the scan's `analytics.signals` into the chart overlay's
- * `ScanSignalsBlock`. The scan emits `divergence` as a bare string
- * (`'bullish' | 'bearish' | null`) and a `gap_pct` scalar; the overlay wants an
- * object `{type}` and a `{pct}`. Map explicitly rather than cast blindly so the
- * pattern markers actually fire.
- */
-function scanSignalsOf(item: ScanItem | null): ScanSignalsBlock | null {
-  const raw = item?.analytics?.signals as Record<string, unknown> | undefined;
-  if (!raw || typeof raw !== 'object') return null;
-
-  const out: ScanSignalsBlock = {};
-
-  const div = raw.divergence;
-  if (div === 'bullish' || div === 'bearish') {
-    out.divergence = { type: div };
-  }
-
-  const gap = raw.gap_pct;
-  if (typeof gap === 'number' && Number.isFinite(gap)) {
-    out.gap = { pct: gap };
-  }
-
-  return out;
-}
-
-/**
- * Support/resistance for the chart. The scan signals block doesn't currently
- * carry an explicit S/R sub-block, so this returns null and ChartPanel falls
- * back to deriving pivots locally from the candles. If a future scan version
- * attaches `analytics.signals.support_resistance`, it's surfaced here.
- */
-function srOf(item: ScanItem | null): ScanSupportResistance | null {
-  const sig = item?.analytics?.signals as Record<string, unknown> | undefined;
-  const sr = sig?.support_resistance;
-  if (!sr || typeof sr !== 'object') return null;
-  return sr as ScanSupportResistance;
-}
-
 // ---------------------------------------------------------------------------
 // Formatting helpers.
 // ---------------------------------------------------------------------------
@@ -277,11 +236,8 @@ const PortfolioScan: React.FC = () => {
   const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
 
-  // Selected ticker → chart cockpit.
+  // Selected ticker → drives the SignalRadar + the workspace's initial symbol.
   const [selected, setSelected] = useState<string | null>(null);
-  const [candles, setCandles] = useState<Candle[]>([]);
-  const [chartLoading, setChartLoading] = useState<boolean>(false);
-  const [chartError, setChartError] = useState<string | null>(null);
 
   const pollInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -324,33 +280,6 @@ const PortfolioScan: React.FC = () => {
       result.top_buys?.[0]?.symbol ?? result.ranked?.[0]?.symbol ?? null;
     if (first) setSelected(first);
   }, [result, selected]);
-
-  // Fetch candles for the selected ticker.
-  useEffect(() => {
-    if (!selected) {
-      setCandles([]);
-      return;
-    }
-    let cancelled = false;
-    setChartLoading(true);
-    setChartError(null);
-    getChart(selected, { timeframe: '1D', lookbackDays: 180 })
-      .then((resp) => {
-        if (cancelled) return;
-        setCandles(resp.candles);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setChartError('Failed to load chart data.');
-        setCandles([]);
-      })
-      .finally(() => {
-        if (!cancelled) setChartLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selected]);
 
   const checkStatus = useCallback(
     async (id: string): Promise<void> => {
@@ -676,20 +605,21 @@ const PortfolioScan: React.FC = () => {
               </div>
             </div>
 
-            {/* ---- risk cockpit: gauges + heatmap + alerts ---- */}
+            {/* ---- risk strip: gauges + redundancy callout + alerts ---- */}
             {(result.portfolio_risk || (result.alerts && result.alerts.length > 0)) && (
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2 space-y-6">
-                  {result.portfolio_risk && (
-                    <div>
-                      <h2 className="text-lg font-bold text-green-300 mb-3">Portfolio Risk</h2>
-                      <RiskGauges portfolioRisk={result.portfolio_risk} />
-                      <div className="mt-4">
-                        <CorrelationHeatmap matrix={result.portfolio_risk.correlation_matrix} />
-                      </div>
-                    </div>
-                  )}
-                </div>
+                {result.portfolio_risk && (
+                  <div>
+                    <h2 className="text-lg font-bold text-green-300 mb-3">Portfolio Risk</h2>
+                    <RiskGauges portfolioRisk={result.portfolio_risk} />
+                  </div>
+                )}
+                {result.portfolio_risk && (
+                  <div>
+                    <h2 className="text-lg font-bold text-green-300 mb-3">Concentration</h2>
+                    <RedundancyCallout portfolioRisk={result.portfolio_risk} />
+                  </div>
+                )}
                 <div>
                   <h2 className="text-lg font-bold text-green-300 mb-3">Alerts</h2>
                   <AlertTimeline alerts={result.alerts} maxItems={12} />
@@ -697,50 +627,49 @@ const PortfolioScan: React.FC = () => {
               </div>
             )}
 
-            {/* ---- chart cockpit for the selected ticker ---- */}
+            {/* ---- CENTERPIECE: TradingView-style chart workspace ---- */}
             <div>
               <div className="flex flex-wrap items-center gap-3 mb-3">
-                <h2 className="text-lg font-bold text-green-300">Chart</h2>
-                {selectableSymbols.length > 0 && (
-                  <select
-                    value={selected ?? ''}
-                    onChange={(e) => setSelected(e.target.value || null)}
-                    className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-white"
-                  >
-                    {selectableSymbols.map((sym) => (
-                      <option key={sym} value={sym}>
-                        {sym}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                <h2 className="text-xl font-bold text-green-300">Chart Workspace</h2>
+                <span className="text-xs text-gray-500">
+                  Individual · Compare · Portfolio — live AI indicator layers
+                </span>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2">
-                  {selected && chartError && (
-                    <div className="bg-red-900/40 border border-red-700 rounded p-3 text-red-200 text-sm">
-                      {chartError}
-                    </div>
-                  )}
-                  {selected && !chartError && (
-                    <ChartPanel
-                      symbol={selected}
-                      candles={candles}
-                      scanSignals={scanSignalsOf(selectedItem)}
-                      scanSupportResistance={srOf(selectedItem)}
-                      timeframe="1D"
-                      height={420}
+              <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+                <div className="xl:col-span-3">
+                  {selectableSymbols.length > 0 ? (
+                    <ChartWorkspace
+                      tickers={selectableSymbols}
+                      initialSymbol={selected ?? undefined}
+                      initialMode="individual"
+                      initialRange="1y"
+                      height={560}
                     />
-                  )}
-                  {selected && chartLoading && candles.length === 0 && (
-                    <div className="text-gray-500 text-sm mt-2">Loading candles…</div>
+                  ) : (
+                    <div className="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center text-gray-500">
+                      No tickers to chart yet.
+                    </div>
                   )}
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-green-300 mb-2">
-                    Signal Confluence {selected ? `· ${selected}` : ''}
-                  </h3>
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <h3 className="text-sm font-semibold text-green-300">Signal Confluence</h3>
+                    {selectableSymbols.length > 0 && (
+                      <select
+                        value={selected ?? ''}
+                        onChange={(e) => setSelected(e.target.value || null)}
+                        className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs text-white"
+                        aria-label="Confluence ticker"
+                      >
+                        {selectableSymbols.map((sym) => (
+                          <option key={sym} value={sym}>
+                            {sym}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
                   <SignalRadar symbol={selected ?? '—'} signals={signalsBlockOf(selectedItem)} size={240} />
                 </div>
               </div>
