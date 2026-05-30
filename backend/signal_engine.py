@@ -14,13 +14,8 @@ import numpy as np
 
 from cache_manager import CacheManager
 from scanners import (
-    SmartMoneyScanner,
-    OptionsScanner,
     SECScanner,
-    SentimentScanner,
-    ShortInterestScanner,
     QuantEnsembleScanner,
-    NewsScanner,
     TechnicalScanner,
 )
 
@@ -61,13 +56,8 @@ class SignalEngine:
         
         # Initialize scanners
         self.scanners = {
-            "smart_money": SmartMoneyScanner(),
-            "options": OptionsScanner(),
             "sec": SECScanner(),
-            "sentiment": SentimentScanner(),
-            "short_interest": ShortInterestScanner(),
             "quant_ensemble": QuantEnsembleScanner(),
-            "news": NewsScanner(),
             "technical": TechnicalScanner(),
         }
         

@@ -28,9 +28,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import random
+import time
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 try:
     from snaptrade_client import SnapTrade
@@ -41,6 +43,58 @@ logger = logging.getLogger(__name__)
 
 
 CACHE_TTL_SECONDS = 60
+
+# Retry policy for external SnapTrade SDK calls.
+_RETRY_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 0.5          # seconds (first backoff)
+_RETRY_MAX_DELAY = 4.0           # seconds (per-attempt cap)
+_RETRY_TOTAL_BUDGET = 10.0       # seconds (total time across retries)
+
+_T = TypeVar("_T")
+
+
+def _retry_sync(
+    func: Callable[[], _T],
+    *,
+    op: str,
+    attempts: int = _RETRY_ATTEMPTS,
+    base_delay: float = _RETRY_BASE_DELAY,
+    max_delay: float = _RETRY_MAX_DELAY,
+    total_budget: float = _RETRY_TOTAL_BUDGET,
+) -> _T:
+    """Run a synchronous callable with bounded exponential-backoff + jitter.
+
+    Retries transient failures up to ``attempts`` times, capping both the
+    per-attempt sleep and the total wall-clock time spent retrying. Logs on
+    each retry and on final giveup, then re-raises the last exception.
+    """
+    started = time.monotonic()
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return func()
+        except Exception as exc:  # noqa: BLE001 - bounded retry on any transient error
+            last_exc = exc
+            if attempt >= attempts:
+                break
+            elapsed = time.monotonic() - started
+            remaining = total_budget - elapsed
+            if remaining <= 0:
+                logger.warning(
+                    "%s: retry budget (%.1fs) exhausted after %d attempt(s)",
+                    op, total_budget, attempt,
+                )
+                break
+            backoff = min(max_delay, base_delay * (2 ** (attempt - 1)))
+            delay = min(remaining, backoff + random.uniform(0, base_delay))
+            logger.warning(
+                "%s failed (attempt %d/%d): %s — retrying in %.2fs",
+                op, attempt, attempts, exc, delay,
+            )
+            time.sleep(delay)
+    logger.error("%s giving up after %d attempt(s): %s", op, attempts, last_exc)
+    assert last_exc is not None
+    raise last_exc
 
 
 class SnapTradeNotConfigured(RuntimeError):
@@ -226,65 +280,112 @@ class SnapTradePortfolio:
     # raw API fetchers (sync, run via to_thread)
     # ------------------------------------------------------------------ #
     def _fetch_accounts(self) -> List[Dict[str, Any]]:
-        resp = self.client.account_information.list_user_accounts(
-            user_id=self.user_id,
-            user_secret=self.user_secret,
-        )
+        def _call() -> Any:
+            return self.client.account_information.list_user_accounts(
+                user_id=self.user_id,
+                user_secret=self.user_secret,
+            )
+
+        resp = _retry_sync(_call, op="list_user_accounts")
         body = getattr(resp, "body", resp)
         return list(body) if body else []
 
-    def _fetch_holdings(self) -> List[Dict[str, Any]]:
+    def _fetch_account_positions(self, aid: str) -> List[Dict[str, Any]]:
+        """Fetch positions for a single account (with retry)."""
+        def _call() -> Any:
+            return self.client.account_information.get_user_account_positions(
+                account_id=aid,
+                user_id=self.user_id,
+                user_secret=self.user_secret,
+            )
+
+        pres = _retry_sync(_call, op=f"get_user_account_positions[{aid}]")
+        return list(getattr(pres, "body", pres) or [])
+
+    def _fetch_account_balance(self, aid: str) -> List[Dict[str, Any]]:
+        """Fetch balances for a single account (with retry)."""
+        def _call() -> Any:
+            return self.client.account_information.get_user_account_balance(
+                account_id=aid,
+                user_id=self.user_id,
+                user_secret=self.user_secret,
+            )
+
+        bres = _retry_sync(_call, op=f"get_user_account_balance[{aid}]")
+        return list(getattr(bres, "body", bres) or [])
+
+    async def _fetch_account_holding(self, acct: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Fetch positions + balances for one account, off the event loop.
+
+        A failure of either sub-call degrades to an empty list for that
+        part rather than aborting the whole aggregation.
+        """
+        aid = acct.get("id")
+        if not aid:
+            return None
+
+        async def _positions() -> List[Dict[str, Any]]:
+            try:
+                return await asyncio.to_thread(self._fetch_account_positions, aid)
+            except Exception as exc:
+                logger.warning("positions fetch failed for %s: %s", aid, exc)
+                return []
+
+        async def _balances() -> List[Dict[str, Any]]:
+            try:
+                return await asyncio.to_thread(self._fetch_account_balance, aid)
+            except Exception as exc:
+                logger.warning("balance fetch failed for %s: %s", aid, exc)
+                return []
+
+        positions, balances = await asyncio.gather(_positions(), _balances())
+        return {
+            "account": acct,
+            "balances": balances,
+            "positions": positions,
+            "total_value": acct.get("balance", {}).get("total", {}) or {},
+        }
+
+    async def _fetch_holdings(self) -> List[Dict[str, Any]]:
         """Fetch holdings for all connected accounts (aggregated).
 
         The legacy `get_all_user_holdings` endpoint is now HTTP 410 Gone.
-        We rebuild the same shape by iterating accounts and pulling
-        positions + balance via the current per-account endpoints.
+        We rebuild the same shape by pulling positions + balance per
+        account via the current per-account endpoints. Per-account fetches
+        run concurrently (asyncio.gather); one account failing is logged
+        and skipped without failing the whole batch. Account ordering is
+        preserved to keep aggregation deterministic.
         """
-        accounts = self._fetch_accounts()
+        accounts = await asyncio.to_thread(self._fetch_accounts)
+        results = await asyncio.gather(
+            *(self._fetch_account_holding(acct) for acct in accounts),
+            return_exceptions=True,
+        )
         aggregated: List[Dict[str, Any]] = []
-        for acct in accounts:
-            aid = acct.get("id")
-            if not aid:
+        for acct, res in zip(accounts, results):
+            if isinstance(res, BaseException):
+                logger.warning(
+                    "holdings fetch failed for account %s: %s",
+                    acct.get("id"), res,
+                )
                 continue
-            # Positions
-            try:
-                pres = self.client.account_information.get_user_account_positions(
-                    account_id=aid,
-                    user_id=self.user_id,
-                    user_secret=self.user_secret,
-                )
-                positions = list(getattr(pres, "body", pres) or [])
-            except Exception as exc:
-                logger.warning("positions fetch failed for %s: %s", aid, exc)
-                positions = []
-            # Balances
-            try:
-                bres = self.client.account_information.get_user_account_balance(
-                    account_id=aid,
-                    user_id=self.user_id,
-                    user_secret=self.user_secret,
-                )
-                balances = list(getattr(bres, "body", bres) or [])
-            except Exception as exc:
-                logger.warning("balance fetch failed for %s: %s", aid, exc)
-                balances = []
-            aggregated.append({
-                "account": acct,
-                "balances": balances,
-                "positions": positions,
-                "total_value": acct.get("balance", {}).get("total", {}) or {},
-            })
+            if res is not None:
+                aggregated.append(res)
         return aggregated
 
     def _fetch_activities(self, days: int = 30) -> List[Dict[str, Any]]:
         end = datetime.utcnow().date()
         start = end - timedelta(days=days)
-        resp = self.client.transactions_and_reporting.get_activities(
-            user_id=self.user_id,
-            user_secret=self.user_secret,
-            start_date=start.isoformat(),
-            end_date=end.isoformat(),
-        )
+
+        def _call() -> Any:
+            return self.client.transactions_and_reporting.get_activities(
+                user_id=self.user_id,
+                user_secret=self.user_secret,
+                start_date=start.isoformat(),
+                end_date=end.isoformat(),
+            )
+
+        resp = _retry_sync(_call, op="get_activities")
         body = getattr(resp, "body", resp)
         return list(body) if body else []
 
@@ -334,7 +435,7 @@ class SnapTradePortfolio:
             return cached
 
         try:
-            holdings_payload = await asyncio.to_thread(self._fetch_holdings)
+            holdings_payload = await self._fetch_holdings()
         except Exception as exc:
             logger.error("Error fetching SnapTrade holdings: %s", exc)
             return {

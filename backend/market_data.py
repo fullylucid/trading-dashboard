@@ -11,11 +11,15 @@ Provides:
 
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Dict, Any, List, Optional
 import asyncio
 import aiohttp
 
 logger = logging.getLogger(__name__)
+
+# US equity market operates on Eastern Time regardless of server timezone
+MARKET_TZ = ZoneInfo("America/New_York")
 
 class MarketData:
     """Fetches and caches market data and statistics"""
@@ -162,22 +166,22 @@ class MarketData:
         return None
     
     def _is_market_open(self) -> bool:
-        """Check if US market is currently open"""
-        now = datetime.now()
-        
+        """Check if US market is currently open (Eastern Time aware)"""
+        # Always evaluate against US Eastern Time, independent of server tz
+        now = datetime.now(MARKET_TZ)
+
         # Market hours: 9:30 AM - 4:00 PM ET, Monday-Friday
         weekday = now.weekday()
         if weekday >= 5:  # Saturday or Sunday
             return False
-        
-        # Assume ET timezone
+
         hour = now.hour
         minute = now.minute
         current_time = hour * 60 + minute
-        
-        market_open = 9 * 60 + 30  # 9:30 AM
-        market_close = 16 * 60  # 4:00 PM
-        
+
+        market_open = 9 * 60 + 30  # 9:30 AM ET
+        market_close = 16 * 60  # 4:00 PM ET
+
         return market_open <= current_time < market_close
     
     async def fetch_market_breadth(self) -> Dict[str, Any]:

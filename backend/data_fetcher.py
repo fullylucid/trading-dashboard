@@ -6,13 +6,67 @@ Real-time price streaming and OHLCV data management
 import asyncio
 import json
 import logging
+import random
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 from pathlib import Path
 
 import aiohttp
 import websockets
 from cache_manager import CacheManager
+
+# Retry policy for external Finnhub HTTP calls.
+_RETRY_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 0.5          # seconds (first backoff)
+_RETRY_MAX_DELAY = 4.0           # seconds (per-attempt cap)
+_RETRY_TOTAL_BUDGET = 12.0       # seconds (total time across retries)
+
+_T = TypeVar("_T")
+
+
+async def _retry_async(
+    func: Callable[[], Awaitable[_T]],
+    *,
+    op: str,
+    logger: logging.Logger,
+    attempts: int = _RETRY_ATTEMPTS,
+    base_delay: float = _RETRY_BASE_DELAY,
+    max_delay: float = _RETRY_MAX_DELAY,
+    total_budget: float = _RETRY_TOTAL_BUDGET,
+) -> _T:
+    """Run an async callable with bounded exponential-backoff + jitter.
+
+    Retries transient failures (incl. timeouts) up to ``attempts`` times,
+    capping both the per-attempt sleep and total wall-clock time. Logs on
+    each retry and on final giveup, then re-raises the last exception.
+    """
+    loop = asyncio.get_event_loop()
+    started = loop.time()
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return await func()
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                break
+            remaining = total_budget - (loop.time() - started)
+            if remaining <= 0:
+                logger.warning(
+                    "%s: retry budget (%.1fs) exhausted after %d attempt(s)",
+                    op, total_budget, attempt,
+                )
+                break
+            backoff = min(max_delay, base_delay * (2 ** (attempt - 1)))
+            delay = min(remaining, backoff + random.uniform(0, base_delay))
+            logger.warning(
+                "%s failed (attempt %d/%d): %s — retrying in %.2fs",
+                op, attempt, attempts, exc, delay,
+            )
+            await asyncio.sleep(delay)
+    logger.error("%s giving up after %d attempt(s): %s", op, attempts, last_exc)
+    assert last_exc is not None
+    raise last_exc
 
 class FinnhubPriceFetcher:
     """Stream live prices from Finnhub WebSocket"""
@@ -139,17 +193,25 @@ class FinnhubPriceFetcher:
         if not self.session:
             return None
         
-        try:
-            url = f"{self.FINNHUB_REST_URL}/quote"
-            params = {"symbol": symbol, "token": self.api_key}
-            
-            async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+        url = f"{self.FINNHUB_REST_URL}/quote"
+        params = {"symbol": symbol, "token": self.api_key}
+
+        async def _call() -> Optional[float]:
+            async with self.session.get(
+                url, params=params, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     return data.get("pc")  # Previous close
+                return None
+
+        try:
+            return await _retry_async(
+                _call, op=f"finnhub_quote[{symbol}]", logger=self.logger
+            )
         except Exception as e:
             self.logger.warning(f"Failed to fetch previous close for {symbol}: {e}")
-        
+
         return None
     
     async def get_ohlcv(self, symbol: str, period: int = "5") -> Optional[Dict]:
@@ -182,21 +244,23 @@ class FinnhubPriceFetcher:
         if not self.session:
             return None
         
-        try:
-            # Fetch from Finnhub candle endpoint
-            url = f"{self.FINNHUB_REST_URL}/stock/candle"
-            params = {
-                "symbol": symbol,
-                "resolution": "D",
-                "from": int((datetime.utcnow() - timedelta(days=lookback_days)).timestamp()),
-                "to": int(datetime.utcnow().timestamp()),
-                "token": self.api_key
-            }
-            
-            async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        # Fetch from Finnhub candle endpoint
+        url = f"{self.FINNHUB_REST_URL}/stock/candle"
+        params = {
+            "symbol": symbol,
+            "resolution": "D",
+            "from": int((datetime.utcnow() - timedelta(days=lookback_days)).timestamp()),
+            "to": int(datetime.utcnow().timestamp()),
+            "token": self.api_key
+        }
+
+        async def _call() -> Optional[List[Dict]]:
+            async with self.session.get(
+                url, params=params, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    
+
                     candles = []
                     for i in range(len(data.get("t", []))):
                         candles.append({
@@ -210,11 +274,17 @@ class FinnhubPriceFetcher:
                             "sma_50": None,
                             "sma_200": None
                         })
-                    
+
                     return candles
+                return None
+
+        try:
+            return await _retry_async(
+                _call, op=f"finnhub_candle[{symbol}]", logger=self.logger
+            )
         except Exception as e:
             self.logger.error(f"Failed to get chart data for {symbol}: {e}")
-        
+
         return None
     
     async def close(self):

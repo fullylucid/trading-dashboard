@@ -227,13 +227,8 @@ def create_signal_routes(signal_engine, cache_manager):
             Scanner output with components and confidence
         """
         valid_scanners = [
-            "smart_money",
-            "options",
             "sec",
-            "sentiment",
-            "short_interest",
             "quant_ensemble",
-            "news",
             "technical",
         ]
         
