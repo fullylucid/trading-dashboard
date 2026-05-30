@@ -63,6 +63,14 @@ except ImportError:
     logger.warning("Portfolio routes not available")
 
 try:
+    from sector_rotation_routes import sector_rotation_router
+    HAS_SECTOR_ROTATION_ROUTES = True
+except Exception as _sr_err:  # broad: package pulls optional data deps lazily
+    HAS_SECTOR_ROTATION_ROUTES = False
+    sector_rotation_router = None
+    logging.getLogger(__name__).warning(f"Sector-rotation routes not available: {_sr_err!r}")
+
+try:
     from hermes_portal import router as hermes_router, startup_event as hermes_startup, shutdown_event as hermes_shutdown
     HAS_HERMES_PORTAL = True
 except Exception as _hp_err:
@@ -265,6 +273,9 @@ if HAS_DEEP_DIVE_ROUTES:
 
 if HAS_PORTFOLIO_ROUTES:
     app.include_router(portfolio_router)
+if HAS_SECTOR_ROTATION_ROUTES and sector_rotation_router is not None:
+    app.include_router(sector_rotation_router)
+    logger.info("Sector-rotation router registered at /api/sector-rotation")
 if HAS_HERMES_PORTAL and hermes_router is not None:
     app.include_router(hermes_router)
     logger.info("Hermes Portal router registered at /api/portal/*")
@@ -319,7 +330,10 @@ async def root():
     
     if HAS_PORTFOLIO_ROUTES:
         endpoints["portfolio"] = "/api/portfolio"
-    
+
+    if HAS_SECTOR_ROTATION_ROUTES:
+        endpoints["sector_rotation"] = "/api/sector-rotation"
+
     return {
         "title": "Trading Dashboard API",
         "version": "1.0.0",

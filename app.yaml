@@ -16,6 +16,27 @@ services:
   - key: SEC_EDGAR_USER_AGENT
     scope: RUN_AND_BUILD_TIME
     value: trading-dashboard schylermcnally@gmail.com
+  # Sector-rotation (Phase 2.5) — FRED powers the econ-release catalyst stream
+  # (CPI/rates -> financials/REITs/utilities). Free key from fred.stlouisfed.org;
+  # the stream degrades gracefully (empty) when unset, so this is optional.
+  - key: FRED_API_KEY
+    scope: RUN_AND_BUILD_TIME
+    type: SECRET
+    value: ${FRED_API_KEY}
+  # Compliant User-Agent for the sector-rotation outbound calls (SEC EDGAR 13F /
+  # congressional / USAspending / Finnhub). Both default to _DEFAULT_USER_AGENT
+  # in-code; set here so all our outbound requests identify the app + a contact.
+  - key: SECTOR_ROTATION_USER_AGENT
+    scope: RUN_AND_BUILD_TIME
+    value: trading-dashboard schylermcnally@gmail.com
+  - key: TRADESKEEBOT_USER_AGENT
+    scope: RUN_AND_BUILD_TIME
+    value: trading-dashboard schylermcnally@gmail.com
+  # Where the daily sector-rotation sweep snapshot is persisted; the API route,
+  # the digest cron, and the portfolio-scan rotation tags all read this path.
+  - key: SECTOR_ROTATION_SNAPSHOT_PATH
+    scope: RUN_AND_BUILD_TIME
+    value: /tmp/sector_rotation_latest.json
   - key: REDIS_URL
     scope: RUN_AND_BUILD_TIME
     value: ${REDIS_URL}

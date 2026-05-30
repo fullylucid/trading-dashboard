@@ -425,6 +425,70 @@ async def regime_block(spy_close: Optional[pd.Series] = None) -> Optional[Dict[s
 
 
 # --------------------------------------------------------------------------- #
+# Sector-rotation tagging (additive, exception-wrapped — never breaks a scan)
+# --------------------------------------------------------------------------- #
+def sector_rotation_tags(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Map each symbol -> its sector's rotation status, keyed by symbol.
+
+    Reuses the daily sector-rotation snapshot (written by the
+    ``/api/sector-rotation`` route + digest cron) so a portfolio scan does NOT
+    trigger a fresh, slow 5-stream sweep. The pure
+    ``sector_rotation.map_to_companies`` does the holding->sector->rotation join;
+    ``sector_for_ticker`` (cached, exception-wrapped) resolves each ticker's GICS
+    sector.
+
+    Returns ``{SYMBOL: {sector, etf, rotation_score, confidence, status, alert,
+    phase, tag}}`` for every symbol that resolves to a scored sector. Symbols with
+    no rotation data are simply absent. Never raises — any failure (no snapshot,
+    package missing, lookup error) returns ``{}`` so the scan proceeds untagged.
+
+    The snapshot is read from ``SECTOR_ROTATION_SNAPSHOT_PATH`` (default
+    ``/tmp/sector_rotation_latest.json``), matching ``sector_rotation_routes``.
+    """
+    try:
+        syms = [str(s).upper().strip() for s in (symbols or []) if str(s).strip()]
+        if not syms:
+            return {}
+
+        snap_path = os.environ.get(
+            "SECTOR_ROTATION_SNAPSHOT_PATH", "/tmp/sector_rotation_latest.json"
+        )
+        if not os.path.exists(snap_path):
+            logger.info("sector_rotation_tags: no snapshot at %s; skipping tags", snap_path)
+            return {}
+        import json as _json
+
+        with open(snap_path, "r", encoding="utf-8") as f:
+            snap = _json.load(f)
+        rotation = ((snap or {}).get("result") or {}).get("rotation") or {}
+        if not rotation:
+            return {}
+
+        from sector_rotation import map_to_companies
+
+        mapped = map_to_companies(rotation, syms)
+        out: Dict[str, Dict[str, Any]] = {}
+        for row in (mapped or {}).get("tagged", []):
+            sym = row.get("symbol")
+            # Only attach when we actually have a sector rotation read for it.
+            if sym and row.get("status") is not None:
+                out[sym] = {
+                    "sector": row.get("sector"),
+                    "etf": row.get("etf"),
+                    "rotation_score": row.get("rotation_score"),
+                    "confidence": row.get("confidence"),
+                    "status": row.get("status"),
+                    "alert": row.get("alert"),
+                    "phase": row.get("phase"),
+                    "tag": row.get("tag"),
+                }
+        return out
+    except Exception as e:  # noqa: BLE001 - tagging must never break a scan
+        logger.warning(f"sector_rotation_tags failed: {e}")
+        return {}
+
+
+# --------------------------------------------------------------------------- #
 # Per-ticker analytics block
 # --------------------------------------------------------------------------- #
 def per_ticker_analytics(
