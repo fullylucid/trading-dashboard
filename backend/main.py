@@ -132,13 +132,6 @@ class Settings:
     ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
     FMP_API_KEY = os.getenv("FMP_API_KEY", "")
     
-    # Ollama Cloud Configuration
-    OLLAMA_CLOUD_BASE_URL = os.getenv(
-        "OLLAMA_CLOUD_BASE_URL", "https://api.ollama.cloud/v1"
-    )
-    OLLAMA_CLOUD_API_KEY = os.getenv("OLLAMA_CLOUD_API_KEY", "")
-    OLLAMA_CLOUD_MODEL = os.getenv("OLLAMA_CLOUD_MODEL", "kimi-k-3-70b")
-
     # Agent bridge (messenger -> local Claude) secrets
     OWNER_PASSWORD_HASH = os.getenv("OWNER_PASSWORD_HASH", "")
     SESSION_SECRET = os.getenv("SESSION_SECRET", "")
@@ -180,13 +173,8 @@ async def lifespan(app: FastAPI):
     news_agg = NewsAggregator(api_keys)
     earnings_cal = EarningsCalendar(api_keys)
     market_dat = MarketData(api_keys)
-    research_ag = ResearchAgent(
-        {
-            "base_url": settings.OLLAMA_CLOUD_BASE_URL,
-            "api_key": settings.OLLAMA_CLOUD_API_KEY,
-            "model": settings.OLLAMA_CLOUD_MODEL,
-        }
-    )
+    # Runs on free local Opus via the agent-bridge — no hosted-model config.
+    research_ag = ResearchAgent()
     
     # Initialize routes with service instances
     initialize_services(news_agg, earnings_cal, market_dat, research_ag)
@@ -228,8 +216,6 @@ async def lifespan(app: FastAPI):
         logger.warning("ALPHA_VANTAGE_API_KEY not configured")
     if not api_keys.get("fmp"):
         logger.warning("FMP_API_KEY not configured")
-    if not settings.OLLAMA_CLOUD_API_KEY:
-        logger.warning("OLLAMA_CLOUD_API_KEY not configured - research features disabled")
     
     yield  # Application runs here
     
@@ -468,7 +454,7 @@ async def get_stats():
         "version": "1.0.0",
         "features": [
             "Market News & Articles",
-            "Research Summaries (Kimi K)",
+            "Research Summaries (Opus 4.8)",
             "Earnings Calendar",
             "Market Data & Breadth",
             "Sector Performance",
