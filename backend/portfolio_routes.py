@@ -549,8 +549,12 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
     holds_band.sort(key=lambda r: r.get("market_value", 0) or 0, reverse=True)
     top_holds = holds_band[:5]
 
-    # Optional LLM thesis on top 5
-    if include_thesis and top_buys:
+    # LLM thesis on top buys — DISABLED by default. This called Ollama Cloud
+    # (paid, ~16-19s per thesis, sequential) and saturated the 1-vCPU instance,
+    # freezing the whole app (charts, etc.) for minutes per scan. Theses are now
+    # on-demand via the agent-bridge (free local Claude under the Max sub).
+    # Re-enable the old Ollama path only by setting SCAN_OLLAMA_THESIS=true.
+    if include_thesis and top_buys and os.getenv("SCAN_OLLAMA_THESIS", "false").lower() == "true":
         for entry in top_buys[:5]:
             try:
                 thesis_md, thesis_warnings = _generate_thesis(
