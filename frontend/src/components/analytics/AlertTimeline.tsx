@@ -13,6 +13,7 @@
 
 import React from 'react';
 import type { ScoredAlert, AlertBucket, AlertDirection } from '../../types/scanAnalytics';
+import ExplainButton from './ExplainButton';
 
 export interface AlertTimelineProps {
   alerts: ReadonlyArray<ScoredAlert> | null | undefined;
@@ -154,6 +155,8 @@ const AlertRow: React.FC<{ alert: ScoredAlert }> = ({ alert }) => {
             ))}
           </div>
         )}
+
+        <ExplainButton kind="alert" symbol={alert.symbol ?? undefined} context={{ alert }} />
       </div>
     </div>
   );

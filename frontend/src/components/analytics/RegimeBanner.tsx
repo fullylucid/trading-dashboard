@@ -12,6 +12,7 @@
 
 import React from 'react';
 import type { RegimeBlock } from './types';
+import ExplainButton from './ExplainButton';
 
 export interface RegimeBannerProps {
   regime: RegimeBlock | null | undefined;
@@ -93,6 +94,8 @@ const RegimeBanner: React.FC<RegimeBannerProps> = ({ regime, className }) => {
       </div>
 
       {regime.note && <p style={noteStyle}>{regime.note}</p>}
+
+      <ExplainButton kind="regime" context={{ regime }} label="✦ Explain this regime" />
     </div>
   );
 };

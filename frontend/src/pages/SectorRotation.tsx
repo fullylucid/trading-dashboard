@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import SectorRRG from '../components/analytics/SectorRRG';
 import SectorDonut from '../components/analytics/SectorDonut';
+import ExplainButton from '../components/analytics/ExplainButton';
 import type {
   RsRatioRow,
   RotationRow,
@@ -157,6 +158,17 @@ const SectorRotation: React.FC = () => {
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
             {result?.summary?.headline ?? 'How capital is rotating across sectors, fused from 5 free streams.'}
           </div>
+          {result != null && (
+            <ExplainButton
+              kind="sector"
+              label="✦ Explain the rotation"
+              context={{
+                summary: result.summary,
+                rotating_in: leadersIn.slice(0, 5),
+                rotating_out: leadersOut.slice(0, 5),
+              }}
+            />
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {envelope?.saved_at != null && (
