@@ -31,6 +31,16 @@ except Exception:  # pragma: no cover - fallback if tzdata missing
 from snaptrade_portfolio import get_portfolio_instance, clear_portfolio_cache
 from deep_dive_routes import _run_deep_dive, _generate_thesis, THESIS_MODEL
 
+# Additive analytics layer (Phase 1). Import is best-effort so the scan still
+# runs if the analytics package is unavailable for any reason.
+try:
+    import scan_analytics as _scan_analytics
+except Exception:  # pragma: no cover
+    try:
+        from backend import scan_analytics as _scan_analytics  # type: ignore
+    except Exception:
+        _scan_analytics = None
+
 logger = logging.getLogger(__name__)
 
 # Create router
@@ -395,9 +405,19 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
             continue
         qty = float(p.get("quantity") or p.get("units") or 0)
         mv = float(p.get("market_value") or p.get("current_value") or 0)
-        entry = agg.setdefault(sym, {"units": 0.0, "market_value": 0.0})
+        avg = float(p.get("average_buy_price") or p.get("avg_cost") or 0)
+        cur = float(p.get("current_price") or 0)
+        entry = agg.setdefault(
+            sym, {"units": 0.0, "market_value": 0.0, "cost_basis": 0.0, "current_price": 0.0}
+        )
         entry["units"] += qty
         entry["market_value"] += mv
+        # Accumulate cost basis so a multi-account holding gets a units-weighted
+        # average entry price (avg_cost = cost_basis / units). SnapTrade exposes
+        # average_purchase_price per lot, NOT a true entry date.
+        entry["cost_basis"] += qty * avg
+        if cur:
+            entry["current_price"] = cur
 
     if skipped:
         logger.info(f"Portfolio scan: skipped {len(skipped)} non-equity symbols: {sorted(set(skipped))}")
@@ -441,6 +461,19 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
             except Exception:
                 pass
 
+    # Build SPY completed-bar return series ONCE (per-process cached fetch) so
+    # every per-ticker beta computation can reuse it without re-fetching.
+    _spy_returns = None
+    if _scan_analytics is not None:
+        try:
+            _spy_df = _scan_analytics._completed(_scan_analytics._fetch_ohlcv(_scan_analytics._BENCHMARK))
+            if _spy_df is not None:
+                _spy_adj = _scan_analytics._adj_close(_spy_df)
+                if _spy_adj is not None:
+                    _spy_returns = _scan_analytics._daily_returns(_spy_adj)
+        except Exception as se:  # noqa: BLE001
+            logger.warning(f"Failed to build SPY return series for analytics: {se}")
+
     for item in gathered:
         sym = item["symbol"]
         if "error" in item:
@@ -458,6 +491,11 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
                 pct = 0.0
         else:
             pct = 0.0
+        units = agg[sym]["units"]
+        cost_basis = agg[sym].get("cost_basis", 0.0)
+        avg_cost = (cost_basis / units) if units else 0.0
+        quote = dd.get("quote") or {}
+        cur_price = quote.get("price") or agg[sym].get("current_price") or None
         entry = {
             "symbol": sym,
             "composite_score": dd.get("composite_score", 0),
@@ -468,10 +506,31 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
             "narrative": dd.get("narrative", {}),
             "signals_summary": _signals_summary(dd.get("breakdown", {}) or {}),
             "market_value": mv,
-            "units": agg[sym]["units"],
+            "units": units,
+            "avg_cost": avg_cost or None,
             "pct_of_portfolio": pct,
             "warnings": dd.get("warnings", []),
         }
+
+        # Additive per-ticker analytics block (ATR stop/target, R-multiple,
+        # distance-to-stop, position beta/vol, suggested 2.5%-risk size). Pure
+        # functions live in backend/analytics/*; wiring/IO in scan_analytics.
+        # Wrapped so any analytics failure degrades to absent, never a scan failure.
+        if _scan_analytics is not None:
+            try:
+                an = _scan_analytics.per_ticker_analytics(
+                    sym,
+                    avg_cost=avg_cost or None,
+                    current_price=cur_price,
+                    account_value=portfolio_value or None,
+                    entry_date=None,  # SnapTrade exposes no true entry date
+                    spy_returns=_spy_returns,
+                )
+                if an:
+                    entry["analytics"] = an
+            except Exception as ae:  # noqa: BLE001
+                logger.warning(f"Per-ticker analytics failed for {sym}: {ae}")
+
         results.append(entry)
 
     # Rank by composite score
@@ -520,6 +579,28 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
     else:
         portfolio_state = "has_equity"
 
+    # Additive portfolio-level risk block: beta-to-SPY, annualized vol,
+    # VaR (hist + parametric), synthetic max drawdown, Sharpe/Sortino,
+    # ~1-month rolling correlation matrix, HHI + effective_number, sector
+    # exposure. Degrades gracefully (per-ticker skips + data_gaps) and never
+    # fails the scan. Sector data is "Unknown" (SnapTrade exposes no GICS sector).
+    portfolio_risk_block = None
+    if _scan_analytics is not None and results:
+        try:
+            holdings_for_risk = [
+                {
+                    "symbol": r["symbol"],
+                    "market_value": r.get("market_value", 0.0),
+                    "sector": None,  # SnapTrade has no sector; flagged in data_gaps
+                }
+                for r in results
+            ]
+            portfolio_risk_block = _scan_analytics.portfolio_risk(
+                holdings_for_risk, portfolio_value
+            )
+        except Exception as pe:  # noqa: BLE001
+            logger.warning(f"Portfolio risk analytics failed: {pe}")
+
     payload = {
         "scanned_at": now.isoformat(),
         "tickers_scanned": len(results),
@@ -540,6 +621,10 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
         "ranked": results[:top_n],
         "failed": failed,
     }
+
+    # Additive, non-breaking: only attach when computed.
+    if portfolio_risk_block is not None:
+        payload["portfolio_risk"] = portfolio_risk_block
 
     _SCAN_CACHE[cache_key] = (now, payload)
     return payload
