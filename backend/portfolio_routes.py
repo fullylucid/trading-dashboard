@@ -13,6 +13,7 @@ from typing import Optional, List, Dict, Any, Tuple, Callable
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -448,7 +449,15 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
             continue
         dd = item["_dd"]
         mv = agg[sym]["market_value"]
-        pct = (mv / portfolio_value * 100) if portfolio_value else 0.0
+        # Guard div-by-zero / NaN/inf: only divide when portfolio_value is a
+        # finite, non-zero number. When portfolio_value is 0 (e.g. every
+        # position was a skipped crypto/cash holding) every pct is 0.0.
+        if portfolio_value and math.isfinite(portfolio_value):
+            pct = mv / portfolio_value * 100
+            if not math.isfinite(pct):
+                pct = 0.0
+        else:
+            pct = 0.0
         entry = {
             "symbol": sym,
             "composite_score": dd.get("composite_score", 0),
@@ -498,12 +507,33 @@ async def _execute_scan(top_n: int, include_thesis: bool, refresh: bool, progres
             except Exception as e:
                 logger.warning(f"Thesis generation failed for {entry['symbol']}: {e}")
 
+    # Distinguish "empty portfolio" from "100% cash/crypto". portfolio_value
+    # is the summed market value of *eligible* (scannable equity) holdings.
+    # When it's 0 but we skipped symbols, the account isn't empty — it's
+    # entirely cash / crypto / non-equity, which the UI should surface
+    # differently from a genuinely empty account.
+    skipped_unique = sorted(set(skipped))
+    has_cash_or_skipped = portfolio_value == 0 and bool(skipped_unique)
+    cash_pct = 100.0 if has_cash_or_skipped else 0.0
+    if portfolio_value == 0:
+        portfolio_state = "all_cash_or_crypto" if skipped_unique else "empty"
+    else:
+        portfolio_state = "has_equity"
+
     payload = {
         "scanned_at": now.isoformat(),
         "tickers_scanned": len(results),
         "tickers_failed": len(failed),
+        # Additive partial-failure surfacing: callers/UI can branch on this
+        # without re-deriving it from the `failed` list.
+        "partial_failure": bool(failed) and bool(results),
+        "failed_count": len(failed),
         "portfolio_value": portfolio_value,
-        "skipped_symbols": sorted(set(skipped)),
+        # Cash/empty semantics so the UI can tell "empty account" apart from
+        # "100% cash/crypto" — both yield portfolio_value == 0.
+        "cash_pct": cash_pct,
+        "portfolio_state": portfolio_state,
+        "skipped_symbols": skipped_unique,
         "top_buys": top_buys,
         "top_sells": top_sells,
         "top_holds": top_holds,

@@ -56,18 +56,18 @@ class TechnicalScanner:
             # Moving average crossover
             ma_20 = np.mean(prices_array[-20:])
             ma_50 = np.mean(prices_array[-50:])
-            ma_200 = np.mean(prices_array[-50:]) if len(prices_array) >= 50 else ma_50
-            
+            ma_200 = np.mean(prices_array[-200:]) if len(prices_array) >= 200 else ma_50
+
             current = prices_array[-1]
-            
+
             # Price position relative to MAs
             ma_signal = 0.0
-            if current > ma_20 > ma_50:
-                ma_signal = 0.8  # Strong uptrend
+            if current > ma_20 > ma_50 and current > ma_200:
+                ma_signal = 0.8  # Strong uptrend (above all MAs incl. 200-DMA)
                 result["signal"] = "buy"
                 result["confidence"] = 0.6
-            elif current < ma_20 < ma_50:
-                ma_signal = -0.8  # Strong downtrend
+            elif current < ma_20 < ma_50 and current < ma_200:
+                ma_signal = -0.8  # Strong downtrend (below all MAs incl. 200-DMA)
                 result["signal"] = "sell"
                 result["confidence"] = 0.6
             elif current > ma_20:

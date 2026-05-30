@@ -247,6 +247,27 @@ class QuantSignalBridge:
 
         # No real prices supplied → don't make up data; return default.
         if not prices or len(prices) < 60:
+            return self._default_regime()
+
+        try:
+            prices_array = np.array(prices, dtype=float)
+            loop = asyncio.get_event_loop()
+            toolkit_result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, self._toolkit.market_regime, prices_array
+                ),
+                timeout=10,
+            )
+
+            # Map toolkit's schema → main.py's expected RegimeState fields.
+            result = self._map_regime(toolkit_result)
+            self.regime_cache = result
+            self.regime_cache_time = now
+            return result
+
+        except Exception as e:
+            self.logger.warning(f"Failed to get regime state: {e}")
+            return self._default_regime()
 
     def create_hermes_signal(self, symbol: str, quant_result: Dict) -> Optional[Signal]:
         """Convert a quant toolkit result into a rich Hermes Signal."""
@@ -269,27 +290,6 @@ class QuantSignalBridge:
         except Exception as e:
             self.logger.error(f"Hermes signal creation failed for {symbol}: {e}")
             return None
-            return self._default_regime()
-
-        try:
-            prices_array = np.array(prices, dtype=float)
-            loop = asyncio.get_event_loop()
-            toolkit_result = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None, self._toolkit.market_regime, prices_array
-                ),
-                timeout=10,
-            )
-
-            # Map toolkit's schema → main.py's expected RegimeState fields.
-            result = self._map_regime(toolkit_result)
-            self.regime_cache = result
-            self.regime_cache_time = now
-            return result
-
-        except Exception as e:
-            self.logger.warning(f"Failed to get regime state: {e}")
-            return self._default_regime()
 
     def _map_regime(self, toolkit_result: Dict) -> Dict:
         """Translate quant-toolkit regime output to RegimeState fields."""
