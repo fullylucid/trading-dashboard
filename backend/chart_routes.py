@@ -545,11 +545,9 @@ async def get_chart(
     Returns ``{symbol, range, interval, candles: [{time, open, high, low,
     close, volume}], count}``. Behind the agent-bridge session. Exception-wrapped:
     any data-source failure surfaces as a 502 with no leaked internals.
+    Open like the rest of the dashboard data endpoints (the dashboard does not
+    hold the messenger session; edge auth protects the human path).
     """
-    if not HAS_AGENT_BRIDGE:
-        raise HTTPException(status_code=503, detail="Chart routes unavailable")
-    require_session(request)
-
     sym = _validate_symbol(symbol)
     if interval.lower() not in _VALID_INTERVALS:
         raise HTTPException(status_code=400, detail="Unsupported interval (daily only)")
@@ -611,12 +609,9 @@ async def get_chart_full(
 
     Every sub-block is independently optional: a failure in one leaves the rest of
     the payload intact (the offending key is omitted or empty, with a note in
-    ``data_gaps``). Reuses the cached ``_fetch_ohlcv``; behind the session.
+    ``data_gaps``). Reuses the cached ``_fetch_ohlcv``. Open like the rest of the
+    dashboard data endpoints (no messenger session required).
     """
-    if not HAS_AGENT_BRIDGE:
-        raise HTTPException(status_code=503, detail="Chart routes unavailable")
-    require_session(request)
-
     sym = _validate_symbol(symbol)
     if interval.lower() not in _VALID_INTERVALS:
         raise HTTPException(status_code=400, detail="Unsupported interval (daily only)")
@@ -777,12 +772,9 @@ async def get_chart_portfolio(
     Reuses ``snaptrade_portfolio.get_portfolio_instance`` (weights) and the cached
     ``_fetch_ohlcv``. Degrades gracefully: names with no OHLC are dropped (and
     listed in ``skipped``), weights are renormalized over the survivors, and an
-    empty book yields empty series rather than an error. Behind the session.
+    empty book yields empty series rather than an error. Open like the rest of
+    the dashboard data endpoints (no messenger session required).
     """
-    if not HAS_AGENT_BRIDGE:
-        raise HTTPException(status_code=503, detail="Chart routes unavailable")
-    require_session(request)
-
     days = _resolve_days(range)
 
     cache_key = f"chartportfolio:{days}:d"
