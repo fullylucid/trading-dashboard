@@ -20,6 +20,7 @@ import os
 import json
 import time
 import uuid
+import asyncio
 import secrets
 import logging
 from datetime import datetime
@@ -92,6 +93,11 @@ RATELIMIT_WINDOW = 60  # seconds
 SEEN_TTL = 24 * 60 * 60
 JOB_TTL = 7 * 24 * 60 * 60
 QUEUE_KEY = "agent:jobs:queue"
+
+# Wall-clock cap for internal (backend-initiated) Claude jobs — theses,
+# narratives, explanations. Generous because the work runs off-box on the
+# local worker pool; the caller always has a deterministic fallback.
+INTERNAL_JOB_TIMEOUT = int(os.getenv("AGENT_INTERNAL_TIMEOUT", "150"))
 
 # ============================================================================
 # Module state (wired up by startup_event / set_ws_manager)
@@ -477,6 +483,96 @@ async def delete_conversation(conversation_id: str, request: Request):
     )
     await r.zrem("agent:conv:index", conversation_id)
     return {"status": "ok"}
+
+
+# ============================================================================
+# Internal jobs (backend -> free local Opus, no messenger conversation)
+# ============================================================================
+
+async def run_agent_job(
+    content: str,
+    kind: str = "data",
+    timeout: Optional[int] = None,
+) -> Optional[str]:
+    """Enqueue an internal Claude job and wait for its final text.
+
+    This is how backend features (thesis, narratives, alert/regime
+    explanations) reach the free local Opus 4.8 worker pool. Unlike the
+    messenger `enqueue` route, internal jobs carry NO conversation_id, so
+    they never appear in the chat history and never broadcast over /ws/agent —
+    the worker just writes the result to `agent:result:{job_id}`, which we
+    poll here.
+
+    Returns the final text on success, or None on error/timeout/bus-down so
+    every caller can fall back to deterministic output. Reuses the existing
+    read-only worker path (kind="data"); no worker changes required.
+    """
+    if _redis is None:
+        logger.warning("run_agent_job: bus not initialized; returning None")
+        return None
+    if kind not in VALID_KINDS:
+        kind = "data"
+    r = _redis
+    job_id = str(uuid.uuid4())
+    created_at = datetime.utcnow().isoformat() + "Z"
+    job = {
+        "job_id": job_id,
+        "kind": kind,
+        "content": content,
+        "conversation_id": None,   # internal: no transcript, no broadcast
+        "created_at": created_at,
+        "needs_title": False,
+        "resume_session": None,
+    }
+    try:
+        await r.hset(f"agent:job:{job_id}", mapping={
+            "status": "queued", "kind": kind, "created_at": created_at,
+        })
+        await r.expire(f"agent:job:{job_id}", JOB_TTL)
+        await r.rpush(QUEUE_KEY, json.dumps(job))
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"run_agent_job: enqueue failed: {e}")
+        return None
+
+    deadline = time.time() + (timeout or INTERNAL_JOB_TIMEOUT)
+    delay = 1.0
+    result: Optional[str] = None
+    try:
+        while time.time() < deadline:
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.3, 4.0)
+            items = await r.lrange(f"agent:result:{job_id}", 0, -1)
+            done = False
+            for raw in items:
+                try:
+                    p = json.loads(raw)
+                except Exception:  # noqa: BLE001
+                    continue
+                if p.get("type") == "final":
+                    result = p.get("content") or None
+                    done = True
+                    break
+                if p.get("type") == "error":
+                    logger.warning(
+                        f"run_agent_job {job_id[:8]} errored: "
+                        f"{(p.get('content') or '')[:160]}"
+                    )
+                    done = True
+                    break
+            if done:
+                break
+        else:
+            logger.warning(
+                f"run_agent_job {job_id[:8]} timed out after "
+                f"{timeout or INTERNAL_JOB_TIMEOUT}s"
+            )
+    finally:
+        # Internal jobs are fire-and-forget; don't leave bus keys lingering.
+        try:
+            await r.delete(f"agent:result:{job_id}", f"agent:job:{job_id}")
+        except Exception:  # noqa: BLE001
+            pass
+    return result
 
 
 # ============================================================================
