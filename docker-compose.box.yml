@@ -1,0 +1,77 @@
+# Box deployment stack — local Redis + backend + frontend + nginx front door.
+# Separate from the DO-facing docker-compose.yml so prod's build path is untouched.
+#
+#   docker compose -f docker-compose.box.yml up -d --build
+#
+# Secrets come from ~/.config/trading-dashboard/stack.env (mode 600, NOT in the repo).
+# Front door is nginx on 127.0.0.1:8080 (loopback only — the Cloudflare Tunnel, which
+# runs on this same box, connects to localhost; nothing is exposed to the LAN).
+# The agent-bridge worker pool stays as its own systemd units (repointed in Phase 3) —
+# it is NOT part of this compose.
+name: trading-dashboard-box
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: tdbox-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .                      # repo root — backend/Dockerfile COPYs both backend/ and hermes/
+      dockerfile: backend/Dockerfile
+    container_name: tdbox-backend
+    restart: unless-stopped
+    env_file:
+      - /home/user/.config/trading-dashboard/stack.env
+    environment:
+      REDIS_URL: redis://redis:6379/0   # overrides stack.env / Upstash — local Redis, real BLPOP
+      AGENT_BUS_REDIS_DB: "1"           # bus on db1, cache on db0 (local Redis is multi-db, unlike Upstash). Worker must match in Phase 3.
+      AGENT_AUTH_DISABLED: "true"        # Cloudflare Access is the sole gate (single-user, owner-only Access, no bypass route)
+      SCAN_SNAPSHOT_PATH: /data/portfolio_scan_latest.json  # persisted on a volume so /scan/latest survives rebuilds
+      LOG_LEVEL: INFO
+      DASHBOARD_ENV: production
+    ports:
+      - "127.0.0.1:8000:8000"          # loopback only — for direct smoke-testing/debug
+    volumes:
+      - scan-data:/data                 # persistent scan snapshot (and any future on-disk state)
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health',timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend             # frontend/Dockerfile COPYs from ./frontend context
+    container_name: tdbox-frontend
+    restart: unless-stopped
+    # No env / no host port: relative-path SPA, reached only via nginx on the compose network.
+
+  nginx:
+    image: nginx:alpine
+    container_name: tdbox-nginx
+    restart: unless-stopped
+    volumes:
+      - ./nginx.box.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "127.0.0.1:8080:80"            # the Cloudflare Tunnel target (Phase 2)
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  redis-data:
+  scan-data:

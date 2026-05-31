@@ -3,6 +3,7 @@ Cache management for Trading Dashboard
 Fallback to in-memory cache if Redis unavailable
 """
 
+import os
 import json
 import logging
 from datetime import datetime, timedelta
@@ -16,9 +17,12 @@ except ImportError:
 
 class CacheManager:
     """Handle caching with Redis fallback to in-memory"""
-    
-    def __init__(self, redis_url: str = "redis://localhost:6379/0"):
-        self.redis_url = redis_url
+
+    def __init__(self, redis_url: Optional[str] = None):
+        # Default to the REDIS_URL env var so the cache uses the configured Redis
+        # (e.g. the local box Redis) instead of a hardcoded localhost. Callers that
+        # pass an explicit url still win; with no env set, falls back to localhost.
+        self.redis_url = redis_url or os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self.redis_client: Optional[redis.Redis] = None
         self.in_memory_cache: Dict[str, tuple] = {}  # (value, expiry_time)
         self.logger = logging.getLogger("cache_manager")
@@ -26,9 +30,9 @@ class CacheManager:
         # Try to connect to Redis
         if REDIS_AVAILABLE:
             try:
-                self.redis_client = redis.from_url(redis_url, decode_responses=True)
+                self.redis_client = redis.from_url(self.redis_url, decode_responses=True)
                 self.redis_client.ping()
-                self.logger.info("Connected to Redis")
+                self.logger.info(f"Connected to Redis ({self.redis_url})")
             except Exception as e:
                 self.logger.warning(f"Redis connection failed, using in-memory cache: {e}")
                 self.redis_client = None

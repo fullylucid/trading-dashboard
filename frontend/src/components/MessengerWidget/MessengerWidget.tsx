@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Rnd } from 'react-rnd';
 import useMessengerStore from '../../store/messengerStore';
 import ConversationList from './ConversationList';
@@ -62,6 +62,12 @@ function MessengerWidget() {
   const toggleCollapsed = useMessengerStore((s) => s.toggleCollapsed);
   const authed = useMessengerStore((s) => s.authed);
   const wsConnected = useMessengerStore((s) => s.agentWsConnected);
+  const init = useMessengerStore((s) => s.init);
+
+  // On mount, check whether app-level auth is required; auto-enter if not.
+  useEffect(() => {
+    if (!authed) init();
+  }, [authed, init]);
 
   // Launcher bubble when closed
   if (!geometry.open) {

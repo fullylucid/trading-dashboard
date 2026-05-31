@@ -91,8 +91,10 @@ class WebSocketManager:
         
         connection = self.active_connections[client_id]
         for symbol in symbols:
-            connection.subscriptions.add(symbol.upper())
-        
+            # Channel-style subscriptions (e.g. "chat:<uuid>") are case-sensitive
+            # identifiers and must NOT be uppercased; only ticker symbols are.
+            connection.subscriptions.add(symbol if ":" in symbol else symbol.upper())
+
         self.logger.debug(f"{client_id} subscribed to {symbols}")
         return True
     
@@ -112,7 +114,7 @@ class WebSocketManager:
         
         connection = self.active_connections[client_id]
         for symbol in symbols:
-            connection.subscriptions.discard(symbol.upper())
+            connection.subscriptions.discard(symbol if ":" in symbol else symbol.upper())
         
         return True
     
@@ -193,6 +195,18 @@ class WebSocketManager:
 
         for client_id in disconnected:
             await self.disconnect(client_id)
+
+        try:
+            subbed = sum(
+                1 for c in self.active_connections.values()
+                if channel in c.subscriptions or "*" in c.subscriptions
+            )
+            logging.getLogger("websocket_manager").info(
+                f"broadcast_chat channel={channel} conns={len(self.active_connections)} "
+                f"subscribed={subbed} notified={notified}"
+            )
+        except Exception:
+            pass
 
         return notified
 
@@ -297,16 +311,16 @@ class WebSocketManager:
             client_id: Client identifier
         """
         connection = await self.connect(websocket, client_id)
-        
+
         try:
             while True:
                 # Receive and process messages
                 data = await websocket.receive_text()
-                
+
                 try:
                     message = json.loads(data)
                     action = message.get("action", "")
-                    
+
                     if action == "subscribe":
                         symbols = message.get("symbols", [])
                         await self.subscribe(client_id, symbols)

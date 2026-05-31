@@ -79,6 +79,11 @@ OWNER_PASSWORD_HASH = os.getenv("OWNER_PASSWORD_HASH", "")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 AGENT_WORKER_TOKEN = os.getenv("AGENT_WORKER_TOKEN", "")
 
+# When true, the app-level password is disabled and Cloudflare Access is the sole
+# gate. Safe for a single-user, owner-only-Access deployment with no bypass route
+# to the origin. require_session() becomes a no-op and the browser skips login.
+AGENT_AUTH_DISABLED = os.getenv("AGENT_AUTH_DISABLED", "").strip().lower() in ("1", "true", "yes")
+
 SESSION_COOKIE_NAME = "agent_session"
 SESSION_MAX_AGE = 12 * 60 * 60  # 12 hours
 SESSION_SALT = "agent-session"
@@ -157,6 +162,9 @@ def verify_ws_ticket(ticket: str) -> bool:
 
 def require_session(request: Request) -> str:
     """Dependency: validate the signed session cookie. Returns a session id."""
+    if AGENT_AUTH_DISABLED:
+        # Cloudflare Access is the sole gate; no app-level session required.
+        return "owner"
     token = request.cookies.get(SESSION_COOKIE_NAME, "")
     if not token or not verify_session_token(token):
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -229,8 +237,18 @@ async def _append_turn(r, conversation_id: str, turn: Dict[str, Any]) -> None:
     await _touch_conversation(r, conversation_id)
 
 
+@router.get("/auth-config")
+async def auth_config():
+    """Unauthenticated: tells the browser whether app-level login is required.
+    When False, the messenger skips the password gate (Cloudflare Access only)."""
+    return {"auth_required": not AGENT_AUTH_DISABLED}
+
+
 @router.post("/login")
 async def login(req: LoginRequest, response: Response):
+    if AGENT_AUTH_DISABLED:
+        # App auth is off; treat login as a no-op success.
+        return {"status": "ok"}
     if not HAS_BCRYPT or not OWNER_PASSWORD_HASH:
         raise HTTPException(status_code=503, detail="Login unavailable")
     try:
