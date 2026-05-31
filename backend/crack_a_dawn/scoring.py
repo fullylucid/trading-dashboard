@@ -29,6 +29,11 @@ TIER_EMOJI = {TIER_ACT: "🔴", TIER_KNOW: "🟡", TIER_NOTE: "⚪", TIER_UNEXPL
 _TIER_RANK = {TIER_ACT: 3, TIER_UNEXPLAINED: 2, TIER_KNOW: 1, TIER_NOTE: 0}
 
 
+def ball(move_pct: float) -> str:
+    """Direction indicator: 🟢 bullish (up), 🔴 bearish (down)."""
+    return "🟢" if move_pct >= 0 else "🔴"
+
+
 @dataclass
 class Config:
     """Calibration knobs (defaults now; tune after live runs)."""

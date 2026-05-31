@@ -15,7 +15,7 @@ import logging
 import os
 from typing import List
 
-from .scoring import MoverScore, rank_movers, TIER_ACT, TIER_KNOW, TIER_UNEXPLAINED, TIER_EMOJI
+from .scoring import MoverScore, rank_movers, TIER_ACT, TIER_KNOW, TIER_UNEXPLAINED, ball
 from .data import build_inputs, _fetch_one
 from .universe import get_universe
 from .catalysts import ground
@@ -101,7 +101,7 @@ def main() -> int:
     brief = synthesize(prompt)
     if not brief:
         msg = (f"🌅 Crack-a-Dawn {date_str}: scoring ran ({len(flagged)} flagged) but synthesis "
-               f"failed. Top: " + ", ".join(f"{TIER_EMOJI[s.tier]}{s.ticker} {s.move_pct:+.1f}%"
+               f"failed. Top: " + ", ".join(f"{ball(s.move_pct)}{s.ticker} {s.move_pct:+.1f}%"
                                              for s in flagged[:5]))
         if not args.no_send:
             notify.send(msg)

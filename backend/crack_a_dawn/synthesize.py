@@ -13,7 +13,7 @@ import os
 import subprocess
 from typing import Dict, List, Optional, Sequence
 
-from .scoring import MoverScore, TIER_EMOJI
+from .scoring import MoverScore, ball
 
 logger = logging.getLogger("crack_a_dawn.synthesize")
 
@@ -40,8 +40,9 @@ SYSTEM = (
 
 def _fmt_mover(s: MoverScore, held_wt: float, headlines: List[Dict[str, str]]) -> str:
     book = f"HELD {held_wt*100:.0f}% of book" if held_wt > 0 else "watchlist"
+    unexp = " ❓" if s.tier == "UNEXPLAINED" else ""
     lines = [
-        f"### {TIER_EMOJI[s.tier]} {s.ticker}  [{s.tier}]",
+        f"### {ball(s.move_pct)}{unexp} {s.ticker}  [{s.tier}]",
         f"- move {s.move_pct:+.1f}% | {s.sigma:+.1f}σ vs its 30d range | "
         f"idiosyncratic residual {s.residual_pct:+.1f}% | "
         f"RVOL {s.rvol:.1f}x" if s.rvol is not None else
@@ -78,10 +79,15 @@ moved overnight and write it up:
 
 {movers}
 
+BALL CONVENTION (use on every name, in the lead and the per-name headers): the colored ball
+encodes DIRECTION — 🟢 if the move is UP (bullish), 🔴 if DOWN (bearish). The attention level is
+shown separately as a text tag [ACT]/[KNOW]/[NOTE]; append ❓ for an UNEXPLAINED (high-σ, no
+catalyst) name. So a bullish must-act name is "🟢 NOW [ACT]"; a bearish one is "🔴 XYZ [ACT]".
+
 OUTPUT — clean markdown, in this order:
-1. **Lead:** "N things need your attention" — the 🔴/❓ names in one line each (ticker, the move,
-   the catalyst in a few words, and the action implication). If none are 🔴/❓, say the morning is quiet
-   and give the single most-notable 🟡.
+1. **Lead:** "N things need your attention" — the [ACT]/❓ names in one line each (🟢/🔴 ball + ticker,
+   the move, the catalyst in a few words, and the action implication). If none are [ACT]/❓, say the
+   morning is quiet and give the single most-notable [KNOW] name.
 2. **Sector clusters** (only if ≥2 names share one catalyst): the shared story + the names under it.
 3. **Per-name detail** for each flagged name: catalyst (classified, short/long-term, with source),
    the read, and the blunt one-line "for your book" implication.
