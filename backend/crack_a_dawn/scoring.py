@@ -1,5 +1,5 @@
 """
-Dawn Patrol — Attention Score (P0 core, no LLM, no network).
+Crack-a-Dawn — Attention Score (P0 core, no LLM, no network).
 
 Replaces an arbitrary fixed-% mover threshold with a context-relative score.
 A move earns attention when it is abnormal FOR THIS STOCK, driven by THIS company
@@ -7,7 +7,7 @@ A move earns attention when it is abnormal FOR THIS STOCK, driven by THIS compan
 
 Four independent axes -> composite -> attention tier. Pure functions; all weights
 and thresholds live in `Config` so they can be calibrated after a week of live runs
-(per the locked spec). See ~/.claude/plans/dawn-patrol-agent-spec.md.
+(per the locked spec). See ~/.claude/plans/crack-a-dawn-agent-spec.md.
 """
 from __future__ import annotations
 

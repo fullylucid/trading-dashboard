@@ -1,4 +1,4 @@
-"""Dawn Patrol — pre-market intelligence agent. See dawn-patrol-agent-spec.md."""
+"""Crack-a-Dawn — pre-market intelligence agent. See crack-a-dawn-agent-spec.md."""
 from .scoring import (
     Config,
     MoverInput,

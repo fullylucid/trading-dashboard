@@ -1,5 +1,5 @@
 """Validate the Attention Score replaces the arbitrary fixed-% threshold sensibly."""
-from dawn_patrol.scoring import (
+from crack_a_dawn.scoring import (
     Config, MoverInput, score_mover, rank_movers,
     TIER_ACT, TIER_KNOW, TIER_NOTE, TIER_UNEXPLAINED,
 )

@@ -1,7 +1,7 @@
 """
-Dawn Patrol P0 dry-run — eyeball the Attention Score on real tickers.
+Crack-a-Dawn P0 dry-run — eyeball the Attention Score on real tickers.
 
-    python -m dawn_patrol.dryrun AAPL NVDA AMD KO TSLA ...
+    python -m crack_a_dawn.dryrun AAPL NVDA AMD KO TSLA ...
 
 No LLM, no catalyst lookup yet — just: gather -> score -> ranked tiers. On weekends/
 off-hours the "move" is the latest realized daily move (the mechanism is identical;
@@ -23,7 +23,7 @@ DEFAULT_HELD: Dict[str, float] = {"NVDA": 0.18, "KO": 0.07}  # demo holdings + w
 def main(argv: List[str]) -> int:
     tickers = argv or DEFAULT_WATCH
     held = {} if argv else DEFAULT_HELD
-    print(f"Dawn Patrol dry-run — {len(tickers)} names "
+    print(f"Crack-a-Dawn dry-run — {len(tickers)} names "
           f"(held: {', '.join(held) or 'none'})\n" + "=" * 78)
     rows = build_inputs(tickers, held=held)
     if not rows:

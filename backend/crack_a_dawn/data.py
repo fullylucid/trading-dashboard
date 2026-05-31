@@ -1,5 +1,5 @@
 """
-Dawn Patrol — data gather (P0, zero-token).
+Crack-a-Dawn — data gather (P0, zero-token).
 
 Builds MoverInput rows from yfinance: the prior-close -> current move, the ~30d
 return baseline (for sigma), volume (for RVOL), and the market move + beta (for the
@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Sequence
 
 from .scoring import MoverInput
 
-logger = logging.getLogger("dawn_patrol.data")
+logger = logging.getLogger("crack_a_dawn.data")
 
 MARKET_PROXY = "SPY"
 _HIST_DAYS = 45  # calendar days to safely cover ~30 trading days
