@@ -20,6 +20,7 @@ from .data import build_inputs, _fetch_one
 from .universe import get_universe
 from .catalysts import ground
 from .synthesize import build_prompt, synthesize
+from .market_calendar import is_trading_day
 from . import notify
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -72,11 +73,19 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-send", action="store_true", help="skip Telegram")
     ap.add_argument("--limit", type=int, default=8, help="max flagged names to synthesize")
+    ap.add_argument("--force", action="store_true", help="run even on a non-trading day")
     args = ap.parse_args()
 
     today = dt.date.today()
     date_str = today.isoformat()
     logger.info("Crack-a-Dawn run for %s", date_str)
+
+    if not args.force and not is_trading_day(today):
+        msg = f"🌅 Crack-a-Dawn — {date_str}: US market closed today (weekend/holiday). No brief."
+        if not args.no_send:
+            notify.send(msg)
+        logger.info("non-trading day — skipping")
+        return 0
 
     held, tickers = get_universe()
     if not tickers:
