@@ -97,6 +97,7 @@ interface MessengerState {
   toggleCollapsed: () => void;
 
   // auth
+  init: () => Promise<void>;
   login: (password: string) => Promise<boolean>;
 
   // conversations
@@ -143,6 +144,24 @@ const useMessengerStore = create<MessengerState>((set, get) => ({
       saveGeometry(geometry);
       return { geometry };
     }),
+
+  init: async () => {
+    // If app-level auth is disabled (Cloudflare Access is the only gate), skip
+    // the login screen and go straight in.
+    try {
+      const res = await api('/auth-config');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.auth_required === false) {
+          set({ authed: true });
+          await get().loadConversations();
+          await get().connectWs();
+        }
+      }
+    } catch {
+      /* on failure, leave unauthed -> LoginGate shows */
+    }
+  },
 
   login: async (password) => {
     const res = await api('/login', { method: 'POST', body: JSON.stringify({ password }) });
@@ -212,6 +231,14 @@ const useMessengerStore = create<MessengerState>((set, get) => ({
   send: async (content, kind) => {
     const cid = get().activeConversationId;
     if (!cid) return;
+    // Ensure the live channel for this conversation is subscribed. The onopen
+    // handler only subscribes to conversations that existed when the WS
+    // connected, so a conversation created mid-session would never receive its
+    // live reply. Subscribing here is idempotent and closes that gap.
+    const ws = get().ws;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ action: 'subscribe', symbols: [`chat:${cid}`] }));
+    }
     set((s) => ({
       messages: {
         ...s.messages,

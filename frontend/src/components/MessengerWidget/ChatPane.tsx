@@ -54,11 +54,15 @@ function ChatPane() {
   const send = useMessengerStore((s) => s.send);
   const [text, setText] = useState('');
   const [kind, setKind] = useState<JobKind>('brainstorm');
-  const endRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
+    // Scroll the chat container itself to the bottom — NOT scrollIntoView,
+    // which scrolls every scrollable ancestor (including the whole page) and
+    // made the window jump on chat switch / new message.
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length, activeId]);
 
   const submit = () => {
     const t = text.trim();
@@ -69,7 +73,7 @@ function ChatPane() {
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', fontFamily: 'monospace', minWidth: 0 }}>
-      <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
         {!activeId && <div style={{ color: GREEN, opacity: 0.6 }}>Pick or start a chat →</div>}
         {messages.map((m, i) => (
           <div key={i} style={{ marginBottom: 8 }}>
@@ -89,7 +93,6 @@ function ChatPane() {
             {m.approvalKind === 'pr' && <PrCard msg={m} />}
           </div>
         ))}
-        <div ref={endRef} />
       </div>
       <div style={{ borderTop: '1px solid rgba(0,255,65,0.3)', padding: 6 }}>
         <select
