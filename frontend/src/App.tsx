@@ -5,10 +5,12 @@ import EnhancedDashboard from './components/EnhancedDashboard';
 import PortfolioScan from './pages/PortfolioScan';
 import SectorRotation from './pages/SectorRotation';
 import Charts from './pages/Charts';
+import CrackADawn from './pages/CrackADawn';
 import MessengerWidget from './components/MessengerWidget/MessengerWidget';
 
 const ROUTES: { to: string; label: string; end?: boolean }[] = [
   { to: '/', label: '📈 Dashboard', end: true },
+  { to: '/crack-a-dawn', label: '🌅 Crack-a-Dawn' },
   { to: '/charts', label: '📉 Charts' },
   { to: '/portfolio-scan', label: '📊 Portfolio Scan' },
   { to: '/sector-rotation', label: '🔄 Sector Rotation' },
@@ -131,6 +133,7 @@ function App() {
         <NavMenu />
         <Routes>
           <Route path="/" element={<EnhancedDashboard />} />
+          <Route path="/crack-a-dawn" element={<CrackADawn />} />
           <Route path="/charts" element={<Charts />} />
           <Route path="/portfolio-scan" element={<PortfolioScan />} />
           <Route path="/sector-rotation" element={<SectorRotation />} />

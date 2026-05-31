@@ -318,6 +318,13 @@ if HAS_CHART_ROUTES and chart_router is not None:
     app.include_router(chart_router)
     logger.info("Chart router registered at /api/chart/*")
 
+try:
+    from brief_routes import brief_router
+    app.include_router(brief_router)
+    logger.info("Crack-a-Dawn brief router registered at /api/brief/*")
+except Exception as e:  # noqa: BLE001 — additive; never block startup
+    logging.getLogger(__name__).warning("brief router not registered: %s", e)
+
 
 # ============================================================================
 # Agent live-stream WebSocket
