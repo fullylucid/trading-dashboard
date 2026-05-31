@@ -112,9 +112,10 @@ def main() -> int:
     logger.info("brief saved -> %s", md_path)
 
     if not args.no_send:
-        head = f"🌅 *Crack-a-Dawn* — {date_str}\n_{mkt}_\n\n"
-        notify.send(head + _lead_excerpt(brief))
-        logger.info("brief delivered to Telegram")
+        # The brief is now the full self-contained Telegram briefing (its own title +
+        # market context), sized for one message — send it whole.
+        notify.send(brief)
+        logger.info("brief delivered to Telegram (%d chars)", len(brief))
     else:
         print("\n" + "=" * 80 + "\n" + brief + "\n" + "=" * 80)
     return 0

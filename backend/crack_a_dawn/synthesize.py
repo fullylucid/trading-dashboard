@@ -27,15 +27,48 @@ ALLOWED_TOOLS = [
 ]
 
 SYSTEM = (
-    "You are Tradeskeebot, Schyler's market-intelligence analyst. Sober, data-driven, "
-    "no hype, no filler, no disclaimers. You write a pre-market brief that a serious swing "
-    "trader reads in 2 minutes before the open. Lead with what needs a decision. Cite the "
-    "catalyst and source. Classify each catalyst (earnings / M&A / analyst rating / guidance / "
+    "You are Tradeskeebot, Schyler's market-intelligence analyst. Sober, data-driven, no hype, "
+    "no disclaimers. You write his DAILY pre-market briefing — this is the only thing he reads, "
+    "so it must STAND ALONE and actually explain things: real context, the mechanism behind each "
+    "move, not abbreviations. Classify each catalyst (earnings / M&A / analyst rating / guidance / "
     "regulatory / insider / gov't contract / index / macro-sector) and tag short- vs long-term. "
-    "If several names moved on ONE shared catalyst, consolidate them into a sector story. For "
-    "every name give one blunt line on what it means for THIS book (held vs watch, size). Use "
-    "your tools to verify the actual catalyst — do not speculate when you can check."
+    "Consolidate names that moved on one shared catalyst. Always say what it means for THIS book "
+    "(held vs watch, size). Verify catalysts with your tools and include a good source link per "
+    "name — do not speculate when you can check."
 )
+
+
+_OUTPUT_TEMPLATE = """
+BALL CONVENTION: the colored ball encodes DIRECTION — 🟢 if UP (bullish), 🔴 if DOWN (bearish).
+Attention level is a separate text tag [ACT]/[KNOW]/[NOTE]; append ❓ for an UNEXPLAINED (high-σ,
+no catalyst) name. So a bullish must-act name is "🟢 NOW [ACT]"; a bearish one is "🔴 XYZ [ACT]".
+
+OUTPUT — a RICH but scannable DAILY briefing as ONE Telegram message. It is the whole product, so
+EXPLAIN, don't abbreviate. Hard limit: keep the TOTAL under ~3400 characters (links included).
+
+FORMATTING is Telegram Markdown — follow exactly:
+- *single-asterisk bold* (NOT **double**); • for bullets; [text](url) for links; emojis freely.
+- NO "#" markdown headers. Do NOT use stray _ * [ ] characters inside prose (they break Telegram).
+- Blank line between blocks.
+
+STRUCTURE (fill the placeholders):
+*🌅 Crack-a-Dawn — (today's date)*
+_(one line of market context: indices, VIX, the overnight theme)_
+
+*⚡ Needs your attention (N)*
+
+Then, most-important first, fully detail the top ~4 flagged names. If more were flagged, end with a
+one-line "*+M more:* TICKERS". Each detailed name is a block:
+
+(🟢 or 🔴) *TICKER* [TIER] (+X.X%)  ·  _(N-sigma vs its range, residual, RVOL — in plain words)_
+• 📰 *Why:* 2-3 real sentences — what actually happened, catalyst classified, short- vs long-term, with numbers.
+• 💼 *Your book:* held X% / watching — the blunt action (trim / add on pullback / don't chase / tighten stop).
+• 🔗 [source](url)
+
+If ≥2 names share one catalyst, add a *🧭 Sector read:* line tying them together.
+Close with a one-line *Bottom line:* if it helps.
+
+No preamble, no sign-off — start at the title line. Verify catalysts + pick good links with your tools."""
 
 
 def _fmt_mover(s: MoverScore, held_wt: float, headlines: List[Dict[str, str]]) -> str:
@@ -69,29 +102,15 @@ def build_prompt(
         for s in flagged
     ]
     movers = "\n\n".join(blocks) if blocks else "(no names cleared the attention threshold)"
-    return f"""Write Schyler's **Crack-a-Dawn** pre-market brief for **{date_str}**.
-
-MARKET CONTEXT: {market_context}
-
-These names were flagged by the Attention Score (already ranked; σ = move vs the stock's
-own volatility, residual = move after stripping market/beta). For each, research WHY it
-moved overnight and write it up:
-
-{movers}
-
-BALL CONVENTION (use on every name, in the lead and the per-name headers): the colored ball
-encodes DIRECTION — 🟢 if the move is UP (bullish), 🔴 if DOWN (bearish). The attention level is
-shown separately as a text tag [ACT]/[KNOW]/[NOTE]; append ❓ for an UNEXPLAINED (high-σ, no
-catalyst) name. So a bullish must-act name is "🟢 NOW [ACT]"; a bearish one is "🔴 XYZ [ACT]".
-
-OUTPUT — clean markdown, in this order:
-1. **Lead:** "N things need your attention" — the [ACT]/❓ names in one line each (🟢/🔴 ball + ticker,
-   the move, the catalyst in a few words, and the action implication). If none are [ACT]/❓, say the
-   morning is quiet and give the single most-notable [KNOW] name.
-2. **Sector clusters** (only if ≥2 names share one catalyst): the shared story + the names under it.
-3. **Per-name detail** for each flagged name: catalyst (classified, short/long-term, with source),
-   the read, and the blunt one-line "for your book" implication.
-Keep it tight. No preamble, no sign-off — start at the Lead."""
+    intro = (
+        f"Write Schyler's Crack-a-Dawn pre-market briefing for {date_str}.\n\n"
+        f"MARKET CONTEXT: {market_context}\n\n"
+        "These names were flagged by the Attention Score (already ranked; sigma = move vs the "
+        "stock's own volatility, residual = move after stripping market/beta). Research WHY each "
+        "moved overnight and write it up:\n\n"
+        f"{movers}\n"
+    )
+    return intro + _OUTPUT_TEMPLATE
 
 
 def synthesize(prompt: str) -> Optional[str]:
@@ -111,11 +130,13 @@ def synthesize(prompt: str) -> Optional[str]:
 
 
 def _clean(out: str) -> Optional[str]:
-    """Trim any pre-brief preamble — start at the first markdown header line."""
+    """Trim any pre-brief preamble — start at the title line (the 🌅 line, or a #/* header)."""
     out = (out or "").strip()
     if not out:
         return None
-    for i, line in enumerate(out.splitlines()):
-        if line.lstrip().startswith("#"):
-            return "\n".join(out.splitlines()[i:]).strip()
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        s = line.lstrip()
+        if "🌅" in line or s.startswith("#") or s.startswith("*🌅"):
+            return "\n".join(lines[i:]).strip()
     return out
