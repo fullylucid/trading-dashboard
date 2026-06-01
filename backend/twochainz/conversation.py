@@ -1,4 +1,4 @@
-"""Crackerjack — rolling conversation memory (host file; capped)."""
+"""2Chainz — rolling conversation memory (host file; capped)."""
 from __future__ import annotations
 
 import json
@@ -6,9 +6,9 @@ import os
 from typing import Dict, List
 
 STORE = os.getenv(
-    "CRACKERJACK_THREAD", os.path.expanduser("~/.config/trading-dashboard/crackerjack/thread.json")
+    "TWOCHAINZ_THREAD", os.path.expanduser("~/.config/trading-dashboard/twochainz/thread.json")
 )
-MAX_TURNS = int(os.getenv("CRACKERJACK_MAX_TURNS", "30"))
+MAX_TURNS = int(os.getenv("TWOCHAINZ_MAX_TURNS", "30"))
 
 
 def load() -> List[Dict[str, str]]:
@@ -34,5 +34,5 @@ def as_transcript() -> str:
     turns = load()
     if not turns:
         return "(new conversation)"
-    names = {"user": "Schyler", "assistant": "Crackerjack"}
+    names = {"user": "Schyler", "assistant": "2Chainz"}
     return "\n".join(f"{names.get(t['role'], t['role'])}: {t['content']}" for t in turns)

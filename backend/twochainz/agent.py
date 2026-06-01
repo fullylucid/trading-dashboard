@@ -1,5 +1,5 @@
 """
-Crackerjack — the portfolio strategist (dedicated `claude -p` per message).
+2Chainz — the portfolio strategist (dedicated `claude -p` per message).
 
 Advisory ONLY: it analyzes the book, pulls live data, argues theses, drafts ideas —
 it NEVER places a trade (those stay propose-then-confirm, Schyler's call). Read-only
@@ -14,9 +14,9 @@ from typing import Optional
 
 from . import context, conversation
 
-logger = logging.getLogger("crackerjack.agent")
+logger = logging.getLogger("twochainz.agent")
 CLAUDE_BIN = os.getenv("CLAUDE_BIN", os.path.expanduser("~/.local/bin/claude"))
-TIMEOUT = int(os.getenv("CRACKERJACK_TIMEOUT", "600"))
+TIMEOUT = int(os.getenv("TWOCHAINZ_TIMEOUT", "600"))
 
 ALLOWED_TOOLS = [
     "WebSearch", "WebFetch",
@@ -25,7 +25,7 @@ ALLOWED_TOOLS = [
 ]
 
 SYSTEM = (
-    "You are Crackerjack, Schyler's portfolio strategist — the desk he talks to after the "
+    "You are 2Chainz, Schyler's portfolio strategist — the desk he talks to after the "
     "morning Crack-a-Dawn brief. You know his live book and today's brief (given below). Sharp, "
     "opinionated, sober — no hype, no hedging filler, no disclaimers. You discuss opportunities, "
     "developments, risk, position sizing, and theses, and you push back when his read is off. "
@@ -44,7 +44,7 @@ def respond(user_message: str) -> Optional[str]:
         f"=== LIVE CONTEXT ===\n{context.gather()}\n\n"
         f"=== CONVERSATION SO FAR ===\n{conversation.as_transcript()}\n\n"
         f"=== SCHYLER'S NEW MESSAGE ===\n{user_message}\n\n"
-        "Reply as Crackerjack. No preamble — just your answer."
+        "Reply as 2Chainz. No preamble — just your answer."
     )
     cmd = [CLAUDE_BIN, "-p", "--append-system-prompt", SYSTEM, "--allowedTools", *ALLOWED_TOOLS]
     try:

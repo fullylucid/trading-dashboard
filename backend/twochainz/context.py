@@ -1,5 +1,5 @@
 """
-Crackerjack — context gather (zero-token). What makes it a portfolio STRATEGIST
+2Chainz — context gather (zero-token). What makes it a portfolio STRATEGIST
 and not a generic chatbot: it always knows the live book + this morning's brief.
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ from typing import Dict, Optional
 
 import requests
 
-logger = logging.getLogger("crackerjack.context")
+logger = logging.getLogger("twochainz.context")
 BACKEND = os.getenv("CRACKDAWN_BACKEND_URL", "http://localhost:8000")
 
 

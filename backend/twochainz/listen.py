@@ -1,8 +1,8 @@
 """
-Crackerjack — Telegram listener. Long-polls @Siiigggbot for Schyler's messages,
+2Chainz — Telegram listener. Long-polls @Siiigggbot for Schyler's messages,
 runs the strategist, replies in-channel. Always-on (systemd, Restart=always).
 
-    python -m crackerjack.listen
+    python -m twochainz.listen
 
 Allowlisted to Schyler's chat only. The bot is otherwise outbound (Crack-a-Dawn
 briefs) — getUpdates + sendMessage coexist fine as long as no webhook is set.
@@ -18,12 +18,12 @@ import requests
 from . import agent, conversation
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-logger = logging.getLogger("crackerjack.listen")
+logger = logging.getLogger("twochainz.listen")
 
 TG = "https://api.telegram.org"
 TOKEN = os.getenv("SIGNAL_BOT_TOKEN", "")
 ALLOW_CHAT = str(os.getenv("SIGNAL_BOT_CHAT_ID", "")).strip()
-OFFSET_FILE = os.path.expanduser("~/.config/trading-dashboard/crackerjack/offset.txt")
+OFFSET_FILE = os.path.expanduser("~/.config/trading-dashboard/twochainz/offset.txt")
 
 
 def _read_offset() -> int:
@@ -62,7 +62,7 @@ def handle(text: str) -> None:
     _typing()
     reply = agent.respond(text)
     if not reply:
-        reply = "⚠️ Crackerjack hit a snag generating that — try again in a moment."
+        reply = "⚠️ 2Chainz hit a snag generating that — try again in a moment."
     else:
         conversation.append("assistant", reply)
     _send(reply)
@@ -78,7 +78,7 @@ def main() -> int:
     except Exception:  # noqa: BLE001
         pass
     offset = _read_offset()
-    logger.info("Crackerjack listening (offset=%s, chat=%s)", offset, ALLOW_CHAT)
+    logger.info("2Chainz listening (offset=%s, chat=%s)", offset, ALLOW_CHAT)
     while True:
         try:
             r = requests.get(f"{TG}/bot{TOKEN}/getUpdates",
@@ -102,7 +102,7 @@ def main() -> int:
                 handle(text)
             except Exception as e:  # noqa: BLE001
                 logger.error("handle failed: %s", e)
-                _send("⚠️ Crackerjack error handling that message.")
+                _send("⚠️ 2Chainz error handling that message.")
 
 
 if __name__ == "__main__":
