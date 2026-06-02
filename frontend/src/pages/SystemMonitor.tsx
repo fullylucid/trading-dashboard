@@ -338,6 +338,7 @@ export default function SystemBanner() {
     background: 'rgba(0,0,0,0.92)', borderBottom: `1px solid ${DIM}`,
     fontFamily: 'monospace', cursor: 'pointer', backdropFilter: 'blur(4px)',
     boxShadow: open ? 'none' : '0 1px 8px rgba(0,255,65,0.15)',
+    overflowX: 'auto', whiteSpace: 'nowrap',  // narrow phones: pills scroll instead of overflowing
   };
 
   return (

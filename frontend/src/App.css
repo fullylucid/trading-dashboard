@@ -57,3 +57,37 @@
 .main-content {
   padding-top: 40px;
 }
+
+/* ============================================================================
+   Mobile / adaptive layer — makes the dashboard (and the iOS shell that wraps it)
+   behave on phone widths. The pages are heavily inline-styled, so this layer uses
+   targeted, structural overrides rather than restyling every component.
+   ============================================================================ */
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;            /* no accidental sideways page scroll */
+  -webkit-text-size-adjust: 100%;
+}
+* { -webkit-tap-highlight-color: rgba(0, 255, 65, 0.2); }
+
+@media (max-width: 700px) {
+  /* iOS auto-zooms when you focus an input whose font-size is < 16px. Force 16px
+     so tapping any field/select doesn't jank-zoom the whole page. */
+  input, select, textarea { font-size: 16px !important; }
+
+  /* Wide numeric tables (option chains, positions, leaderboards) have nowrap cells,
+     so they'd blow out the page width. Make the table itself a scroll container —
+     swipe horizontally to see all columns; the rest of the page stays put. */
+  table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Comfortable tap targets on touch screens. */
+  button { min-height: 34px; }
+
+  /* Trim the desktop-sized top padding a little under the slim status banner. */
+  .app > div > div[style*="padding: 60px"] { padding-top: 46px !important; }
+}
