@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { GREEKS, STRATEGIES, METRICS } from './optionsEducation';
 
 const GREEN = '#00ff41';
 const RED = '#ff5555';
@@ -6,39 +7,36 @@ const DIM = 'rgba(0,255,65,0.55)';
 
 type Contract = {
   strike: number; kind: string; bid: number; ask: number; mid: number;
-  volume: number; open_interest: number; iv: number; delta: number; prob_itm: number;
+  volume: number; open_interest: number; iv: number; delta: number; theta: number; prob_itm: number;
 };
 type Chain = {
   symbol: string; spot: number; rate: number; expiration: string;
   expirations: string[]; calls: Contract[]; puts: Contract[];
 };
-type Strategy = {
+type Vertical = {
   label: string; kind: string; direction: string; debit_credit: string; net: number;
-  long_strike: number; short_strike: number; width: number; max_profit: number;
-  max_loss: number; breakeven: number; rr: number; pop: number; score: number;
+  long_strike: number; short_strike: number; max_profit: number; max_loss: number;
+  breakeven: number; rr: number; pop: number;
 };
+type Income = {
+  label: string; type: string; strike: number; premium: number; breakeven: number;
+  max_profit: number; pop: number; annual_yield: number; cushion: number; theta: number; dte: number;
+};
+type Mode = 'spreads' | 'cash_secured_put' | 'covered_call';
 
 const box: React.CSSProperties = {
   background: '#000', color: GREEN, border: `1px solid ${DIM}`, borderRadius: 4,
   fontFamily: 'monospace', padding: '4px 8px',
 };
+const td: React.CSSProperties = { padding: '2px 6px', fontSize: 11, textAlign: 'right', whiteSpace: 'nowrap' };
+const th: React.CSSProperties = { ...td, color: DIM, fontWeight: 400, borderBottom: `1px solid ${DIM}`, cursor: 'help' };
 
-// ---- payoff diagram: generic vertical P/L = intrinsic(long)-intrinsic(short)-net ----
-function Payoff({ s, spot }: { s: Strategy; spot: number }) {
-  const iv = (S: number, K: number, call: boolean) => Math.max(call ? S - K : K - S, 0);
-  const call = s.kind === 'call';
-  const lo = Math.min(s.long_strike, s.short_strike), hi = Math.max(s.long_strike, s.short_strike);
-  const x0 = Math.max(0, lo - (hi - lo) * 1.5), x1 = hi + (hi - lo) * 1.5;
+// ---------- payoff chart (generic over a P/L function) ----------
+function PayoffChart({ pl, spot, be, x0, x1 }: { pl: (s: number) => number; spot: number; be: number; x0: number; x1: number }) {
+  const W = 460, H = 170, pad = 26, N = 90;
   const pts: [number, number][] = [];
-  const N = 80;
-  for (let i = 0; i <= N; i++) {
-    const S = x0 + (x1 - x0) * (i / N);
-    const pl = (iv(S, s.long_strike, call) - iv(S, s.short_strike, call) - s.net) * 100;
-    pts.push([S, pl]);
-  }
-  const W = 460, H = 180, pad = 28;
-  const ys = pts.map((p) => p[1]);
-  const ymin = Math.min(...ys, -1), ymax = Math.max(...ys, 1);
+  for (let i = 0; i <= N; i++) { const S = x0 + (x1 - x0) * (i / N); pts.push([S, pl(S)]); }
+  const ys = pts.map((p) => p[1]); const ymin = Math.min(...ys, -1), ymax = Math.max(...ys, 1);
   const sx = (x: number) => pad + ((x - x0) / (x1 - x0)) * (W - 2 * pad);
   const sy = (y: number) => H - pad - ((y - ymin) / (ymax - ymin)) * (H - 2 * pad);
   const path = pts.map((p, i) => `${i ? 'L' : 'M'}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join(' ');
@@ -46,65 +44,89 @@ function Payoff({ s, spot }: { s: Strategy; spot: number }) {
     <svg width={W} height={H} style={{ border: `1px solid ${DIM}`, borderRadius: 4, background: '#001000' }}>
       <line x1={pad} y1={sy(0)} x2={W - pad} y2={sy(0)} stroke={DIM} strokeDasharray="3 3" />
       <line x1={sx(spot)} y1={pad} x2={sx(spot)} y2={H - pad} stroke="#7fdfff" strokeDasharray="2 4" />
-      <line x1={sx(s.breakeven)} y1={pad} x2={sx(s.breakeven)} y2={H - pad} stroke="#ffcc00" strokeDasharray="2 4" />
+      <line x1={sx(be)} y1={pad} x2={sx(be)} y2={H - pad} stroke="#ffcc00" strokeDasharray="2 4" />
       <path d={path} fill="none" stroke={GREEN} strokeWidth={2} />
-      <text x={sx(spot)} y={H - 8} fill="#7fdfff" fontSize={9} textAnchor="middle">spot {spot.toFixed(0)}</text>
-      <text x={sx(s.breakeven)} y={pad - 4} fill="#ffcc00" fontSize={9} textAnchor="middle">B/E {s.breakeven.toFixed(1)}</text>
-      <text x={pad} y={sy(ymax) + 9} fill={GREEN} fontSize={9}>+{(ymax).toFixed(0)}</text>
-      <text x={pad} y={sy(ymin) - 2} fill={RED} fontSize={9}>{(ymin).toFixed(0)}</text>
+      <text x={sx(spot)} y={H - 6} fill="#7fdfff" fontSize={9} textAnchor="middle">spot {spot.toFixed(0)}</text>
+      <text x={sx(be)} y={pad - 3} fill="#ffcc00" fontSize={9} textAnchor="middle">B/E {be.toFixed(1)}</text>
+      <text x={pad + 2} y={sy(ymax) + 9} fill={GREEN} fontSize={9}>+{ymax.toFixed(0)}</text>
+      <text x={pad + 2} y={sy(ymin) - 2} fill={RED} fontSize={9}>{ymin.toFixed(0)}</text>
     </svg>
   );
 }
 
-function ChainSide({ rows, spot, side }: { rows: Contract[]; spot: number; side: 'call' | 'put' }) {
-  const itm = (c: Contract) => (side === 'call' ? c.strike < spot : c.strike > spot);
+function GreeksGlossary() {
+  const [open, setOpen] = useState(false);
   return (
-    <>
-      {rows.map((c) => (
-        <tr key={side + c.strike} style={{ background: itm(c) ? 'rgba(0,255,65,0.07)' : 'transparent' }}>
-          <td style={td}>{c.delta.toFixed(2)}</td>
-          <td style={td}>{(c.iv * 100).toFixed(0)}%</td>
-          <td style={td}>{c.open_interest}</td>
-          <td style={{ ...td, color: GREEN }}>{c.bid.toFixed(2)}</td>
-          <td style={{ ...td, color: GREEN }}>{c.ask.toFixed(2)}</td>
-          <td style={{ ...td, fontWeight: 700, borderLeft: `1px solid ${DIM}`, borderRight: `1px solid ${DIM}` }}>{c.strike}</td>
-        </tr>
-      ))}
-    </>
+    <div style={{ border: `1px solid ${DIM}`, borderRadius: 4, marginBottom: 14 }}>
+      <div onClick={() => setOpen((v) => !v)} style={{ cursor: 'pointer', padding: '8px 12px', fontSize: 13 }}>
+        📖 {open ? '▾' : '▸'} Greeks 101 — what they mean & how a <i>seller</i> uses them
+      </div>
+      {open && (
+        <div style={{ padding: '0 12px 12px' }}>
+          {GREEKS.map((g) => (
+            <div key={g.sym} style={{ marginBottom: 10, fontSize: 12, lineHeight: 1.5 }}>
+              <span style={{ color: GREEN, fontWeight: 700 }}>{g.sym} {g.name}</span> — {g.plain}
+              <div style={{ color: '#7fdfff', marginTop: 2 }}>↳ selling: {g.seller}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
-const td: React.CSSProperties = { padding: '2px 6px', fontSize: 11, textAlign: 'right', whiteSpace: 'nowrap' };
-const th: React.CSSProperties = { ...td, color: DIM, fontWeight: 400, borderBottom: `1px solid ${DIM}` };
 
 export default function OptionsEngine() {
   const [symbol, setSymbol] = useState('NOW');
   const [chain, setChain] = useState<Chain | null>(null);
-  const [strategies, setStrategies] = useState<Strategy[]>([]);
-  const [sel, setSel] = useState<Strategy | null>(null);
+  const [mode, setMode] = useState<Mode>('cash_secured_put');
   const [kind, setKind] = useState<'call' | 'put'>('call');
   const [dir, setDir] = useState<'bull' | 'bear'>('bull');
+  const [verticals, setVerticals] = useState<Vertical[]>([]);
+  const [income, setIncome] = useState<Income[]>([]);
+  const [selV, setSelV] = useState<Vertical | null>(null);
+  const [selI, setSelI] = useState<Income | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
+  const chainSide: 'call' | 'put' = mode === 'cash_secured_put' ? 'put' : mode === 'covered_call' ? 'call' : kind;
+
   const loadChain = useCallback(async (sym: string, exp?: string) => {
-    setLoading(true); setErr(''); setSel(null);
+    setLoading(true); setErr(''); setVerticals([]); setIncome([]); setSelV(null); setSelI(null);
     try {
       const r = await fetch(`/api/options/${sym}/chain${exp ? `?exp=${exp}` : ''}`);
       if (!r.ok) { setErr(`No options for ${sym}.`); setChain(null); return; }
       setChain(await r.json());
-    } catch { setErr('Could not load chain.'); }
-    finally { setLoading(false); }
+    } catch { setErr('Could not load chain.'); } finally { setLoading(false); }
   }, []);
 
-  const loadStrategies = useCallback(async () => {
+  const formulate = useCallback(async () => {
     if (!chain) return;
-    const r = await fetch(`/api/options/${chain.symbol}/strategies?kind=${kind}&direction=${dir}&exp=${chain.expiration}&top=12`);
-    if (r.ok) { const d = await r.json(); setStrategies(d.strategies || []); setSel((d.strategies || [])[0] || null); }
-  }, [chain, kind, dir]);
+    if (mode === 'spreads') {
+      const r = await fetch(`/api/options/${chain.symbol}/strategies?kind=${kind}&direction=${dir}&exp=${chain.expiration}&top=12`);
+      if (r.ok) { const d = await r.json(); setVerticals(d.strategies || []); setSelV((d.strategies || [])[0] || null); setIncome([]); }
+    } else {
+      const ik = mode === 'cash_secured_put' ? 'put' : 'call';
+      const r = await fetch(`/api/options/${chain.symbol}/income?kind=${ik}&exp=${chain.expiration}&top=12`);
+      if (r.ok) { const d = await r.json(); setIncome(d.income || []); setSelI((d.income || [])[0] || null); setVerticals([]); }
+    }
+  }, [chain, mode, kind, dir]);
+
+  // payoff functions
+  const intr = (S: number, K: number, call: boolean) => Math.max(call ? S - K : K - S, 0);
+  const vPL = (v: Vertical) => (S: number) => (intr(S, v.long_strike, v.kind === 'call') - intr(S, v.short_strike, v.kind === 'call') - v.net) * 100;
+  const iPL = (t: Income, spot: number) => (S: number) =>
+    t.type === 'cash_secured_put' ? (t.premium - intr(S, t.strike, false)) * 100
+      : ((S - spot) + t.premium - intr(S, t.strike, true)) * 100;
+
+  const MODES: { id: Mode; label: string }[] = [
+    { id: 'cash_secured_put', label: '💵 Cash-Secured Puts' },
+    { id: 'covered_call', label: '📈 Covered Calls' },
+    { id: 'spreads', label: '↔ Spreads' },
+  ];
 
   return (
     <div style={{ minHeight: '100vh', background: '#000', color: GREEN, fontFamily: 'monospace', padding: '60px 16px 40px', maxWidth: 1040, margin: '0 auto' }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
         <h1 style={{ fontSize: 20, margin: 0, textShadow: `0 0 8px ${GREEN}` }}>📐 Options Engine</h1>
         <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())}
           onKeyDown={(e) => e.key === 'Enter' && loadChain(symbol)} placeholder="ticker" style={{ ...box, width: 90 }} />
@@ -117,47 +139,93 @@ export default function OptionsEngine() {
         {chain && <span style={{ fontSize: 12, opacity: 0.8 }}>spot ${chain.spot.toFixed(2)} · r {(chain.rate * 100).toFixed(2)}%</span>}
       </div>
 
+      <GreeksGlossary />
+
       {loading && <div style={{ opacity: 0.7 }}>loading…</div>}
       {err && <div style={{ opacity: 0.7 }}>{err}</div>}
 
       {chain && !loading && (
-        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-          <div style={{ flex: '1 1 360px', maxHeight: 460, overflowY: 'auto', border: `1px solid ${DIM}`, borderRadius: 4 }}>
-            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-              <thead><tr><th style={th}>Δ</th><th style={th}>IV</th><th style={th}>OI</th><th style={th}>Bid</th><th style={th}>Ask</th><th style={th}>{kind === 'call' ? 'CALLS ▾' : 'PUTS ▾'}</th></tr></thead>
-              <tbody><ChainSide rows={kind === 'call' ? chain.calls : chain.puts} spot={chain.spot} side={kind} /></tbody>
-            </table>
+        <>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+            {MODES.map((m) => (
+              <button key={m.id} onClick={() => { setMode(m.id); setVerticals([]); setIncome([]); setSelV(null); setSelI(null); }}
+                style={{ ...box, cursor: 'pointer', background: mode === m.id ? 'rgba(0,255,65,0.18)' : '#000' }}>{m.label}</button>
+            ))}
           </div>
 
-          <div style={{ flex: '1 1 480px' }}>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
-              {(['call', 'put'] as const).map((k) => <button key={k} onClick={() => setKind(k)} style={{ ...box, cursor: 'pointer', background: kind === k ? 'rgba(0,255,65,0.18)' : '#000' }}>{k}</button>)}
-              {(['bull', 'bear'] as const).map((d) => <button key={d} onClick={() => setDir(d)} style={{ ...box, cursor: 'pointer', background: dir === d ? 'rgba(0,255,65,0.18)' : '#000' }}>{d}</button>)}
-              <button onClick={loadStrategies} style={{ ...box, cursor: 'pointer' }}>⚙ Formulate spreads</button>
-            </div>
+          <div style={{ fontSize: 12, lineHeight: 1.5, padding: '8px 10px', border: `1px solid ${DIM}`, borderRadius: 4, marginBottom: 12, background: 'rgba(0,255,65,0.03)' }}>
+            <b style={{ color: GREEN }}>{STRATEGIES[mode].title}</b> — {STRATEGIES[mode].what}
+          </div>
 
-            {sel && <div style={{ marginBottom: 10 }}><Payoff s={sel} spot={chain.spot} /></div>}
-
-            {strategies.length > 0 && (
+          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+            {/* chain */}
+            <div style={{ flex: '1 1 330px', maxHeight: 440, overflowY: 'auto', border: `1px solid ${DIM}`, borderRadius: 4 }}>
               <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-                <thead><tr><th style={{ ...th, textAlign: 'left' }}>spread</th><th style={th}>net</th><th style={th}>maxP</th><th style={th}>maxL</th><th style={th}>B/E</th><th style={th}>R:R</th><th style={th}>POP</th></tr></thead>
+                <thead><tr>
+                  <th style={th} title={GREEKS[0].plain}>Δ</th>
+                  <th style={th} title={GREEKS[1].plain}>Θ</th>
+                  <th style={th} title={GREEKS[4].plain}>IV</th>
+                  <th style={th}>OI</th><th style={th}>Bid</th><th style={th}>Ask</th>
+                  <th style={th}>{chainSide === 'call' ? 'CALLS' : 'PUTS'}</th>
+                </tr></thead>
                 <tbody>
-                  {strategies.map((s) => (
-                    <tr key={s.label} onClick={() => setSel(s)} style={{ cursor: 'pointer', background: sel?.label === s.label ? 'rgba(0,255,65,0.12)' : 'transparent' }}>
-                      <td style={{ ...td, textAlign: 'left' }}>{s.label}</td>
-                      <td style={td}>{s.debit_credit === 'debit' ? `+${s.net.toFixed(2)}` : `-${(-s.net).toFixed(2)}`}</td>
-                      <td style={{ ...td, color: GREEN }}>{s.max_profit.toFixed(2)}</td>
-                      <td style={{ ...td, color: RED }}>{s.max_loss.toFixed(2)}</td>
-                      <td style={td}>{s.breakeven.toFixed(1)}</td>
-                      <td style={td}>{s.rr.toFixed(2)}</td>
-                      <td style={td}>{(s.pop * 100).toFixed(0)}%</td>
-                    </tr>
-                  ))}
+                  {(chainSide === 'call' ? chain.calls : chain.puts).map((c) => {
+                    const itm = chainSide === 'call' ? c.strike < chain.spot : c.strike > chain.spot;
+                    return (
+                      <tr key={c.strike} style={{ background: itm ? 'rgba(0,255,65,0.07)' : 'transparent' }}>
+                        <td style={td}>{c.delta.toFixed(2)}</td><td style={td}>{c.theta.toFixed(2)}</td>
+                        <td style={td}>{(c.iv * 100).toFixed(0)}%</td><td style={td}>{c.open_interest}</td>
+                        <td style={{ ...td, color: GREEN }}>{c.bid.toFixed(2)}</td>
+                        <td style={{ ...td, color: GREEN }}>{c.ask.toFixed(2)}</td>
+                        <td style={{ ...td, fontWeight: 700, borderLeft: `1px solid ${DIM}` }}>{c.strike}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
-            )}
+            </div>
+
+            {/* strategy panel */}
+            <div style={{ flex: '1 1 480px' }}>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                {mode === 'spreads' && <>
+                  {(['call', 'put'] as const).map((k) => <button key={k} onClick={() => setKind(k)} style={{ ...box, cursor: 'pointer', background: kind === k ? 'rgba(0,255,65,0.18)' : '#000' }}>{k}</button>)}
+                  {(['bull', 'bear'] as const).map((d) => <button key={d} onClick={() => setDir(d)} style={{ ...box, cursor: 'pointer', background: dir === d ? 'rgba(0,255,65,0.18)' : '#000' }}>{d}</button>)}
+                </>}
+                <button onClick={formulate} style={{ ...box, cursor: 'pointer' }}>⚙ Formulate</button>
+              </div>
+
+              {selV && <div style={{ marginBottom: 10 }}><PayoffChart pl={vPL(selV)} spot={chain.spot} be={selV.breakeven} x0={Math.min(selV.long_strike, selV.short_strike) * 0.9} x1={Math.max(selV.long_strike, selV.short_strike) * 1.1} /></div>}
+              {selI && <div style={{ marginBottom: 10 }}><PayoffChart pl={iPL(selI, chain.spot)} spot={chain.spot} be={selI.breakeven} x0={selI.strike * 0.8} x1={selI.strike * 1.2} /></div>}
+
+              {verticals.length > 0 && (
+                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                  <thead><tr><th style={{ ...th, textAlign: 'left' }}>spread</th><th style={th}>net</th><th style={th}>maxP</th><th style={th}>maxL</th><th style={th} title={METRICS.breakeven}>B/E</th><th style={th} title={METRICS['R:R']}>R:R</th><th style={th} title={METRICS.POP}>POP</th></tr></thead>
+                  <tbody>{verticals.map((s) => (
+                    <tr key={s.label} onClick={() => setSelV(s)} style={{ cursor: 'pointer', background: selV?.label === s.label ? 'rgba(0,255,65,0.12)' : 'transparent' }}>
+                      <td style={{ ...td, textAlign: 'left' }}>{s.label}</td>
+                      <td style={td}>{s.debit_credit === 'debit' ? `+${s.net.toFixed(2)}` : `-${(-s.net).toFixed(2)}`}</td>
+                      <td style={{ ...td, color: GREEN }}>{s.max_profit.toFixed(2)}</td><td style={{ ...td, color: RED }}>{s.max_loss.toFixed(2)}</td>
+                      <td style={td}>{s.breakeven.toFixed(1)}</td><td style={td}>{s.rr.toFixed(2)}</td><td style={td}>{(s.pop * 100).toFixed(0)}%</td>
+                    </tr>))}</tbody>
+                </table>
+              )}
+
+              {income.length > 0 && (
+                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                  <thead><tr><th style={{ ...th, textAlign: 'left' }}>strike</th><th style={th}>prem</th><th style={th} title={METRICS.breakeven}>B/E</th><th style={th} title={METRICS.POP}>POP</th><th style={th} title={METRICS['annual yield']}>ann.yld</th><th style={th} title={METRICS.cushion}>cushion</th><th style={th} title={GREEKS[1].plain}>Θ/day</th></tr></thead>
+                  <tbody>{income.map((t) => (
+                    <tr key={t.label} onClick={() => setSelI(t)} style={{ cursor: 'pointer', background: selI?.label === t.label ? 'rgba(0,255,65,0.12)' : 'transparent' }}>
+                      <td style={{ ...td, textAlign: 'left' }}>{t.strike}</td>
+                      <td style={{ ...td, color: GREEN }}>${t.premium.toFixed(2)}</td><td style={td}>{t.breakeven.toFixed(1)}</td>
+                      <td style={td}>{(t.pop * 100).toFixed(0)}%</td><td style={td}>{(t.annual_yield * 100).toFixed(0)}%</td>
+                      <td style={td}>{(t.cushion * 100).toFixed(1)}%</td><td style={{ ...td, color: GREEN }}>+{t.theta.toFixed(2)}</td>
+                    </tr>))}</tbody>
+                </table>
+              )}
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

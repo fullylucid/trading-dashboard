@@ -38,6 +38,68 @@ def _pop_past(spot: float, level: float, t_years: float, iv: float,
     return g.prob_itm  # N(d2) for a call = P(S_T>level); put = P(S_T<level)
 
 
+@dataclass
+class IncomeTrade:
+    """A premium-selling trade: cash-secured put or covered call (single short leg)."""
+    label: str
+    type: str                 # cash_secured_put | covered_call
+    strike: float
+    premium: float            # credit received (per share)
+    breakeven: float
+    max_profit: float         # per share (premium; CC adds appreciation to the strike)
+    pop: float                # P(expire OTM -> keep full premium)
+    annual_yield: float       # premium/collateral annualized (fraction)
+    cushion: float            # CSP: discount-to-spot if assigned; CC: downside cover (fraction)
+    capital: float            # collateral per contract (CSP: strike*100; CC: 100 shares)
+    delta: float
+    theta: float
+    dte: int
+    score: float = 0.0
+
+
+def build_income(chain: Chain, exp: str, kind: str) -> List[IncomeTrade]:
+    """OTM premium sells. kind='put' -> cash-secured puts; kind='call' -> covered calls."""
+    legs = [c for c in chain.for_exp(exp, kind) if c.mid > 0]
+    if not legs:
+        return []
+    dte = legs[0].dte
+    tyr = max(dte / 365.0, 1e-6)
+    yrs = max(dte, 1) / 365.0
+    spot = chain.spot
+    out: List[IncomeTrade] = []
+    for c in legs:
+        prem = c.mid
+        if kind == "put":                       # cash-secured put (sell OTM put)
+            if c.strike >= spot:
+                continue
+            be = c.strike - prem
+            pop = _pop_past(spot, c.strike, tyr, c.iv, chain.rate, bullish=True)  # P(S>strike)
+            yield_ = (prem / c.strike) / yrs
+            cushion = (spot - be) / spot         # how far below spot before you lose
+            cap = c.strike * 100
+            t = IncomeTrade(f"CSP {c.strike:g}", "cash_secured_put", c.strike, prem, round(be, 2),
+                            prem, round(pop, 3), round(yield_, 3), round(cushion, 3), cap,
+                            round(-c.greeks.delta, 3), round(-c.greeks.theta, 3), dte)
+        else:                                    # covered call (sell OTM call vs 100 shares)
+            if c.strike <= spot:
+                continue
+            be = spot - prem
+            pop = 1 - c.greeks.prob_itm          # P(call expires OTM -> keep shares + premium)
+            if_called = (prem + (c.strike - spot)) / spot
+            yield_ = if_called / yrs
+            cushion = prem / spot                 # downside cover from premium
+            cap = spot * 100
+            t = IncomeTrade(f"CC {c.strike:g}", "covered_call", c.strike, prem, round(be, 2),
+                            round(prem + (c.strike - spot), 2), round(pop, 3), round(yield_, 3),
+                            round(cushion, 3), cap, round(-c.greeks.delta, 3),
+                            round(-c.greeks.theta, 3), dte)
+        # rank: annualized yield weighted by probability of keeping it
+        t.score = round(t.annual_yield * t.pop, 3)
+        out.append(t)
+    out.sort(key=lambda x: x.score, reverse=True)
+    return out
+
+
 def build_verticals(chain: Chain, exp: str, kind: str, direction: str,
                     max_width: float = 0.0) -> List[Vertical]:
     legs = sorted(chain.for_exp(exp, kind), key=lambda c: c.strike)
