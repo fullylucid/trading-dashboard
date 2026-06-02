@@ -38,11 +38,12 @@ def expirations(symbol: str) -> Dict[str, Any]:
 
 
 @options_router.get("/{symbol}/chain")
-def chain(symbol: str, exp: Optional[str] = None) -> Dict[str, Any]:
-    ch = get_chain(symbol, expirations=[exp] if exp else None, max_exps=1)
+def chain(symbol: str, exp: Optional[str] = None, target_dte: int = 30) -> Dict[str, Any]:
+    ch = get_chain(symbol, expirations=[exp] if exp else None, max_exps=1,
+                   target_dte=None if exp else target_dte)
     if not ch.contracts:
         raise HTTPException(404, f"no options for {symbol.upper()}")
-    use = exp or ch.expirations[0]
+    use = ch.contracts[0].expiration if not exp else exp
     calls = sorted(ch.for_exp(use, "call"), key=lambda c: c.strike)
     puts = sorted(ch.for_exp(use, "put"), key=lambda c: c.strike)
     return {
@@ -61,12 +62,15 @@ def strategies(
     exp: Optional[str] = None,
     width: float = 0.0,
     top: int = 12,
+    min_oi: int = 25,
+    target_dte: int = 30,
 ) -> Dict[str, Any]:
-    ch = get_chain(symbol, expirations=[exp] if exp else None, max_exps=1)
-    use = exp or (ch.expirations[0] if ch.expirations else None)
+    ch = get_chain(symbol, expirations=[exp] if exp else None, max_exps=1,
+                   target_dte=None if exp else target_dte)
+    use = (exp or (ch.contracts[0].expiration if ch.contracts else None))
     if not use:
         raise HTTPException(404, f"no options for {symbol.upper()}")
-    verts = build_verticals(ch, use, kind, direction, max_width=width)
+    verts = build_verticals(ch, use, kind, direction, max_width=width, min_oi=min_oi)
     out: List[Dict[str, Any]] = []
     for v in verts[:top]:
         out.append({
@@ -86,12 +90,15 @@ def income(
     kind: str = Query("put", pattern="^(put|call)$"),  # put=cash-secured put, call=covered call
     exp: Optional[str] = None,
     top: int = 12,
+    min_oi: int = 25,
+    target_dte: int = 30,
 ) -> Dict[str, Any]:
-    ch = get_chain(symbol, expirations=[exp] if exp else None, max_exps=1)
-    use = exp or (ch.expirations[0] if ch.expirations else None)
+    ch = get_chain(symbol, expirations=[exp] if exp else None, max_exps=1,
+                   target_dte=None if exp else target_dte)
+    use = (exp or (ch.contracts[0].expiration if ch.contracts else None))
     if not use:
         raise HTTPException(404, f"no options for {symbol.upper()}")
-    trades = build_income(ch, use, kind)
+    trades = build_income(ch, use, kind, min_oi=min_oi)
     out = [{
         "label": t.label, "type": t.type, "strike": t.strike, "premium": t.premium,
         "breakeven": t.breakeven, "max_profit": t.max_profit, "pop": t.pop,

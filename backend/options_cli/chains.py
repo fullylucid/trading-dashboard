@@ -71,9 +71,19 @@ def _spot(t) -> float:
         return float(h["Close"].iloc[-1]) if not h.empty else 0.0
 
 
+def pick_expiration(expirations: List[str], target_dte: int) -> Optional[str]:
+    """The listed expiration whose days-to-expiration is closest to target_dte."""
+    today = dt.date.today()
+    if not expirations:
+        return None
+    return min(expirations,
+               key=lambda e: abs((dt.date.fromisoformat(e) - today).days - target_dte))
+
+
 def get_chain(symbol: str, expirations: Optional[List[str]] = None,
-              max_exps: int = 6) -> Chain:
-    """Fetch the chain. By default the nearest `max_exps` expirations (full chain is huge)."""
+              max_exps: int = 6, target_dte: Optional[int] = None) -> Chain:
+    """Fetch the chain. With target_dte (and no explicit expirations), default to the
+    expiration nearest that many days out — a realistic monthly, not the nearest weekly."""
     import yfinance as yf
 
     symbol = symbol.upper()
@@ -83,7 +93,13 @@ def get_chain(symbol: str, expirations: Optional[List[str]] = None,
         return Chain(symbol, 0.0, risk_free(), [])
     spot = _spot(t)
     rate = risk_free()
-    target = expirations or all_exps[:max_exps]
+    if expirations:
+        target = expirations
+    elif target_dte is not None:
+        pick = pick_expiration(all_exps, target_dte)
+        target = [pick] if pick else all_exps[:max_exps]
+    else:
+        target = all_exps[:max_exps]
     today = dt.date.today()
 
     contracts: List[Contract] = []

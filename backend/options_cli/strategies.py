@@ -57,9 +57,14 @@ class IncomeTrade:
     score: float = 0.0
 
 
-def build_income(chain: Chain, exp: str, kind: str) -> List[IncomeTrade]:
-    """OTM premium sells. kind='put' -> cash-secured puts; kind='call' -> covered calls."""
-    legs = [c for c in chain.for_exp(exp, kind) if c.mid > 0]
+def build_income(chain: Chain, exp: str, kind: str, min_oi: int = 25,
+                 delta_lo: float = 0.10, delta_hi: float = 0.45) -> List[IncomeTrade]:
+    """OTM premium sells. kind='put' -> cash-secured puts; kind='call' -> covered calls.
+    Filters to liquid (min_oi) contracts in the sellable delta band — the strikes you'd
+    actually trade, not deep-ITM or far-OTM dust."""
+    legs = [c for c in chain.for_exp(exp, kind)
+            if c.mid > 0 and c.open_interest >= min_oi
+            and delta_lo <= abs(c.greeks.delta) <= delta_hi]
     if not legs:
         return []
     dte = legs[0].dte
@@ -101,9 +106,14 @@ def build_income(chain: Chain, exp: str, kind: str) -> List[IncomeTrade]:
 
 
 def build_verticals(chain: Chain, exp: str, kind: str, direction: str,
-                    max_width: float = 0.0) -> List[Vertical]:
-    legs = sorted(chain.for_exp(exp, kind), key=lambda c: c.strike)
-    legs = [c for c in legs if c.mid > 0]
+                    max_width: float = 0.0, min_oi: int = 25,
+                    moneyness: float = 0.25) -> List[Vertical]:
+    """Filters to liquid (min_oi) legs within `moneyness` of spot — no deep-ITM
+    penny spreads or illiquid wings."""
+    band = moneyness * (chain.spot or 1)
+    legs = sorted((c for c in chain.for_exp(exp, kind)
+                   if c.mid > 0 and c.open_interest >= min_oi
+                   and abs(c.strike - chain.spot) <= band), key=lambda c: c.strike)
     if len(legs) < 2:
         return []
     dte = legs[0].dte
