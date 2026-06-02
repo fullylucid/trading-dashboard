@@ -134,6 +134,7 @@ def _detect_spikes(r, snap: Snapshot) -> List[Dict[str, Any]]:
         res = "gpu" if metric.startswith("gpu") else "cpu"
         culprit = max(snap.top, key=lambda p: p.get(res, 0), default=None) if snap.top else None
         ev = {
+            "id": f"{snap.ts}|{metric}",
             "ts": snap.ts, "metric": metric, "value": round(v, 1), "z": round(z, 2),
             "severity": _severity(metric, v, z, snap.cpu, snap.gpu),
             "culprit": ({"name": culprit.get("name"), "pid": culprit.get("pid"),
@@ -188,3 +189,74 @@ def events(limit: int = 50) -> Dict[str, Any]:
     evs = [json.loads(x) for x in raw]
     evs.reverse()  # newest first
     return {"events": evs}
+
+
+def _find_event(r, event_id: str) -> Optional[Dict[str, Any]]:
+    for item in r.lrange("sys:events", 0, -1):
+        ev = json.loads(item)
+        if ev.get("id") == event_id:
+            return ev
+    return None
+
+
+def _write_explanation(r, event_id: str, explanation: str) -> Optional[Dict[str, Any]]:
+    raw = r.lrange("sys:events", 0, -1)
+    for i, item in enumerate(raw):
+        ev = json.loads(item)
+        if ev.get("id") == event_id:
+            ev["explained"] = True
+            ev["explanation"] = explanation
+            r.lset("sys:events", i, json.dumps(ev))
+            return ev
+    return None
+
+
+class ExplainRequest(BaseModel):
+    id: str
+
+
+@system_router.post("/explain")
+async def explain(req: ExplainRequest) -> Dict[str, Any]:
+    """On-demand: have the free Opus worker pool diagnose a spike event.
+    Routes through agent_bridge.run_agent_job (internal job — no chat pollution).
+    Blocks until the worker answers (or times out), then writes the verdict
+    onto the event so it persists in the log."""
+    r = _r()
+    if r is None:
+        raise HTTPException(503, "store unavailable")
+    ev = _find_event(r, req.id)
+    if ev is None:
+        raise HTTPException(404, "event not found")
+
+    c = ev.get("culprit") or {}
+    signed = c.get("signed")
+    sig_note = (" — UNSIGNED binary" if signed is False else
+                " (signed)" if signed is True else "")
+    path = f"\n- path: {c.get('path')}" if c.get("path") else ""
+    prompt = (
+        "You are diagnosing a system-monitor spike on Schyler's Windows box "
+        "(16-core ThinkStation P3 mini that runs a trading dashboard in WSL/Docker). "
+        "A metric just crossed its normal baseline:\n"
+        f"- metric: {ev.get('metric')} = {ev.get('value')} "
+        f"(z-score {ev.get('z')} vs the machine's own recent distribution)\n"
+        f"- severity: {ev.get('severity')}\n"
+        f"- time (UTC): {ev.get('ts')}\n"
+        f"- most-likely culprit: {c.get('name', 'unknown')} (pid {c.get('pid', '?')}, "
+        f"using {c.get('value')}){sig_note}{path}\n\n"
+        "In 2–4 sentences, plainly: what is that process, is this spike benign or worth "
+        "worrying about, and what (if anything) should Schyler do. If it's unsigned or from a "
+        "temp/odd path, weigh that. Be concrete and honest — no hedging filler. If you can't "
+        "identify the process, say so."
+    )
+
+    try:
+        from agent_bridge import run_agent_job  # lazy: avoid import coupling at module load
+    except Exception:  # noqa: BLE001
+        raise HTTPException(503, "agent bridge unavailable")
+
+    text = await run_agent_job(prompt, kind="data", timeout=120)
+    if not text:
+        return {"ok": False, "explanation": None,
+                "error": "worker pool did not answer (busy or offline) — try again"}
+    saved = _write_explanation(r, req.id, text)
+    return {"ok": True, "explanation": text, "event": saved}
