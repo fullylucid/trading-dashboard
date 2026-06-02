@@ -7,6 +7,7 @@ import SectorRotation from './pages/SectorRotation';
 import Charts from './pages/Charts';
 import CrackADawn from './pages/CrackADawn';
 import OptionsEngine from './pages/OptionsEngine';
+import SystemMonitor from './pages/SystemMonitor';
 import MessengerWidget from './components/MessengerWidget/MessengerWidget';
 
 const ROUTES: { to: string; label: string; end?: boolean }[] = [
@@ -16,6 +17,7 @@ const ROUTES: { to: string; label: string; end?: boolean }[] = [
   { to: '/charts', label: '📉 Charts' },
   { to: '/portfolio-scan', label: '📊 Portfolio Scan' },
   { to: '/sector-rotation', label: '🔄 Sector Rotation' },
+  { to: '/system', label: '🖥️ System' },
 ];
 
 function NavMenu() {
@@ -140,6 +142,7 @@ function App() {
           <Route path="/charts" element={<Charts />} />
           <Route path="/portfolio-scan" element={<PortfolioScan />} />
           <Route path="/sector-rotation" element={<SectorRotation />} />
+          <Route path="/system" element={<SystemMonitor />} />
         </Routes>
         <MessengerWidget />
       </div>
