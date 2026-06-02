@@ -129,8 +129,9 @@ def fetch_next(client: httpx.Client):
     try:
         resp = client.get(
             f"{BACKEND_URL}/api/agent/next",
+            params={"wait": POLL_WAIT},   # server-side BLPOP: hold the request, no busy-polling
             headers=_headers(),
-            timeout=20,
+            timeout=POLL_WAIT + 10,        # must exceed the server's blocking window
         )
     except httpx.HTTPError as e:
         logger.warning(f"poll failed: {e}")
