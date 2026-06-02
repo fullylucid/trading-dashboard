@@ -16,6 +16,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+import requests
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
@@ -29,6 +30,10 @@ logger = logging.getLogger("system_routes")
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 INGEST_TOKEN = os.getenv("SYSTEM_INGEST_TOKEN", "")
+# CRITICAL alerts go to the @Siiigggbot signals channel (same creds as Crack-a-Dawn)
+TG_TOKEN = os.getenv("SIGNAL_BOT_TOKEN", "")
+TG_CHAT = os.getenv("SIGNAL_BOT_CHAT_ID", "")
+TG_COOLDOWN_S = 600  # at most one Telegram ping per metric per 10 min
 
 # ring/series sizing — ~4s cadence -> 300 pts ≈ 20 min of history
 SERIES_MAX = 300
@@ -146,8 +151,34 @@ def _detect_spikes(r, snap: Snapshot) -> List[Dict[str, Any]]:
     if events:
         for ev in events:
             r.rpush("sys:events", json.dumps(ev))
+            if ev["severity"] == "CRITICAL":
+                _telegram_alert(r, ev)
         r.ltrim("sys:events", -EVENTS_MAX, -1)
     return events
+
+
+def _telegram_alert(r, ev: Dict[str, Any]) -> None:
+    """Ping the signals channel on a CRITICAL spike — debounced per metric."""
+    if not TG_TOKEN or not TG_CHAT:
+        return
+    gate = f"sys:tg:last:{ev['metric']}"
+    if r.get(gate):
+        return
+    r.set(gate, "1", ex=TG_COOLDOWN_S)
+    c = ev.get("culprit") or {}
+    unsigned = " ⚠ UNSIGNED" if c.get("signed") is False else ""
+    msg = (
+        f"🖥️🔴 SYSTEM {ev['severity']} — {ev['metric']} = {ev['value']} (z {ev['z']})\n"
+        f"Culprit: {c.get('name', '?')} (pid {c.get('pid', '?')}){unsigned}\n"
+        f"ThinkStation P3. Open the dashboard System banner → 🔍 explain for a diagnosis."
+    )
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+            json={"chat_id": TG_CHAT, "text": msg}, timeout=6,
+        )
+    except Exception as e:  # noqa: BLE001 — alerts must never break ingest
+        logger.warning("telegram alert failed: %s", e)
 
 
 @system_router.post("/ingest")
@@ -189,6 +220,40 @@ def events(limit: int = 50) -> Dict[str, Any]:
     evs = [json.loads(x) for x in raw]
     evs.reverse()  # newest first
     return {"events": evs}
+
+
+@system_router.get("/stack")
+def stack() -> Dict[str, Any]:
+    """Health of the autonomous stack the box runs — Redis, the host collector,
+    and the Opus worker pool. Backend-observable only (no docker socket mount)."""
+    out: Dict[str, Any] = {
+        "redis": False, "collector_age_s": None,
+        "worker_last_poll_s": None, "queue_depth": None,
+    }
+    r = _r()
+    if r is None:
+        return out
+    try:
+        r.ping(); out["redis"] = True
+    except Exception:  # noqa: BLE001
+        return out
+    latest = r.get("sys:latest")
+    if latest:
+        try:
+            out["collector_age_s"] = round(time.time() - json.loads(latest).get("_rx", 0), 1)
+        except Exception:  # noqa: BLE001
+            pass
+    lp = r.get("agent:worker:last_poll")
+    if lp:
+        try:
+            out["worker_last_poll_s"] = round(time.time() - float(lp), 1)
+        except Exception:  # noqa: BLE001
+            pass
+    try:
+        out["queue_depth"] = r.llen("agent:jobs:queue")
+    except Exception:  # noqa: BLE001
+        pass
+    return out
 
 
 def _find_event(r, event_id: str) -> Optional[Dict[str, Any]]:
