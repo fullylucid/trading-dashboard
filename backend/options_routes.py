@@ -12,7 +12,9 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from options_cli.chains import get_chain
-from options_cli.strategies import build_verticals, build_income
+from options_cli.strategies import (
+    build_verticals, build_income, build_iron_condor, build_strangle, build_straddle,
+)
 
 options_router = APIRouter(prefix="/api/options", tags=["options"])
 logger = logging.getLogger("options_routes")
@@ -106,3 +108,33 @@ def income(
         "delta": t.delta, "theta": t.theta, "dte": t.dte, "score": t.score,
     } for t in trades[:top]]
     return {"symbol": ch.symbol, "spot": ch.spot, "expiration": use, "kind": kind, "income": out}
+
+
+@options_router.get("/{symbol}/multileg")
+def multileg(
+    symbol: str,
+    type: str = Query("iron_condor", pattern="^(iron_condor|strangle|straddle)$"),
+    side: str = Query("short", pattern="^(short|long)$"),
+    exp: Optional[str] = None,
+    target_dte: int = 30,
+    top: int = 8,
+) -> Dict[str, Any]:
+    ch = get_chain(symbol, expirations=[exp] if exp else None, max_exps=1,
+                   target_dte=None if exp else target_dte)
+    use = (exp or (ch.contracts[0].expiration if ch.contracts else None))
+    if not use:
+        raise HTTPException(404, f"no options for {symbol.upper()}")
+    if type == "iron_condor":
+        items = build_iron_condor(ch, use)
+    elif type == "strangle":
+        items = build_strangle(ch, use, side=side)
+    else:
+        items = build_straddle(ch, use, side=side)
+    out = [{
+        "label": m.label, "type": m.type, "side": m.side, "net": m.net,
+        "max_profit": m.max_profit, "max_loss": m.max_loss, "breakevens": m.breakevens,
+        "pop": m.pop, "undefined_risk": m.undefined_risk,
+        "legs": [{"action": l.action, "kind": l.kind, "strike": l.strike, "premium": l.premium} for l in m.legs],
+    } for m in items[:top]]
+    return {"symbol": ch.symbol, "spot": ch.spot, "expiration": use,
+            "type": type, "side": side, "strategies": out}

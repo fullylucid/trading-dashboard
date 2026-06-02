@@ -22,7 +22,12 @@ type Income = {
   label: string; type: string; strike: number; premium: number; breakeven: number;
   max_profit: number; pop: number; annual_yield: number; cushion: number; theta: number; dte: number;
 };
-type Mode = 'spreads' | 'cash_secured_put' | 'covered_call';
+type Leg = { action: string; kind: string; strike: number; premium: number };
+type MultiLeg = {
+  label: string; type: string; side: string; net: number; max_profit: number;
+  max_loss: number; breakevens: number[]; pop: number; undefined_risk: boolean; legs: Leg[];
+};
+type Mode = 'spreads' | 'cash_secured_put' | 'covered_call' | 'iron_condor' | 'strangle' | 'straddle';
 
 const box: React.CSSProperties = {
   background: '#000', color: GREEN, border: `1px solid ${DIM}`, borderRadius: 4,
@@ -83,15 +88,22 @@ export default function OptionsEngine() {
   const [dir, setDir] = useState<'bull' | 'bear'>('bull');
   const [verticals, setVerticals] = useState<Vertical[]>([]);
   const [income, setIncome] = useState<Income[]>([]);
+  const [multileg, setMultileg] = useState<MultiLeg[]>([]);
+  const [side, setSide] = useState<'short' | 'long'>('short');
   const [selV, setSelV] = useState<Vertical | null>(null);
   const [selI, setSelI] = useState<Income | null>(null);
+  const [selM, setSelM] = useState<MultiLeg | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
 
-  const chainSide: 'call' | 'put' = mode === 'cash_secured_put' ? 'put' : mode === 'covered_call' ? 'call' : kind;
+  const chainSide: 'call' | 'put' = mode === 'cash_secured_put' ? 'put' : mode === 'spreads' ? kind : 'call';
+  const isML = mode === 'iron_condor' || mode === 'strangle' || mode === 'straddle';
+  const hasSide = mode === 'strangle' || mode === 'straddle';
+
+  const clearResults = () => { setVerticals([]); setIncome([]); setMultileg([]); setSelV(null); setSelI(null); setSelM(null); };
 
   const loadChain = useCallback(async (sym: string, exp?: string) => {
-    setLoading(true); setErr(''); setVerticals([]); setIncome([]); setSelV(null); setSelI(null);
+    setLoading(true); setErr(''); clearResults();
     try {
       const r = await fetch(`/api/options/${sym}/chain${exp ? `?exp=${exp}` : ''}`);
       if (!r.ok) { setErr(`No options for ${sym}.`); setChain(null); return; }
@@ -101,15 +113,26 @@ export default function OptionsEngine() {
 
   const formulate = useCallback(async () => {
     if (!chain) return;
+    clearResults();
     if (mode === 'spreads') {
       const r = await fetch(`/api/options/${chain.symbol}/strategies?kind=${kind}&direction=${dir}&exp=${chain.expiration}&top=12`);
-      if (r.ok) { const d = await r.json(); setVerticals(d.strategies || []); setSelV((d.strategies || [])[0] || null); setIncome([]); }
-    } else {
+      if (r.ok) { const d = await r.json(); setVerticals(d.strategies || []); setSelV((d.strategies || [])[0] || null); }
+    } else if (mode === 'cash_secured_put' || mode === 'covered_call') {
       const ik = mode === 'cash_secured_put' ? 'put' : 'call';
       const r = await fetch(`/api/options/${chain.symbol}/income?kind=${ik}&exp=${chain.expiration}&top=12`);
-      if (r.ok) { const d = await r.json(); setIncome(d.income || []); setSelI((d.income || [])[0] || null); setVerticals([]); }
+      if (r.ok) { const d = await r.json(); setIncome(d.income || []); setSelI((d.income || [])[0] || null); }
+    } else {
+      const r = await fetch(`/api/options/${chain.symbol}/multileg?type=${mode}&side=${side}&exp=${chain.expiration}&top=8`);
+      if (r.ok) { const d = await r.json(); setMultileg(d.strategies || []); setSelM((d.strategies || [])[0] || null); }
     }
-  }, [chain, mode, kind, dir]);
+  }, [chain, mode, kind, dir, side]);
+
+  // generic payoff from legs: long=+intrinsic & -premium, short=-intrinsic & +premium
+  const mlPL = (m: MultiLeg) => (S: number) => m.legs.reduce((acc, l) => {
+    const intr = Math.max(l.kind === 'call' ? S - l.strike : l.strike - S, 0);
+    const sign = l.action === 'long' ? 1 : -1;
+    return acc + sign * intr + (l.action === 'short' ? l.premium : -l.premium);
+  }, 0) * 100;
 
   // payoff functions
   const intr = (S: number, K: number, call: boolean) => Math.max(call ? S - K : K - S, 0);
@@ -122,6 +145,9 @@ export default function OptionsEngine() {
     { id: 'cash_secured_put', label: '💵 Cash-Secured Puts' },
     { id: 'covered_call', label: '📈 Covered Calls' },
     { id: 'spreads', label: '↔ Spreads' },
+    { id: 'iron_condor', label: '🦅 Iron Condor' },
+    { id: 'strangle', label: '🤏 Strangle' },
+    { id: 'straddle', label: '🎯 Straddle' },
   ];
 
   return (
@@ -148,7 +174,7 @@ export default function OptionsEngine() {
         <>
           <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
             {MODES.map((m) => (
-              <button key={m.id} onClick={() => { setMode(m.id); setVerticals([]); setIncome([]); setSelV(null); setSelI(null); }}
+              <button key={m.id} onClick={() => { setMode(m.id); clearResults(); }}
                 style={{ ...box, cursor: 'pointer', background: mode === m.id ? 'rgba(0,255,65,0.18)' : '#000' }}>{m.label}</button>
             ))}
           </div>
@@ -192,11 +218,13 @@ export default function OptionsEngine() {
                   {(['call', 'put'] as const).map((k) => <button key={k} onClick={() => setKind(k)} style={{ ...box, cursor: 'pointer', background: kind === k ? 'rgba(0,255,65,0.18)' : '#000' }}>{k}</button>)}
                   {(['bull', 'bear'] as const).map((d) => <button key={d} onClick={() => setDir(d)} style={{ ...box, cursor: 'pointer', background: dir === d ? 'rgba(0,255,65,0.18)' : '#000' }}>{d}</button>)}
                 </>}
+                {hasSide && (['short', 'long'] as const).map((s) => <button key={s} onClick={() => setSide(s)} style={{ ...box, cursor: 'pointer', background: side === s ? 'rgba(0,255,65,0.18)' : '#000' }}>{s}</button>)}
                 <button onClick={formulate} style={{ ...box, cursor: 'pointer' }}>⚙ Formulate</button>
               </div>
 
               {selV && <div style={{ marginBottom: 10 }}><PayoffChart pl={vPL(selV)} spot={chain.spot} be={selV.breakeven} x0={Math.min(selV.long_strike, selV.short_strike) * 0.9} x1={Math.max(selV.long_strike, selV.short_strike) * 1.1} /></div>}
               {selI && <div style={{ marginBottom: 10 }}><PayoffChart pl={iPL(selI, chain.spot)} spot={chain.spot} be={selI.breakeven} x0={selI.strike * 0.8} x1={selI.strike * 1.2} /></div>}
+              {selM && <div style={{ marginBottom: 10 }}><PayoffChart pl={mlPL(selM)} spot={chain.spot} be={selM.breakevens[0]} x0={Math.min(...selM.legs.map((l) => l.strike), chain.spot) * 0.88} x1={Math.max(...selM.legs.map((l) => l.strike), chain.spot) * 1.12} /></div>}
 
               {verticals.length > 0 && (
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>
@@ -223,6 +251,22 @@ export default function OptionsEngine() {
                     </tr>))}</tbody>
                 </table>
               )}
+
+              {multileg.length > 0 && (
+                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                  <thead><tr><th style={{ ...th, textAlign: 'left' }}>structure</th><th style={th}>{multileg[0].side === 'credit' ? 'credit' : 'debit'}</th><th style={th}>maxP</th><th style={th}>maxL</th><th style={th} title={METRICS.breakeven}>breakevens</th><th style={th} title={METRICS.POP}>POP</th></tr></thead>
+                  <tbody>{multileg.map((m) => (
+                    <tr key={m.label} onClick={() => setSelM(m)} style={{ cursor: 'pointer', background: selM?.label === m.label ? 'rgba(0,255,65,0.12)' : 'transparent' }}>
+                      <td style={{ ...td, textAlign: 'left' }}>{m.label}</td>
+                      <td style={{ ...td, color: GREEN }}>{m.side === 'credit' ? `$${m.net.toFixed(2)}` : `$${(-m.net).toFixed(2)}`}</td>
+                      <td style={{ ...td, color: GREEN }}>{m.max_profit.toFixed(2)}</td>
+                      <td style={{ ...td, color: RED }}>{m.undefined_risk ? '∞*' : m.max_loss.toFixed(2)}</td>
+                      <td style={td}>{m.breakevens.map((b) => b.toFixed(1)).join(' / ')}</td>
+                      <td style={td}>{(m.pop * 100).toFixed(0)}%</td>
+                    </tr>))}</tbody>
+                </table>
+              )}
+              {isML && multileg.some((m) => m.undefined_risk) && <div style={{ fontSize: 10, opacity: 0.6, marginTop: 4 }}>∞* = undefined/large risk (naked short) — manage carefully</div>}
             </div>
           </div>
         </>
