@@ -325,6 +325,13 @@ try:
 except Exception as e:  # noqa: BLE001 — additive; never block startup
     logging.getLogger(__name__).warning("brief router not registered: %s", e)
 
+try:
+    from options_routes import options_router
+    app.include_router(options_router)
+    logger.info("Options engine router registered at /api/options/*")
+except Exception as e:  # noqa: BLE001 — additive; never block startup
+    logging.getLogger(__name__).warning("options router not registered: %s", e)
+
 
 # ============================================================================
 # Agent live-stream WebSocket
