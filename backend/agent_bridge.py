@@ -342,9 +342,10 @@ async def enqueue(req: EnqueueRequest, request: Request):
 
 @router.get("/next")
 async def next_job(request: Request, wait: int = Query(0, ge=0, le=60)):
-    # Non-blocking LPOP, NOT BLPOP. Upstash serverless Redis times out long
-    # blocking reads, so the worker short-polls (see worker POLL_INTERVAL).
-    # `wait` is accepted for backward-compat but ignored.
+    # Local Redis supports real BLPOP (the old Upstash bus did not). With wait>0 we
+    # block server-side until a job arrives or `wait` seconds elapse, so an idle worker
+    # holds ONE open request instead of short-polling every second — near-zero idle
+    # wakeups (and the CPU finally stays in deep idle). wait=0 keeps the instant LPOP path.
     require_worker_token(request)
     r = _require_ready()
     # liveness beacon for the System monitor's stack panel (a worker just polled)
@@ -352,7 +353,11 @@ async def next_job(request: Request, wait: int = Query(0, ge=0, le=60)):
         await r.set("agent:worker:last_poll", time.time())
     except Exception:  # noqa: BLE001 — never let telemetry break the poll
         pass
-    raw = await r.lpop(QUEUE_KEY)
+    if wait > 0:
+        popped = await r.blpop(QUEUE_KEY, timeout=wait)  # (key, value) or None on timeout
+        raw = popped[1] if popped else None
+    else:
+        raw = await r.lpop(QUEUE_KEY)
     if raw is None:
         return Response(status_code=204)
     job = json.loads(raw)
