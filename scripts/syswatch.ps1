@@ -112,6 +112,17 @@ while ($true) {
         ForEach-Object { $pid2 = [int]$matches[1]; $gpuByPid[$pid2] = [double]$gpuByPid[$pid2] + $_.CookedValue }
     } catch {}
 
+    # per-process external network activity (established conns to a non-local remote)
+    $netByPid = @{}
+    try {
+      Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | ForEach-Object {
+        $ra = [string]$_.RemoteAddress
+        if ($ra -and $ra -ne '127.0.0.1' -and $ra -ne '::1' -and $ra -ne '0.0.0.0' -and -not $ra.StartsWith('::ffff:127.')) {
+          $op = [int]$_.OwningProcess; $netByPid[$op] = [int]$netByPid[$op] + 1
+        }
+      }
+    } catch {}
+
     $rows = @()
     foreach ($p in $procs) {
       $cpuSec = $null; try { $cpuSec = $p.CPU } catch {}
@@ -124,7 +135,8 @@ while ($true) {
       $rows += [pscustomobject]@{
         name = $p.ProcessName; pid = $p.Id; cpu = $pct;
         gpu = if ($gpuByPid.ContainsKey($p.Id)) { [math]::Round([math]::Min($gpuByPid[$p.Id],100),1) } else { $null };
-        net_kbps = $null; signed = (Is-Signed $path); path = $path
+        net_conns = if ($netByPid.ContainsKey($p.Id)) { $netByPid[$p.Id] } else { 0 };
+        signed = (Is-Signed $path); path = $path
       }
     }
     # refresh prev cpu table
@@ -157,13 +169,21 @@ while ($true) {
       } catch {}
     }
 
-    # ---- suspicious flags (unsigned + high-resource; net pending) ----
+    # ---- suspicious flags: scan ALL procs (not just CPU-top) for
+    #      unsigned + (network-active OR high-resource) — the real triad ----
     $flags = @()
-    foreach ($tp in $top) {
-      if ($tp.signed -eq $false -and (($tp.cpu -ge 25) -or ($tp.gpu -ge 40))) {
-        $flags += @{ proc = $tp.name; pid = $tp.pid; why = "unsigned + high resource ($($tp.cpu)% cpu)" }
+    foreach ($tp in $rows) {
+      if ($tp.signed -ne $false) { continue }   # only unsigned binaries are candidates
+      $netActive = ($tp.net_conns -gt 0)
+      if ($netActive -or ($tp.cpu -ge 25) -or ($tp.gpu -ge 40)) {
+        $why = @()
+        if ($netActive)      { $why += "$($tp.net_conns) external conn(s)" }
+        if ($tp.cpu -ge 25)  { $why += "$($tp.cpu)% cpu" }
+        if ($tp.gpu -ge 40)  { $why += "$($tp.gpu)% gpu" }
+        $flags += @{ proc = $tp.name; pid = $tp.pid; why = "unsigned + " + ($why -join ', ') }
       }
     }
+    $flags = @($flags | Select-Object -First 8)
 
     # ---- ship it ----
     $payload = @{

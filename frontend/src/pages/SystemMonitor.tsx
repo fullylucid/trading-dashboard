@@ -9,7 +9,8 @@ const td: React.CSSProperties = { padding: '2px 6px', fontSize: 11, textAlign: '
 const th: React.CSSProperties = { ...td, color: DIM, fontWeight: 400, borderBottom: `1px solid ${DIM}` };
 const card: React.CSSProperties = { border: `1px solid ${DIM}`, borderRadius: 6, padding: '10px 12px', background: 'rgba(0,255,65,0.03)' };
 
-type Proc = { name: string; pid: number; cpu?: number; gpu?: number; net_kbps?: number; signed?: boolean; path?: string };
+type Proc = { name: string; pid: number; cpu?: number; gpu?: number; net_conns?: number; signed?: boolean; path?: string };
+type Stack = { redis: boolean; collector_age_s: number | null; worker_last_poll_s: number | null; queue_depth: number | null };
 type Snapshot = {
   ts: string;
   cpu: { temp?: number; load?: number; power_w?: number; tjmax_distance?: number; warn?: number; crit?: number };
@@ -47,6 +48,17 @@ function loadColor(v?: number): string {
   if (v >= 70) return AMBER;
   return GREEN;
 }
+function fmtAge(s: number | null): string {
+  if (s == null) return 'offline';
+  if (s < 60) return `${Math.round(s)}s ago`;
+  return `${Math.round(s / 60)}m ago`;
+}
+function ageColor(s: number | null, fresh: number): string {
+  if (s == null) return RED;
+  if (s <= fresh) return GREEN;
+  if (s <= fresh * 4) return AMBER;
+  return RED;
+}
 
 function Spark({ data, color = GREEN, w = 120, h = 28 }: { data: number[]; color?: string; w?: number; h?: number }) {
   if (!data || data.length < 2) return <svg width={w} height={h} />;
@@ -79,6 +91,15 @@ export function SystemFull({ cur, events }: { cur: Current | null; events: Ev[] 
   const [explainingId, setExplainingId] = useState<string | null>(null);
   const [localExpl, setLocalExpl] = useState<Record<string, string>>({});
   const [explErr, setExplErr] = useState<Record<string, string>>({});
+  const [stack, setStack] = useState<Stack | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const f = async () => { try { const r = await fetch('/api/system/stack'); if (r.ok && active) setStack(await r.json()); } catch { /* ignore */ } };
+    f();
+    const id = setInterval(f, 8000);
+    return () => { active = false; clearInterval(id); };
+  }, []);
 
   const explain = useCallback(async (ev: Ev) => {
     if (!ev.id) return;
@@ -174,6 +195,21 @@ export function SystemFull({ cur, events }: { cur: Current | null; events: Ev[] 
         )}
       </div>
 
+      {/* stack health strip */}
+      {stack && (
+        <div style={{ ...card, marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
+            <span style={{ color: DIM }}>STACK</span>
+            <span style={{ color: stack.redis ? GREEN : RED }}>Redis: {stack.redis ? 'up' : 'DOWN'}</span>
+            <span style={{ color: ageColor(stack.collector_age_s, 20) }}>Collector: {fmtAge(stack.collector_age_s)}</span>
+            <span style={{ color: stack.worker_last_poll_s == null ? DIM : ageColor(stack.worker_last_poll_s, 120) }}>
+              Opus pool: {stack.worker_last_poll_s == null ? 'idle (no recent job)' : `last seen ${fmtAge(stack.worker_last_poll_s)}`}
+            </span>
+            <span style={{ color: (stack.queue_depth ?? 0) > 5 ? AMBER : DIM }}>Queue: {stack.queue_depth ?? '—'}</span>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
         {/* top processes */}
         <div style={{ ...card, flex: '1 1 430px' }}>
@@ -181,18 +217,22 @@ export function SystemFull({ cur, events }: { cur: Current | null; events: Ev[] 
           <table style={{ borderCollapse: 'collapse', width: '100%' }}>
             <thead><tr>
               <th style={{ ...th, textAlign: 'left' }}>process</th><th style={th}>CPU%</th><th style={th}>GPU%</th>
-              <th style={th}>net kB/s</th><th style={th}>signed</th>
+              <th style={th} title="established connections to a non-local remote">net</th><th style={th}>signed</th>
             </tr></thead>
             <tbody>
-              {snap.top.slice(0, 10).map((p) => (
-                <tr key={p.pid}>
-                  <td style={{ ...td, textAlign: 'left' }} title={p.path}>{p.name}</td>
-                  <td style={{ ...td, color: loadColor(p.cpu) }}>{p.cpu != null ? p.cpu.toFixed(1) : '—'}</td>
-                  <td style={td}>{p.gpu != null ? p.gpu.toFixed(1) : '—'}</td>
-                  <td style={td}>{p.net_kbps != null ? Math.round(p.net_kbps) : '—'}</td>
-                  <td style={{ ...td, color: p.signed === false ? AMBER : DIM }}>{p.signed === false ? 'no' : p.signed ? 'yes' : '?'}</td>
-                </tr>
-              ))}
+              {snap.top.slice(0, 10).map((p) => {
+                const netActive = (p.net_conns ?? 0) > 0;
+                const suspicious = p.signed === false && netActive;
+                return (
+                  <tr key={p.pid}>
+                    <td style={{ ...td, textAlign: 'left' }} title={p.path}>{p.name}</td>
+                    <td style={{ ...td, color: loadColor(p.cpu) }}>{p.cpu != null ? p.cpu.toFixed(1) : '—'}</td>
+                    <td style={td}>{p.gpu != null ? p.gpu.toFixed(1) : '—'}</td>
+                    <td style={{ ...td, color: suspicious ? RED : netActive ? GREEN : DIM }}>{p.net_conns != null ? (p.net_conns || '·') : '—'}</td>
+                    <td style={{ ...td, color: p.signed === false ? AMBER : DIM }}>{p.signed === false ? 'no' : p.signed ? 'yes' : '?'}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

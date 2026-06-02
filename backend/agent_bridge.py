@@ -347,6 +347,11 @@ async def next_job(request: Request, wait: int = Query(0, ge=0, le=60)):
     # `wait` is accepted for backward-compat but ignored.
     require_worker_token(request)
     r = _require_ready()
+    # liveness beacon for the System monitor's stack panel (a worker just polled)
+    try:
+        await r.set("agent:worker:last_poll", time.time())
+    except Exception:  # noqa: BLE001 — never let telemetry break the poll
+        pass
     raw = await r.lpop(QUEUE_KEY)
     if raw is None:
         return Response(status_code=204)
@@ -359,6 +364,11 @@ async def next_job(request: Request, wait: int = Query(0, ge=0, le=60)):
 async def post_result(req: ResultRequest, request: Request):
     require_worker_token(request)
     r = _require_ready()
+    # liveness beacon (a worker is alive and producing) — for the stack panel
+    try:
+        await r.set("agent:worker:last_poll", time.time())
+    except Exception:  # noqa: BLE001
+        pass
 
     # Idempotency: (job_id, seq) processed at most once.
     seen_key = f"agent:job:{req.job_id}:seen"
