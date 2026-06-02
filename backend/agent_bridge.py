@@ -109,6 +109,20 @@ INTERNAL_JOB_TIMEOUT = int(os.getenv("AGENT_INTERNAL_TIMEOUT", "150"))
 # ============================================================================
 
 _redis: Optional["aioredis.Redis"] = None
+_redis_block: Optional["aioredis.Redis"] = None  # dedicated client for blocking BLPOP
+
+
+def _block_redis() -> "aioredis.Redis":
+    """Dedicated client for blocking pops: its own connection(s) with NO socket read
+    timeout, so a long BLPOP isn't killed mid-block or starved by the shared pool's
+    constant traffic. Created lazily on first long-poll."""
+    global _redis_block
+    if _redis_block is None:
+        _redis_block = aioredis.from_url(
+            _bus_redis_url(), decode_responses=True,
+            socket_timeout=None, socket_keepalive=True,
+        )
+    return _redis_block
 _serializer: Optional["URLSafeTimedSerializer"] = None
 _ws_manager = None  # injected by main.py via set_ws_manager()
 
@@ -354,7 +368,8 @@ async def next_job(request: Request, wait: int = Query(0, ge=0, le=60)):
     except Exception:  # noqa: BLE001 — never let telemetry break the poll
         pass
     if wait > 0:
-        popped = await r.blpop(QUEUE_KEY, timeout=wait)  # (key, value) or None on timeout
+        rb = _block_redis()  # dedicated no-read-timeout connection for the block
+        popped = await rb.blpop(QUEUE_KEY, timeout=wait)  # (key, value) or None on timeout
         raw = popped[1] if popped else None
     else:
         raw = await r.lpop(QUEUE_KEY)
@@ -632,8 +647,11 @@ async def startup_event():
 
 
 async def shutdown_event():
-    global _redis
+    global _redis, _redis_block
     if _redis is not None:
         await _redis.aclose()
         _redis = None
+    if _redis_block is not None:
+        await _redis_block.aclose()
+        _redis_block = None
     logger.info("Agent bridge: shutdown complete")
