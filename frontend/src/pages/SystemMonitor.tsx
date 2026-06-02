@@ -26,6 +26,7 @@ type Snapshot = {
 };
 type Current = { online: boolean; age_s?: number; snapshot?: Snapshot; series?: Record<string, number[]> };
 type Ev = {
+  id?: string;
   ts: string; metric: string; value: number; z: number; severity: string;
   culprit?: { name: string; pid: number; value: number; signed?: boolean; path?: string } | null;
   explained: boolean; explanation?: string | null;
@@ -75,6 +76,29 @@ function Gauge({ label, value, unit, color, sub }: { label: string; value: strin
 
 // ============================================================ full detail view
 export function SystemFull({ cur, events }: { cur: Current | null; events: Ev[] }) {
+  const [explainingId, setExplainingId] = useState<string | null>(null);
+  const [localExpl, setLocalExpl] = useState<Record<string, string>>({});
+  const [explErr, setExplErr] = useState<Record<string, string>>({});
+
+  const explain = useCallback(async (ev: Ev) => {
+    if (!ev.id) return;
+    setExplainingId(ev.id);
+    setExplErr((p) => { const n = { ...p }; delete n[ev.id!]; return n; });
+    try {
+      const r = await fetch('/api/system/explain', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: ev.id }),
+      });
+      const d = await r.json();
+      if (d.explanation) setLocalExpl((p) => ({ ...p, [ev.id!]: d.explanation }));
+      else setExplErr((p) => ({ ...p, [ev.id!]: d.error || 'no answer' }));
+    } catch (e: any) {
+      setExplErr((p) => ({ ...p, [ev.id!]: String(e?.message || e) }));
+    } finally {
+      setExplainingId(null);
+    }
+  }, []);
+
   const snap = cur?.snapshot;
   const series = cur?.series || {};
   const def = snap?.security?.defender;
@@ -177,22 +201,39 @@ export function SystemFull({ cur, events }: { cur: Current | null; events: Ev[] 
         <div style={{ ...card, flex: '1 1 430px' }}>
           <div style={{ fontSize: 12, color: DIM, marginBottom: 6 }}>SPIKE EVENTS</div>
           {events.length === 0 && <div style={{ fontSize: 11, color: DIM }}>No abnormal events logged. (Spikes are flagged by z-score vs the box's own baseline — nothing weird yet.)</div>}
-          {events.map((e, i) => (
-            <div key={i} style={{ borderBottom: `1px solid rgba(0,255,65,0.12)`, padding: '4px 0' }}>
-              <div style={{ fontSize: 11 }}>
-                <span style={{ color: sevColor(e.severity), fontWeight: 700 }}>{e.severity}</span>{' '}
-                <span>{e.metric}</span> = <b>{e.value}</b> <span style={{ color: DIM }}>(z {e.z})</span>
-                <span style={{ float: 'right', color: DIM, fontSize: 10 }}>{e.ts?.replace('T', ' ').slice(5, 19)}</span>
-              </div>
-              {e.culprit && (
-                <div style={{ fontSize: 10, color: DIM }}>
-                  → {e.culprit.name} (pid {e.culprit.pid}, {typeof e.culprit.value === 'number' ? e.culprit.value.toFixed(1) : e.culprit.value})
-                  {e.culprit.signed === false && <span style={{ color: AMBER }}> · unsigned</span>}
+          {events.map((e, i) => {
+            const expl = e.explanation || (e.id ? localExpl[e.id] : undefined);
+            const busy = explainingId != null && explainingId === e.id;
+            const err = e.id ? explErr[e.id] : undefined;
+            return (
+              <div key={e.id || i} style={{ borderBottom: `1px solid rgba(0,255,65,0.12)`, padding: '4px 0' }}>
+                <div style={{ fontSize: 11 }}>
+                  <span style={{ color: sevColor(e.severity), fontWeight: 700 }}>{e.severity}</span>{' '}
+                  <span>{e.metric}</span> = <b>{e.value}</b> <span style={{ color: DIM }}>(z {e.z})</span>
+                  <span style={{ float: 'right', color: DIM, fontSize: 10 }}>{e.ts?.replace('T', ' ').slice(5, 19)}</span>
                 </div>
-              )}
-              {e.explanation && <div style={{ fontSize: 10, color: GREEN, marginTop: 2 }}>{e.explanation}</div>}
-            </div>
-          ))}
+                {e.culprit && (
+                  <div style={{ fontSize: 10, color: DIM }}>
+                    → {e.culprit.name} (pid {e.culprit.pid}, {typeof e.culprit.value === 'number' ? e.culprit.value.toFixed(1) : e.culprit.value})
+                    {e.culprit.signed === false && <span style={{ color: AMBER }}> · unsigned</span>}
+                  </div>
+                )}
+                {expl && <div style={{ fontSize: 10, color: GREEN, marginTop: 3, lineHeight: 1.4 }}>🤖 {expl}</div>}
+                {!expl && (
+                  <div style={{ marginTop: 3 }}>
+                    <button
+                      onClick={() => explain(e)}
+                      disabled={busy || !e.id}
+                      style={{ background: '#000', color: busy ? DIM : GREEN, border: `1px solid ${DIM}`, borderRadius: 3, cursor: busy ? 'default' : 'pointer', fontFamily: 'monospace', fontSize: 10, padding: '2px 8px' }}
+                    >
+                      {busy ? '🤖 explaining… (worker pool)' : '🔍 explain'}
+                    </button>
+                    {err && <span style={{ fontSize: 10, color: AMBER, marginLeft: 8 }}>{err}</span>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </>
