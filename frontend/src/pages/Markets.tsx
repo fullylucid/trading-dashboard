@@ -72,6 +72,9 @@ export default function Markets() {
 
       <TVWidget title="top stories" script="timeline" height={420}
         config={{ feedMode: 'market', market: 'stock', isTransparent: true, displayMode: 'regular' }} />
+
+      <TVWidget title="screener" script="screener" height={500}
+        config={{ defaultColumn: 'overview', defaultScreen: 'most_capitalized', market: 'america', showToolbar: true, isTransparent: true }} />
     </div>
   );
 }

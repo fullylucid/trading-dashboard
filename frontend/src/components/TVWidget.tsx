@@ -10,11 +10,13 @@ export default function TVWidget({
   config,
   height = 400,
   title,
+  bare = false,
 }: {
   script: string;            // e.g. "ticker-tape", "market-overview", "stock-heatmap"
   config: Record<string, unknown>;
   height?: number | string;
   title?: string;
+  bare?: boolean;            // no title/border/margin (e.g. a fixed ticker bar)
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const cfgKey = JSON.stringify(config);
@@ -36,13 +38,14 @@ export default function TVWidget({
     return () => { host.innerHTML = ''; };
   }, [script, cfgKey, height]);
 
+  const h = typeof height === 'number' ? `${height}px` : height;
   return (
-    <div style={{ marginBottom: 14 }}>
-      {title && <div style={{ fontSize: 12, color: 'rgba(0,255,65,0.55)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>{title}</div>}
+    <div style={{ marginBottom: bare ? 0 : 14 }}>
+      {title && !bare && <div style={{ fontSize: 12, color: 'rgba(0,255,65,0.55)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>{title}</div>}
       <div
         ref={ref}
         className="tradingview-widget-container"
-        style={{ height: typeof height === 'number' ? `${height}px` : height, border: '1px solid rgba(0,255,65,0.3)', borderRadius: 6, overflow: 'hidden' }}
+        style={{ height: h, overflow: 'hidden', ...(bare ? {} : { border: '1px solid rgba(0,255,65,0.3)', borderRadius: 6 }) }}
       />
     </div>
   );

@@ -68,6 +68,7 @@ html, body {
   overflow-x: hidden;            /* no accidental sideways page scroll */
   -webkit-text-size-adjust: 100%;
 }
+.app { padding-bottom: 44px; }   /* clearance for the fixed global ticker tape */
 * { -webkit-tap-highlight-color: rgba(0, 255, 65, 0.2); }
 
 @media (max-width: 700px) {

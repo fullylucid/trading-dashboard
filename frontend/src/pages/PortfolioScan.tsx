@@ -19,6 +19,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import TVWidget from '../components/TVWidget';
 import axios from 'axios';
 
 import RegimeBanner from '../components/analytics/RegimeBanner';
@@ -371,6 +372,12 @@ const PortfolioScan: React.FC = () => {
 
   const renderEnrichedPanel = (item: ScanItem): React.ReactElement => (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+      <div className="bg-gray-800/50 rounded p-3 border border-gray-700 md:col-span-2">
+        <div className="text-sm font-semibold text-green-300 mb-2">{item.symbol} chart</div>
+        <TVWidget bare script="mini-symbol-overview" height={180}
+          config={{ symbol: item.symbol, dateRange: '3M', isTransparent: true, autosize: true }} />
+      </div>
+
       <div className="bg-gray-800/50 rounded p-3 border border-gray-700">
         <div className="text-sm font-semibold text-green-300 mb-2">Thesis</div>
         {item.thesis || item.thesis_markdown ? (
