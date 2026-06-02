@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from options_cli.chains import get_chain
-from options_cli.strategies import build_verticals
+from options_cli.strategies import build_verticals, build_income
 
 options_router = APIRouter(prefix="/api/options", tags=["options"])
 logger = logging.getLogger("options_routes")
@@ -78,3 +78,24 @@ def strategies(
         })
     return {"symbol": ch.symbol, "spot": ch.spot, "expiration": use,
             "kind": kind, "direction": direction, "strategies": out}
+
+
+@options_router.get("/{symbol}/income")
+def income(
+    symbol: str,
+    kind: str = Query("put", pattern="^(put|call)$"),  # put=cash-secured put, call=covered call
+    exp: Optional[str] = None,
+    top: int = 12,
+) -> Dict[str, Any]:
+    ch = get_chain(symbol, expirations=[exp] if exp else None, max_exps=1)
+    use = exp or (ch.expirations[0] if ch.expirations else None)
+    if not use:
+        raise HTTPException(404, f"no options for {symbol.upper()}")
+    trades = build_income(ch, use, kind)
+    out = [{
+        "label": t.label, "type": t.type, "strike": t.strike, "premium": t.premium,
+        "breakeven": t.breakeven, "max_profit": t.max_profit, "pop": t.pop,
+        "annual_yield": t.annual_yield, "cushion": t.cushion, "capital": t.capital,
+        "delta": t.delta, "theta": t.theta, "dte": t.dte, "score": t.score,
+    } for t in trades[:top]]
+    return {"symbol": ch.symbol, "spot": ch.spot, "expiration": use, "kind": kind, "income": out}

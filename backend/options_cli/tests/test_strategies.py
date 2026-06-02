@@ -1,7 +1,7 @@
 """Validate vertical-spread money math."""
 from options_cli.chains import Chain, Contract
 from options_cli.greeks import compute
-from options_cli.strategies import build_verticals
+from options_cli.strategies import build_verticals, build_income
 
 
 def _c(strike, kind, bid, ask, dte=30):
@@ -34,3 +34,24 @@ def test_bull_put_credit_spread_math():
     assert abs(v.max_profit - 1.5) < 1e-6    # credit
     assert abs(v.max_loss - 3.5) < 1e-6      # width - credit
     assert abs(v.breakeven - 98.5) < 1e-6    # high strike - credit
+
+
+def test_cash_secured_put_math():
+    # spot 100, sell the 95 put @2.00 -> BE 93, keep premium if S>95
+    ch = _chain([_c(95, "put", 1.9, 2.1)])
+    t = build_income(ch, "2026-07-01", "put")[0]
+    assert t.type == "cash_secured_put"
+    assert abs(t.breakeven - 93.0) < 1e-6
+    assert abs(t.max_profit - 2.0) < 1e-6
+    assert abs(t.capital - 9500) < 1e-6
+    assert t.pop > 0.5 and t.theta > 0      # seller: positive theta (decay = income)
+
+
+def test_covered_call_math():
+    # spot 100, sell the 105 call @2.00 -> BE 98, if-called profit = 2 + 5 = 7
+    ch = _chain([_c(105, "call", 1.9, 2.1)])
+    t = build_income(ch, "2026-07-01", "call")[0]
+    assert t.type == "covered_call"
+    assert abs(t.breakeven - 98.0) < 1e-6
+    assert abs(t.max_profit - 7.0) < 1e-6
+    assert t.pop > 0.5
