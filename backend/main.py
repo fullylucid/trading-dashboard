@@ -346,6 +346,13 @@ try:
 except Exception as e:  # noqa: BLE001 — additive; never block startup
     logging.getLogger(__name__).warning("fintube router not registered: %s", e)
 
+try:
+    from udf_routes import udf_router
+    app.include_router(udf_router)
+    logger.info("UDF datafeed router registered at /api/udf/* (TradingView Advanced Charts)")
+except Exception as e:  # noqa: BLE001 — additive; never block startup
+    logging.getLogger(__name__).warning("udf router not registered: %s", e)
+
 
 # ============================================================================
 # Agent live-stream WebSocket
