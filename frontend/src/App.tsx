@@ -10,6 +10,7 @@ import OptionsEngine from './pages/OptionsEngine';
 import FinTube from './pages/FinTube';
 import Markets from './pages/Markets';
 import SystemBanner from './pages/SystemMonitor';
+import TVWidget from './components/TVWidget';
 import MessengerWidget from './components/MessengerWidget/MessengerWidget';
 
 const ROUTES: { to: string; label: string; end?: boolean }[] = [
@@ -133,6 +134,24 @@ function NavMenu() {
   );
 }
 
+const TICKER_SYMBOLS = ['AMEX:SPY', 'NASDAQ:QQQ', 'NASDAQ:AMD', 'NASDAQ:NVDA', 'NASDAQ:AAPL', 'NASDAQ:TSLA', 'NASDAQ:COIN', 'NYSE:SOFI', 'BITSTAMP:BTCUSD'];
+
+function GlobalTicker() {
+  return (
+    <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 1400, background: '#000', borderTop: '1px solid rgba(0,255,65,0.3)' }}>
+      <TVWidget
+        bare
+        script="ticker-tape"
+        height={42}
+        config={{
+          symbols: TICKER_SYMBOLS.map((s) => ({ proName: s, title: s.split(':')[1] })),
+          showSymbolLogo: true, isTransparent: true, displayMode: 'compact',
+        }}
+      />
+    </div>
+  );
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -150,6 +169,7 @@ function App() {
           <Route path="/sector-rotation" element={<SectorRotation />} />
         </Routes>
         <MessengerWidget />
+        <GlobalTicker />
       </div>
     </BrowserRouter>
   );

@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { GREEKS, STRATEGIES, METRICS } from './optionsEducation';
+import TVWidget from '../components/TVWidget';
 
 const GREEN = '#00ff41';
 const RED = '#ff5555';
@@ -193,6 +194,9 @@ export default function OptionsEngine() {
           <div style={{ fontSize: 12, lineHeight: 1.5, padding: '8px 10px', border: `1px solid ${DIM}`, borderRadius: 4, marginBottom: 12, background: 'rgba(0,255,65,0.03)' }}>
             <b style={{ color: GREEN }}>{STRATEGIES[mode].title}</b> — {STRATEGIES[mode].what}
           </div>
+
+          <TVWidget title={`${chain.symbol} — technicals`} script="technical-analysis" height={300}
+            config={{ symbol: chain.symbol, interval: '1D', showIntervalTabs: true, isTransparent: true }} />
 
           {mode === 'wheel' && (
             <div>
