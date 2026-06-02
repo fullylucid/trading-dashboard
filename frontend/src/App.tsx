@@ -1,7 +1,7 @@
 import './App.css';
 import { useState, useEffect, useRef } from 'react';
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom';
-import EnhancedDashboard from './components/EnhancedDashboard';
+import HomeDashboard from './pages/HomeDashboard';
 import PortfolioScan from './pages/PortfolioScan';
 import SectorRotation from './pages/SectorRotation';
 import Charts from './pages/Charts';
@@ -159,7 +159,7 @@ function App() {
         <SystemBanner />
         <NavMenu />
         <Routes>
-          <Route path="/" element={<EnhancedDashboard />} />
+          <Route path="/" element={<HomeDashboard />} />
           <Route path="/crack-a-dawn" element={<CrackADawn />} />
           <Route path="/options" element={<OptionsEngine />} />
           <Route path="/fintube" element={<FinTube />} />
