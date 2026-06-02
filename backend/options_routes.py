@@ -15,6 +15,7 @@ from options_cli.chains import get_chain
 from options_cli.strategies import (
     build_verticals, build_income, build_iron_condor, build_strangle, build_straddle,
 )
+from options_cli.wheel import wheel_status
 
 options_router = APIRouter(prefix="/api/options", tags=["options"])
 logger = logging.getLogger("options_routes")
@@ -138,3 +139,11 @@ def multileg(
     } for m in items[:top]]
     return {"symbol": ch.symbol, "spot": ch.spot, "expiration": use,
             "type": type, "side": side, "strategies": out}
+
+
+@options_router.get("/{symbol}/wheel")
+def wheel(symbol: str) -> Dict[str, Any]:
+    w = wheel_status(symbol)
+    if w.get("error"):
+        raise HTTPException(404, w["error"])
+    return w

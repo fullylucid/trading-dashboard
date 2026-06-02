@@ -27,7 +27,13 @@ type MultiLeg = {
   label: string; type: string; side: string; net: number; max_profit: number;
   max_loss: number; breakevens: number[]; pop: number; undefined_risk: boolean; legs: Leg[];
 };
-type Mode = 'spreads' | 'cash_secured_put' | 'covered_call' | 'iron_condor' | 'strangle' | 'straddle';
+type WheelSugg = { strike: number; premium: number; breakeven: number; pop: number; annual_yield: number; cushion: number };
+type Wheel = {
+  symbol: string; spot: number; expiration: string; shares_held: number; phase: string;
+  current_step: string; next_move: string; suggestions: WheelSugg[];
+  steps: { id: string; text: string }[];
+};
+type Mode = 'spreads' | 'cash_secured_put' | 'covered_call' | 'iron_condor' | 'strangle' | 'straddle' | 'wheel';
 
 const box: React.CSSProperties = {
   background: '#000', color: GREEN, border: `1px solid ${DIM}`, borderRadius: 4,
@@ -90,6 +96,7 @@ export default function OptionsEngine() {
   const [income, setIncome] = useState<Income[]>([]);
   const [multileg, setMultileg] = useState<MultiLeg[]>([]);
   const [side, setSide] = useState<'short' | 'long'>('short');
+  const [wheel, setWheel] = useState<Wheel | null>(null);
   const [selV, setSelV] = useState<Vertical | null>(null);
   const [selI, setSelI] = useState<Income | null>(null);
   const [selM, setSelM] = useState<MultiLeg | null>(null);
@@ -100,7 +107,7 @@ export default function OptionsEngine() {
   const isML = mode === 'iron_condor' || mode === 'strangle' || mode === 'straddle';
   const hasSide = mode === 'strangle' || mode === 'straddle';
 
-  const clearResults = () => { setVerticals([]); setIncome([]); setMultileg([]); setSelV(null); setSelI(null); setSelM(null); };
+  const clearResults = () => { setVerticals([]); setIncome([]); setMultileg([]); setWheel(null); setSelV(null); setSelI(null); setSelM(null); };
 
   const loadChain = useCallback(async (sym: string, exp?: string) => {
     setLoading(true); setErr(''); clearResults();
@@ -121,6 +128,9 @@ export default function OptionsEngine() {
       const ik = mode === 'cash_secured_put' ? 'put' : 'call';
       const r = await fetch(`/api/options/${chain.symbol}/income?kind=${ik}&exp=${chain.expiration}&top=12`);
       if (r.ok) { const d = await r.json(); setIncome(d.income || []); setSelI((d.income || [])[0] || null); }
+    } else if (mode === 'wheel') {
+      const r = await fetch(`/api/options/${chain.symbol}/wheel`);
+      if (r.ok) setWheel(await r.json());
     } else {
       const r = await fetch(`/api/options/${chain.symbol}/multileg?type=${mode}&side=${side}&exp=${chain.expiration}&top=8`);
       if (r.ok) { const d = await r.json(); setMultileg(d.strategies || []); setSelM((d.strategies || [])[0] || null); }
@@ -148,6 +158,7 @@ export default function OptionsEngine() {
     { id: 'iron_condor', label: '🦅 Iron Condor' },
     { id: 'strangle', label: '🤏 Strangle' },
     { id: 'straddle', label: '🎯 Straddle' },
+    { id: 'wheel', label: '🎡 The Wheel' },
   ];
 
   return (
@@ -183,6 +194,59 @@ export default function OptionsEngine() {
             <b style={{ color: GREEN }}>{STRATEGIES[mode].title}</b> — {STRATEGIES[mode].what}
           </div>
 
+          {mode === 'wheel' && (
+            <div>
+              <button onClick={formulate} style={{ ...box, cursor: 'pointer', marginBottom: 12 }}>🎡 Check the Wheel for {chain.symbol}</button>
+              {wheel && (
+                <div>
+                  {/* phase banner */}
+                  <div style={{ padding: '10px 12px', border: `1px solid ${wheel.phase === 'covered_call' ? GREEN : DIM}`, borderRadius: 4, marginBottom: 12, background: 'rgba(0,255,65,0.05)' }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: GREEN }}>
+                      {wheel.phase === 'covered_call'
+                        ? `You hold ${wheel.shares_held.toFixed(0)} shares of ${wheel.symbol} → COVERED-CALL phase`
+                        : `No shares of ${wheel.symbol} → CASH-SECURED-PUT phase`}
+                    </div>
+                    <div style={{ fontSize: 12, marginTop: 4, opacity: 0.9 }}>→ {wheel.next_move}</div>
+                  </div>
+
+                  {/* the loop diagram */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 14 }}>
+                    {wheel.steps.map((s, i) => {
+                      const active = s.id === wheel.current_step;
+                      return (
+                        <div key={s.id} style={{ display: 'flex', gap: 8, padding: '8px 10px', borderRadius: 4, border: `1px solid ${active ? GREEN : DIM}`, background: active ? 'rgba(0,255,65,0.12)' : 'transparent', opacity: active ? 1 : 0.6 }}>
+                          <span style={{ fontWeight: 700, color: active ? GREEN : DIM }}>{i + 1}</span>
+                          <span style={{ fontSize: 12 }}>{s.text}</span>
+                          {active && <span style={{ marginLeft: 'auto', fontSize: 11, color: GREEN, fontWeight: 700 }}>◀ YOU ARE HERE</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* suggestions */}
+                  <div style={{ fontSize: 12, marginBottom: 6, opacity: 0.8 }}>
+                    Suggested {wheel.phase === 'covered_call' ? 'covered calls' : 'cash-secured puts'} — exp {wheel.expiration}
+                  </div>
+                  {wheel.suggestions.length > 0 ? (
+                    <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                      <thead><tr><th style={{ ...th, textAlign: 'left' }}>strike</th><th style={th}>prem</th><th style={th} title={METRICS.breakeven}>B/E</th><th style={th} title={METRICS.POP}>POP</th><th style={th} title={METRICS['annual yield']}>ann.yld</th><th style={th} title={METRICS.cushion}>cushion</th></tr></thead>
+                      <tbody>{wheel.suggestions.map((s) => (
+                        <tr key={s.strike}>
+                          <td style={{ ...td, textAlign: 'left', fontWeight: 700 }}>{s.strike}</td>
+                          <td style={{ ...td, color: GREEN }}>${s.premium.toFixed(2)}</td>
+                          <td style={td}>{s.breakeven.toFixed(1)}</td>
+                          <td style={td}>{(s.pop * 100).toFixed(0)}%</td>
+                          <td style={td}>{(s.annual_yield * 100).toFixed(0)}%</td>
+                          <td style={td}>{(s.cushion * 100).toFixed(1)}%</td>
+                        </tr>))}</tbody>
+                    </table>
+                  ) : <div style={{ fontSize: 12, opacity: 0.6 }}>No liquid sells in the sellable range right now.</div>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {mode !== 'wheel' && (
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
             {/* chain */}
             <div style={{ flex: '1 1 330px', maxHeight: 440, overflowY: 'auto', border: `1px solid ${DIM}`, borderRadius: 4 }}>
@@ -269,6 +333,7 @@ export default function OptionsEngine() {
               {isML && multileg.some((m) => m.undefined_risk) && <div style={{ fontSize: 10, opacity: 0.6, marginTop: 4 }}>∞* = undefined/large risk (naked short) — manage carefully</div>}
             </div>
           </div>
+          )}
         </>
       )}
     </div>

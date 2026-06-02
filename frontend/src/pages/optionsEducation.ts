@@ -52,6 +52,10 @@ export const STRATEGIES: Record<string, { title: string; what: string }> = {
     title: 'Strangle (volatility play)',
     what: 'A call and a put at different OTM strikes. SHORT (sell both) = collect premium betting the stock stays in a range — high POP but UNDEFINED risk if it runs (only for stocks you can babysit). LONG (buy both) = cheap bet on a BIG move either direction (earnings, catalysts); you lose the premium if it sits still. Long strangle is long vega — it wants IV to rise.',
   },
+  wheel: {
+    title: 'The Wheel (a repeating income loop)',
+    what: 'Sell a cash-secured put on a stock you’d happily own. If it expires worthless, keep the premium and repeat. If you get assigned, you now own 100 shares at the strike — so you sell covered calls against them. If those get called away, you’re back to selling puts. Around and around, collecting premium at every step. The engine below checks whether you hold the shares and tells you exactly which leg you’re on.',
+  },
   straddle: {
     title: 'Straddle (pure move bet, at-the-money)',
     what: 'A call and a put at the SAME at-the-money strike. LONG (buy both) = a pure bet on a big move in either direction — max risk is the premium, profit if it moves past either breakeven. Expensive (two ATM options), so the move has to be real. SHORT (sell both) = maximum premium for a stock you’re sure won’t move — undefined risk, advanced only.',
