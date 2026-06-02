@@ -14,7 +14,7 @@ import sys
 
 from . import account, trade
 from .chains import get_chain
-from .strategies import build_verticals
+from .strategies import build_verticals, build_income
 
 
 def _near(contracts, spot, n):
@@ -40,8 +40,9 @@ def cmd_chain(a) -> int:
 
 
 def cmd_strategy(a) -> int:
-    ch = get_chain(a.symbol, expirations=[a.exp] if a.exp else None, max_exps=1 if a.exp else 4)
-    exp = a.exp or (ch.expirations[0] if ch.expirations else None)
+    ch = get_chain(a.symbol, expirations=[a.exp] if a.exp else None,
+                   max_exps=1, target_dte=None if a.exp else a.dte)
+    exp = a.exp or (ch.contracts[0].expiration if ch.contracts else None)
     if not exp:
         print(f"No options for {a.symbol}."); return 1
     verts = build_verticals(ch, exp, a.kind, a.dir, max_width=a.width)
@@ -54,6 +55,24 @@ def cmd_strategy(a) -> int:
         net = f"+{v.net:.2f}" if v.debit_credit == "debit" else f"-{-v.net:.2f}"
         print(f"{v.label:<20}{v.debit_credit:>7}{net:>8}{v.max_profit:>8.2f}{v.max_loss:>8.2f}"
               f"{v.breakeven:>9.2f}{v.rr:>6.2f}{v.pop*100:>6.0f}%{v.score:>7.2f}")
+    return 0
+
+
+def cmd_income(a) -> int:
+    ch = get_chain(a.symbol, expirations=[a.exp] if a.exp else None,
+                   max_exps=1, target_dte=None if a.exp else a.dte)
+    exp = a.exp or (ch.contracts[0].expiration if ch.contracts else None)
+    if not exp:
+        print(f"No options for {a.symbol}."); return 1
+    trades = build_income(ch, exp, a.kind)
+    if not trades:
+        print("No liquid sells in the sellable range."); return 1
+    name = "cash-secured puts" if a.kind == "put" else "covered calls"
+    print(f"{ch.symbol}  spot ${ch.spot:.2f}  exp {exp} — top {name} (ranked by ann.yield × POP)")
+    print(f"{'STRIKE':>7}{'PREM':>8}{'B/E':>9}{'POP':>7}{'ANN.YLD':>9}{'CUSHION':>9}{'Θ/day':>8}")
+    for t in trades[:a.top]:
+        print(f"{t.strike:>7g}{t.premium:>8.2f}{t.breakeven:>9.2f}{t.pop*100:>6.0f}%"
+              f"{t.annual_yield*100:>8.0f}%{t.cushion*100:>8.1f}%{t.theta:>+8.2f}")
     return 0
 
 
@@ -86,7 +105,13 @@ def main(argv=None) -> int:
     s.add_argument("--kind", choices=["call", "put"], default="call")
     s.add_argument("--dir", choices=["bull", "bear"], default="bull")
     s.add_argument("--exp"); s.add_argument("--width", type=float, default=0.0)
-    s.add_argument("--top", type=int, default=8); s.set_defaults(fn=cmd_strategy)
+    s.add_argument("--dte", type=int, default=30); s.add_argument("--top", type=int, default=8)
+    s.set_defaults(fn=cmd_strategy)
+
+    i = sub.add_parser("income", help="cash-secured puts (--kind put) / covered calls (--kind call)")
+    i.add_argument("symbol"); i.add_argument("--kind", choices=["put", "call"], default="put")
+    i.add_argument("--exp"); i.add_argument("--dte", type=int, default=30)
+    i.add_argument("--top", type=int, default=8); i.set_defaults(fn=cmd_income)
 
     sub.add_parser("positions", help="your option positions").set_defaults(fn=cmd_positions)
 
