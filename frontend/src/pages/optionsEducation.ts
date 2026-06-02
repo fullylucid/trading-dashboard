@@ -44,6 +44,18 @@ export const STRATEGIES: Record<string, { title: string; what: string }> = {
     title: 'Covered Call (get paid to cap upside)',
     what: 'You OWN 100 shares and sell a call against them. You’re paid to cap your upside: keep the premium (plus any gain up to the strike) if it stays below; if it rises past the strike, your shares get called away there. Income on stock you already hold, with a small downside cushion from the premium.',
   },
+  iron_condor: {
+    title: 'Iron Condor (range-bound income, defined risk)',
+    what: 'Sell an OTM put spread AND an OTM call spread at once. You collect two credits and profit if the stock stays in the range between your short strikes through expiration. Max profit = the total credit; max loss = the wider wing minus credit — fully defined. The premier neutral, “I think it goes nowhere” trade. Loves high IV and theta; you want a calm, range-bound stock.',
+  },
+  strangle: {
+    title: 'Strangle (volatility play)',
+    what: 'A call and a put at different OTM strikes. SHORT (sell both) = collect premium betting the stock stays in a range — high POP but UNDEFINED risk if it runs (only for stocks you can babysit). LONG (buy both) = cheap bet on a BIG move either direction (earnings, catalysts); you lose the premium if it sits still. Long strangle is long vega — it wants IV to rise.',
+  },
+  straddle: {
+    title: 'Straddle (pure move bet, at-the-money)',
+    what: 'A call and a put at the SAME at-the-money strike. LONG (buy both) = a pure bet on a big move in either direction — max risk is the premium, profit if it moves past either breakeven. Expensive (two ATM options), so the move has to be real. SHORT (sell both) = maximum premium for a stock you’re sure won’t move — undefined risk, advanced only.',
+  },
 };
 
 export const METRICS: Record<string, string> = {

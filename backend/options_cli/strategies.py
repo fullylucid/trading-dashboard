@@ -166,3 +166,156 @@ def build_verticals(chain: Chain, exp: str, kind: str, direction: str,
             out.append(v)
     out.sort(key=lambda v: v.score, reverse=True)
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Multi-leg structures: iron condor, strangle, straddle. They return their legs
+# so the payoff is computed generically (sum of leg intrinsics ± premium).
+# --------------------------------------------------------------------------- #
+@dataclass
+class Leg:
+    action: str   # long | short
+    kind: str     # call | put
+    strike: float
+    premium: float
+
+
+@dataclass
+class MultiLeg:
+    label: str
+    type: str                  # iron_condor | strangle | straddle
+    side: str                  # credit/short | debit/long
+    legs: List[Leg]
+    net: float                 # +credit received / -debit paid (per share)
+    max_profit: float          # per share (None-sentinel: large = "undefined/large")
+    max_loss: float
+    breakevens: List[float]
+    pop: float
+    undefined_risk: bool = False
+    score: float = 0.0
+
+
+def _nearest_delta(legs: List[Contract], target: float) -> Optional[Contract]:
+    cand = [c for c in legs if c.mid > 0 and c.open_interest >= 10]
+    return min(cand, key=lambda c: abs(abs(c.greeks.delta) - target)) if cand else None
+
+
+def _nearest_strike(legs: List[Contract], strike: float) -> Optional[Contract]:
+    cand = [c for c in legs if c.mid > 0]
+    return min(cand, key=lambda c: abs(c.strike - strike)) if cand else None
+
+
+def _between_pop(spot, lo, hi, tyr, iv, rate):
+    return max(_pop_past(spot, lo, tyr, iv, rate, True) - _pop_past(spot, hi, tyr, iv, rate, True), 0.0)
+
+
+def build_iron_condor(chain: Chain, exp: str, wing_pct: float = 0.06) -> List[MultiLeg]:
+    """Sell an OTM put spread + an OTM call spread — range-bound income, defined risk."""
+    puts = sorted(chain.for_exp(exp, "put"), key=lambda c: c.strike)
+    calls = sorted(chain.for_exp(exp, "call"), key=lambda c: c.strike)
+    if not puts or not calls:
+        return []
+    spot, rate = chain.spot, chain.rate
+    dte = (puts or calls)[0].dte
+    tyr = max(dte / 365.0, 1e-6)
+    wing = max(wing_pct * spot, 1.0)
+    out: List[MultiLeg] = []
+    for tgt in (0.16, 0.20, 0.25, 0.30):
+        sp = _nearest_delta([p for p in puts if p.strike < spot], tgt)
+        sc = _nearest_delta([c for c in calls if c.strike > spot], tgt)
+        if not sp or not sc:
+            continue
+        lp = _nearest_strike([p for p in puts if p.strike < sp.strike], sp.strike - wing)
+        lc = _nearest_strike([c for c in calls if c.strike > sc.strike], sc.strike + wing)
+        if not lp or not lc or lp.strike >= sp.strike or lc.strike <= sc.strike:
+            continue
+        credit = round((sp.mid - lp.mid) + (sc.mid - lc.mid), 2)
+        if credit <= 0:
+            continue
+        pw, cw = sp.strike - lp.strike, lc.strike - sc.strike
+        max_loss = round(max(pw, cw) - credit, 2)
+        if max_loss <= 0:
+            continue
+        iv = (sp.iv + sc.iv) / 2
+        pop = _between_pop(spot, sp.strike, sc.strike, tyr, iv, rate)
+        m = MultiLeg(
+            label=f"IC {lp.strike:g}/{sp.strike:g} - {sc.strike:g}/{lc.strike:g}",
+            type="iron_condor", side="credit",
+            legs=[Leg("long", "put", lp.strike, lp.mid), Leg("short", "put", sp.strike, sp.mid),
+                  Leg("short", "call", sc.strike, sc.mid), Leg("long", "call", lc.strike, lc.mid)],
+            net=credit, max_profit=credit, max_loss=max_loss,
+            breakevens=[round(sp.strike - credit, 2), round(sc.strike + credit, 2)],
+            pop=round(pop, 3))
+        m.score = round((credit / max_loss) * pop, 3)
+        out.append(m)
+    out.sort(key=lambda x: x.score, reverse=True)
+    return out
+
+
+def build_strangle(chain: Chain, exp: str, side: str = "short") -> List[MultiLeg]:
+    """Short = sell OTM put+call (income, undefined risk). Long = buy OTM put+call (volatility bet)."""
+    puts = chain.for_exp(exp, "put")
+    calls = chain.for_exp(exp, "call")
+    if not puts or not calls:
+        return []
+    spot, rate = chain.spot, chain.rate
+    dte = (puts or calls)[0].dte
+    tyr = max(dte / 365.0, 1e-6)
+    out: List[MultiLeg] = []
+    for tgt in (0.16, 0.25, 0.35):
+        p = _nearest_delta([x for x in puts if x.strike < spot], tgt)
+        c = _nearest_delta([x for x in calls if x.strike > spot], tgt)
+        if not p or not c:
+            continue
+        iv = (p.iv + c.iv) / 2
+        if side == "short":
+            credit = round(p.mid + c.mid, 2)
+            be = [round(p.strike - credit, 2), round(c.strike + credit, 2)]
+            pop = _between_pop(spot, p.strike, c.strike, tyr, iv, rate)
+            m = MultiLeg(f"short strangle {p.strike:g}P/{c.strike:g}C", "strangle", "credit",
+                         [Leg("short", "put", p.strike, p.mid), Leg("short", "call", c.strike, c.mid)],
+                         credit, credit, round(max(p.strike, c.strike), 2), be, round(pop, 3),
+                         undefined_risk=True)
+            m.score = round(credit * pop, 3)
+        else:
+            debit = round(p.mid + c.mid, 2)
+            be = [round(p.strike - debit, 2), round(c.strike + debit, 2)]
+            pop = round(1 - _between_pop(spot, be[0], be[1], tyr, iv, rate), 3)  # profit on a big move
+            m = MultiLeg(f"long strangle {p.strike:g}P/{c.strike:g}C", "strangle", "debit",
+                         [Leg("long", "put", p.strike, p.mid), Leg("long", "call", c.strike, c.mid)],
+                         -debit, round(spot, 2), debit, be, pop)
+            m.score = round(pop, 3)
+        out.append(m)
+    out.sort(key=lambda x: x.score, reverse=True)
+    return out
+
+
+def build_straddle(chain: Chain, exp: str, side: str = "long") -> List[MultiLeg]:
+    """ATM call + put. Long = pure volatility/big-move bet; short = max premium (risky)."""
+    calls = chain.for_exp(exp, "call")
+    puts = chain.for_exp(exp, "put")
+    if not calls or not puts:
+        return []
+    spot, rate = chain.spot, chain.rate
+    c = _nearest_strike(calls, spot)
+    p = _nearest_strike([x for x in puts if abs(x.strike - (c.strike if c else spot)) < 1e-6] or puts, spot)
+    if not c or not p:
+        return []
+    dte = c.dte
+    tyr = max(dte / 365.0, 1e-6)
+    iv = (c.iv + p.iv) / 2
+    if side == "long":
+        debit = round(c.mid + p.mid, 2)
+        be = [round(c.strike - debit, 2), round(c.strike + debit, 2)]
+        pop = round(1 - _between_pop(spot, be[0], be[1], tyr, iv, rate), 3)
+        m = MultiLeg(f"long straddle {c.strike:g}", "straddle", "debit",
+                     [Leg("long", "call", c.strike, c.mid), Leg("long", "put", p.strike, p.mid)],
+                     -debit, round(spot, 2), debit, be, pop)
+    else:
+        credit = round(c.mid + p.mid, 2)
+        be = [round(c.strike - credit, 2), round(c.strike + credit, 2)]
+        pop = round(_between_pop(spot, be[0], be[1], tyr, iv, rate), 3)
+        m = MultiLeg(f"short straddle {c.strike:g}", "straddle", "credit",
+                     [Leg("short", "call", c.strike, c.mid), Leg("short", "put", p.strike, p.mid)],
+                     credit, credit, round(c.strike, 2), be, pop, undefined_risk=True)
+    return [m]
