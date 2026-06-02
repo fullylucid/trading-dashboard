@@ -8,6 +8,7 @@ import Charts from './pages/Charts';
 import CrackADawn from './pages/CrackADawn';
 import OptionsEngine from './pages/OptionsEngine';
 import FinTube from './pages/FinTube';
+import Markets from './pages/Markets';
 import SystemBanner from './pages/SystemMonitor';
 import MessengerWidget from './components/MessengerWidget/MessengerWidget';
 
@@ -17,6 +18,7 @@ const ROUTES: { to: string; label: string; end?: boolean }[] = [
   { to: '/options', label: '📐 Options Engine' },
   { to: '/fintube', label: '📺 FinTube' },
   { to: '/charts', label: '📉 Charts' },
+  { to: '/markets', label: '🌐 Markets' },
   { to: '/portfolio-scan', label: '📊 Portfolio Scan' },
   { to: '/sector-rotation', label: '🔄 Sector Rotation' },
 ];
@@ -142,6 +144,7 @@ function App() {
           <Route path="/crack-a-dawn" element={<CrackADawn />} />
           <Route path="/options" element={<OptionsEngine />} />
           <Route path="/fintube" element={<FinTube />} />
+          <Route path="/markets" element={<Markets />} />
           <Route path="/charts" element={<Charts />} />
           <Route path="/portfolio-scan" element={<PortfolioScan />} />
           <Route path="/sector-rotation" element={<SectorRotation />} />
