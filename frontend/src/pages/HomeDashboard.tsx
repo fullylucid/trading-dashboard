@@ -123,16 +123,23 @@ export default function HomeDashboard() {
           </div>
           {Array.isArray(pdata.positions) && pdata.positions.length > 0 && (
             <div style={card}>
-              <div style={{ fontSize: 10, color: DIM, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Top holdings</div>
-              {[...pdata.positions].sort((p: any, q: any) => (q.market_value || q.current_value || 0) - (p.market_value || p.current_value || 0)).slice(0, 8).map((p: any) => (
-                <div key={p.symbol} style={{ display: 'flex', fontSize: 11, padding: '2px 0' }}>
-                  <span style={{ fontWeight: 700 }}>{p.symbol}</span>
-                  <span style={{ marginLeft: 'auto' }}>{fmtUsd(p.market_value || p.current_value)}</span>
-                  <span style={{ width: 56, textAlign: 'right', color: (p.unrealized_pl_pct ?? p.gain_loss_pct ?? 0) >= 0 ? GREEN : RED }}>
-                    {(p.unrealized_pl_pct ?? p.gain_loss_pct ?? 0) >= 0 ? '+' : ''}{(p.unrealized_pl_pct ?? p.gain_loss_pct ?? 0).toFixed(1)}%
-                  </span>
-                </div>
-              ))}
+              <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: 6 }}>
+                <span style={{ fontSize: 10, color: DIM, textTransform: 'uppercase', letterSpacing: 1 }}>Holdings</span>
+                <span style={{ marginLeft: 'auto', fontSize: 10, color: DIM }}>{pdata.positions.length} positions</span>
+              </div>
+              <div style={{ maxHeight: '62vh', overflowY: 'auto', paddingRight: 4 }}>
+                {[...pdata.positions].sort((p: any, q: any) => (q.market_value || q.current_value || 0) - (p.market_value || p.current_value || 0)).map((p: any) => {
+                  const pct = p.unrealized_pl_pct ?? p.gain_loss_pct ?? 0;
+                  return (
+                    <div key={p.symbol} style={{ display: 'flex', fontSize: 11, padding: '3px 0', borderBottom: '1px solid rgba(0,255,65,0.08)', alignItems: 'baseline' }}>
+                      <span style={{ fontWeight: 700, minWidth: 48 }}>{p.symbol}</span>
+                      <span style={{ color: DIM, fontSize: 10 }}>{p.quantity != null ? `${(+p.quantity).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : ''}</span>
+                      <span style={{ marginLeft: 'auto' }}>{fmtUsd(p.market_value || p.current_value)}</span>
+                      <span style={{ width: 58, textAlign: 'right', color: pct >= 0 ? GREEN : RED }}>{pct >= 0 ? '+' : ''}{pct.toFixed(1)}%</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
