@@ -332,6 +332,13 @@ try:
 except Exception as e:  # noqa: BLE001 — additive; never block startup
     logging.getLogger(__name__).warning("options router not registered: %s", e)
 
+try:
+    from system_routes import system_router
+    app.include_router(system_router)
+    logger.info("System monitor router registered at /api/system/*")
+except Exception as e:  # noqa: BLE001 — additive; never block startup
+    logging.getLogger(__name__).warning("system router not registered: %s", e)
+
 
 # ============================================================================
 # Agent live-stream WebSocket

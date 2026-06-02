@@ -1,0 +1,6 @@
+{
+  "ingest_url": "http://localhost:8080/api/system/ingest",
+  "lhm_url": "http://localhost:8085/data.json",
+  "token": "PUT-SYSTEM_INGEST_TOKEN-HERE",
+  "interval_sec": 4
+}
