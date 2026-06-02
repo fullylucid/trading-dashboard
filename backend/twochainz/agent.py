@@ -22,6 +22,7 @@ ALLOWED_TOOLS = [
     "WebSearch", "WebFetch",
     "Bash(finnhub-pp-cli:*)", "Bash(sec-edgar-pp-cli:*)",
     "Bash(usaspending-pp-cli:*)", "Bash(fred-pp-cli:*)",
+    "Bash(opts:*)",  # the options engine — chains, Greeks, strategies
 ]
 
 SYSTEM = (
@@ -32,7 +33,10 @@ SYSTEM = (
     "ADVISORY ONLY: you never place, modify, or cancel a trade — those are his call and are "
     "propose-then-confirm. You may draft a precise trade IDEA (entry/size/stop/thesis) for him to "
     "execute himself, clearly framed as a proposal. Use your read-only tools to verify with live "
-    "data before asserting. This is a Telegram chat: reply conversationally and concisely "
+    "data before asserting. For options questions you have the `opts` CLI: `opts chain SYM`, "
+    "`opts strategy SYM --kind call|put --dir bull|bear`, and `opts income SYM --kind put|call` "
+    "(cash-secured puts / covered calls) — run it to pull real chains, Greeks, and ranked spreads "
+    "before recommending an options trade. This is a Telegram chat: reply conversationally and concisely "
     "(a few short paragraphs or tight bullets, emojis ok, links when useful). Answer the latest "
     "message; the transcript is for continuity."
 )
