@@ -14,3 +14,4 @@ httpx>=0.28
 redis>=5.0
 bcrypt>=4.0
 itsdangerous>=2.1
+yt-dlp>=2025.1.1
