@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional
 
 try:
@@ -15,11 +16,30 @@ logger = logging.getLogger("fintube.store")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 CHANNELS_KEY = "fintube:channels"
+TOPICS_KEY = "fintube:topics"      # list of discovery search queries (the scout's brief)
 FEED_KEY = "fintube:feed"          # list of distilled-video JSON (newest appended)
 SEEN_KEY = "fintube:seen"          # set of video ids already distilled
 FEED_MAX = 400
 
 CATEGORIES = ["finance", "ai-coding", "science", "engineering", "general"]
+
+# Discovery search queries for the scout. Tech/strategy weighted (finance ideas are
+# already covered by the curated channel registry above); a couple of high-signal quant
+# queries keep light finance coverage. Editable at runtime via /api/fintube/topics.
+SEED_TOPICS = [
+    # strategies: indicator algos & trading-bot architectures
+    {"id": "algo-trading-py", "query": "algorithmic trading strategy python backtest", "category": "finance"},
+    {"id": "trading-bot-arch", "query": "trading bot architecture build", "category": "engineering"},
+    {"id": "custom-indicator", "query": "custom tradingview indicator pine script strategy", "category": "finance"},
+    {"id": "quant-strategy", "query": "quantitative trading strategy explained", "category": "finance"},
+    # AI agent enhancements
+    {"id": "ai-agents", "query": "AI agent architecture LLM tutorial", "category": "ai-coding"},
+    {"id": "agent-frameworks", "query": "new AI agent framework 2026", "category": "ai-coding"},
+    {"id": "claude-agents", "query": "Claude agent SDK MCP server build", "category": "ai-coding"},
+    # new repos & feature ideas
+    {"id": "new-ai-tools", "query": "new open source AI developer tool", "category": "ai-coding"},
+    {"id": "github-trending-ai", "query": "github trending AI project walkthrough", "category": "ai-coding"},
+]
 
 # seeded once if the registry is empty
 SEED_CHANNELS = [
@@ -78,6 +98,43 @@ def remove_channel(channel_id: str) -> List[Dict[str, Any]]:
     chans = [x for x in list_channels() if x["id"] != channel_id]
     c.set(CHANNELS_KEY, json.dumps(chans))
     return chans
+
+
+# ---------------------------------------------------------------- topics (scout)
+def list_topics() -> List[Dict[str, Any]]:
+    c = r()
+    if c is None:
+        return list(SEED_TOPICS)
+    raw = c.get(TOPICS_KEY)
+    if not raw:
+        c.set(TOPICS_KEY, json.dumps(SEED_TOPICS))
+        return list(SEED_TOPICS)
+    return json.loads(raw)
+
+
+def add_topic(topic: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Add or update a discovery query. Keyed by `id` (slug); regenerated from the
+    query text if absent."""
+    c = r()
+    if c is None:
+        return []
+    tid = topic.get("id") or re.sub(r"[^a-z0-9]+", "-", topic.get("query", "").lower()).strip("-")[:40]
+    cat = topic.get("category") if topic.get("category") in CATEGORIES else "general"
+    entry = {"id": tid, "query": topic.get("query", "").strip(), "category": cat,
+             "enabled": topic.get("enabled", True)}
+    topics = [t for t in list_topics() if t.get("id") != tid]
+    topics.append(entry)
+    c.set(TOPICS_KEY, json.dumps(topics))
+    return topics
+
+
+def remove_topic(topic_id: str) -> List[Dict[str, Any]]:
+    c = r()
+    if c is None:
+        return []
+    topics = [t for t in list_topics() if t.get("id") != topic_id]
+    c.set(TOPICS_KEY, json.dumps(topics))
+    return topics
 
 
 # ---------------------------------------------------------------- video feed
