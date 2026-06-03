@@ -1,0 +1,33 @@
+# systemd unit: warm the sector-rotation snapshot + daily AI read on the box.
+#
+# Oneshot run, fired by sector-rotation.timer (see that file). Pairs with the
+# always-on agent worker (agent-bridge.service) so the LLM assessment can run.
+#
+# Install:
+#   sudo cp worker/sector-rotation.service worker/sector-rotation.timer /etc/systemd/system/
+#   # reuse the same env the app/worker use (FINNHUB_API_KEY, FRED_API_KEY,
+#   # SESSION_SECRET, AGENT_WORKER_TOKEN, REDIS_URL, SNAPTRADE_* …):
+#   #   ~/.config/trading-dashboard/.env
+#   sudo systemctl daemon-reload && sudo systemctl enable --now sector-rotation.timer
+#
+# Run once by hand to prime the snapshot immediately:
+#   sudo systemctl start sector-rotation.service
+#   journalctl -u sector-rotation.service -f
+
+[Unit]
+Description=Warm the trading-dashboard sector-rotation snapshot (sweep + AI read)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=user
+Environment=HOME=/home/user
+# Point the snapshot at a durable path the backend also reads (override the
+# /tmp default so a reboot doesn't drop the warm cache).
+Environment=SECTOR_ROTATION_SNAPSHOT_PATH=/home/user/.config/trading-dashboard/sector_rotation_latest.json
+EnvironmentFile=-/home/user/.config/trading-dashboard/.env
+WorkingDirectory=/home/user/trading-dashboard
+ExecStart=/usr/bin/python3 /home/user/trading-dashboard/scripts/warm_sector_rotation.py
+# The sweep is network-bound + rate-limited; give it room but don't hang forever.
+TimeoutStartSec=900

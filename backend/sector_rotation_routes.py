@@ -1,182 +1,121 @@
-"""Sector-rotation API routes (Phase 2.5).
+"""Sector-rotation API routes (Phase 2.5 + intelligence overhaul).
 
-Exposes the daily sector-rotation sweep at ``GET /api/sector-rotation``. The
-sweep (:func:`sector_rotation.run_sector_rotation`) fans out across five free
+Exposes the daily sector-rotation sweep. The sweep
+(:func:`sector_rotation_service.compute_and_store`) fans out across five free
 data streams (price/RRG, SEC Form-4 smart money, Finnhub news, earnings/FRED
-catalysts, congressional/USAspending policy), which is slow and rate-limited, so
-this router caches aggressively:
+catalysts, congressional/USAspending policy), attaches per-constituent
+contributors (which *stocks* pull each sector), and an LLM daily assessment —
+all slow and rate-limited, so this router never computes inline on the hot path.
 
-- **Disk snapshot** (the same atomic-write pattern as ``portfolio_routes``):
-  the latest completed sweep is persisted to ``SECTOR_ROTATION_SNAPSHOT_PATH``
-  so the dashboard renders instantly on mount without kicking off a fresh sweep.
-- **Daily freshness**: a snapshot is considered fresh for ``_SNAPSHOT_TTL`` (24h
-  by default). A request with a stale/absent snapshot computes a new sweep in a
-  thread (the sweep is sync + network-bound) and persists it. The daily digest
-  cron also refreshes the snapshot out-of-band.
+Endpoints
+---------
+- ``GET /api/sector-rotation/latest`` — **instant, non-blocking**: returns the
+  persisted snapshot (or ``result: null`` if none yet) plus a ``computing`` flag.
+  This is what the dashboard calls on mount, so a cold load never hangs on a sweep.
+- ``POST /api/sector-rotation/refresh`` — kick a background recompute (single
+  flight) and return immediately. The UI polls ``/latest`` until it lands.
+- ``GET /api/sector-rotation`` — **blocking** compute-or-serve, kept for the cron
+  / manual refresh / back-compat. Serves a fresh snapshot, else computes inline.
 
-Everything here is additive and exception-wrapped: the sweep never raises (it
-degrades each stream to empty), and a snapshot read/write failure degrades to a
-live compute rather than a 500.
+Caching: the latest completed sweep is persisted to ``SECTOR_ROTATION_SNAPSHOT_PATH``
+and considered fresh for 24h. The warming cron keeps it warm out-of-band so the
+``computing`` path is rarely hit by a user.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
-import tempfile
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
-try:
-    from zoneinfo import ZoneInfo
-    _PT_TZ = ZoneInfo("America/Los_Angeles")
-except Exception:  # pragma: no cover - fallback if tzdata missing
-    _PT_TZ = timezone(timedelta(hours=-8))
+from sector_rotation_service import (
+    age_minutes,
+    compute_and_store,
+    is_fresh,
+    read_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
 sector_rotation_router = APIRouter(prefix="/api/sector-rotation", tags=["sector-rotation"])
 
-# Daily refresh: a snapshot older than this is recomputed on demand.
-_SNAPSHOT_TTL = timedelta(hours=24)
-# Guard so concurrent requests don't kick off N parallel sweeps at once.
+# Single-flight: serialize inline computes; track the background refresh so the
+# non-blocking endpoints can report progress without launching duplicate sweeps.
 _compute_lock = asyncio.Lock()
+_refresh_task: Optional["asyncio.Task[Any]"] = None
 
 
-def _snapshot_path() -> str:
-    return os.environ.get(
-        "SECTOR_ROTATION_SNAPSHOT_PATH", "/tmp/sector_rotation_latest.json"
-    )
+def _is_computing() -> bool:
+    return _refresh_task is not None and not _refresh_task.done()
 
 
-def _save_snapshot(result: Dict[str, Any]) -> Optional[str]:
-    """Atomically persist the latest completed sweep. Best-effort, never raises.
+def _envelope(snapshot: Dict[str, Any], *, stale: bool = False) -> Dict[str, Any]:
+    saved_at = snapshot.get("saved_at")
+    return {
+        "saved_at": saved_at,
+        "saved_at_pt": snapshot.get("saved_at_pt"),
+        "age_minutes": age_minutes(saved_at),
+        "cached": True,
+        "stale": stale,
+        "result": snapshot.get("result"),
+    }
 
-    Mirrors ``portfolio_routes._save_scan_snapshot``: write to a temp file in the
-    target dir then ``os.replace`` so a reader never sees a half-written file.
-    """
-    try:
-        path = _snapshot_path()
-        parent = os.path.dirname(path) or "."
-        os.makedirs(parent, exist_ok=True)
-        now_utc = datetime.now(timezone.utc)
+
+async def _background_refresh() -> None:
+    """Run a full compute+store under the lock (used by POST /refresh)."""
+    async with _compute_lock:
         try:
-            now_pt = now_utc.astimezone(_PT_TZ)
-        except Exception:
-            now_pt = now_utc
-        payload = {
-            "saved_at": now_utc.isoformat(),
-            "saved_at_pt": now_pt.isoformat(),
-            "result": result,
+            await compute_and_store(generate_ai=True, with_contributors=True)
+        except Exception as e:  # noqa: BLE001 - compute_and_store shouldn't raise
+            logger.error("sector-rotation background refresh failed: %s", e, exc_info=True)
+
+
+@sector_rotation_router.get("/latest")
+async def get_sector_rotation_latest() -> Any:
+    """Instant snapshot read — never computes. Always 200.
+
+    Returns the persisted snapshot (with ``stale`` set when older than the TTL),
+    or ``result: null`` when no sweep has ever run. ``computing`` reflects whether
+    a background refresh is in flight, so the UI can show a spinner and poll.
+    """
+    snapshot = read_snapshot()
+    if snapshot is None:
+        return {
+            "saved_at": None,
+            "age_minutes": None,
+            "cached": False,
+            "stale": False,
+            "computing": _is_computing(),
+            "result": None,
         }
-        fd, tmp = tempfile.mkstemp(
-            prefix=".sector_rotation_latest.", suffix=".json", dir=parent
+    env = _envelope(snapshot, stale=not is_fresh(snapshot.get("saved_at")))
+    env["computing"] = _is_computing()
+    return env
+
+
+@sector_rotation_router.post("/refresh")
+async def refresh_sector_rotation() -> Any:
+    """Kick a background sweep (single flight) and return immediately (202).
+
+    Idempotent: if a refresh is already running, reports ``already_running`` and
+    does not start a second. The client polls ``GET /latest`` to pick up the
+    result when ``computing`` flips back to false.
+    """
+    global _refresh_task
+    if _is_computing():
+        return JSONResponse(
+            status_code=202,
+            content={"computing": True, "already_running": True},
         )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(payload, f, default=str)
-            os.replace(tmp, path)
-        except Exception:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-        logger.info(f"Sector-rotation snapshot written to {path}")
-        return path
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"Failed to write sector-rotation snapshot: {e}")
-        return None
-
-
-def _read_snapshot() -> Optional[Dict[str, Any]]:
-    """Read the persisted snapshot, or None if absent/unreadable."""
-    path = _snapshot_path()
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"Failed to read sector-rotation snapshot {path}: {e}")
-        return None
-
-
-def _age_minutes(saved_at: Optional[str]) -> int:
-    if not saved_at:
-        return 0
-    try:
-        dt = datetime.fromisoformat(saved_at)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return int((datetime.now(timezone.utc) - dt).total_seconds() // 60)
-    except Exception:
-        return 0
-
-
-def _is_fresh(saved_at: Optional[str]) -> bool:
-    if not saved_at:
-        return False
-    try:
-        dt = datetime.fromisoformat(saved_at)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return (datetime.now(timezone.utc) - dt) < _SNAPSHOT_TTL
-    except Exception:
-        return False
-
-
-async def _portfolio_holdings_and_watchlist() -> tuple[List[Any], List[str]]:
-    """Best-effort: current SnapTrade holdings + watchlist for sector tagging.
-
-    Holdings feed ``map_to_companies`` (tag each holding by its sector's rotation
-    status) and seed the per-ticker SEC/Finnhub smart-money scan universe. Any
-    failure degrades to empty lists — the sweep still runs over the 11 ETFs.
-    """
-    holdings: List[Any] = []
-    watchlist: List[str] = []
-    try:
-        from snaptrade_portfolio import get_portfolio_instance
-
-        portfolio = await get_portfolio_instance()
-        positions = await portfolio.get_positions()
-        for p in positions or []:
-            sym = str(p.get("symbol") or "").upper().strip()
-            if sym:
-                holdings.append({"symbol": sym})
-        try:
-            wl = await portfolio.get_watchlist()
-            for w in wl or []:
-                sym = str((w.get("symbol") if isinstance(w, dict) else w) or "").upper().strip()
-                if sym:
-                    watchlist.append(sym)
-        except Exception:
-            pass
-    except Exception as e:  # noqa: BLE001
-        logger.info(f"sector-rotation: holdings/watchlist fetch failed (continuing): {e}")
-    return holdings, watchlist
-
-
-async def _compute_sweep() -> Dict[str, Any]:
-    """Run the full sweep (off the event loop) and persist the snapshot.
-
-    ``run_sector_rotation`` is synchronous + network-bound, so it runs in a
-    thread to avoid blocking the FastAPI event loop. Never raises.
-    """
-    from sector_rotation import run_sector_rotation
-
-    holdings, watchlist = await _portfolio_holdings_and_watchlist()
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None, lambda: run_sector_rotation(holdings, watchlist=watchlist)
+    _refresh_task = asyncio.create_task(_background_refresh())
+    return JSONResponse(
+        status_code=202,
+        content={"computing": True, "already_running": False},
     )
-    _save_snapshot(result)
-    return result
 
 
 @sector_rotation_router.get("")
@@ -184,83 +123,39 @@ async def _compute_sweep() -> Dict[str, Any]:
 async def get_sector_rotation(
     refresh: bool = Query(False, description="Bypass the daily snapshot and recompute"),
 ) -> Any:
-    """Return the latest sector-rotation sweep.
+    """Blocking compute-or-serve (cron / manual / back-compat).
 
-    Serves the persisted snapshot when it is fresh (<24h) so the dashboard loads
-    instantly. When the snapshot is stale, absent, or ``refresh=true``, recomputes
-    the sweep (in a thread, network-bound), persists it, and returns it. The
-    response always carries ``saved_at`` / ``age_minutes`` / ``cached`` so the UI
-    can show data freshness.
+    Serves the persisted snapshot when fresh (<24h). When stale, absent, or
+    ``refresh=true``, recomputes inline (network-bound, may take ~30-60s),
+    persists, and returns it. The dashboard should prefer ``/latest`` + ``/refresh``.
     """
-    snapshot = None if refresh else _read_snapshot()
-    if snapshot is not None and _is_fresh(snapshot.get("saved_at")):
-        return {
-            "saved_at": snapshot.get("saved_at"),
-            "saved_at_pt": snapshot.get("saved_at_pt"),
-            "age_minutes": _age_minutes(snapshot.get("saved_at")),
-            "cached": True,
-            "result": snapshot.get("result"),
-        }
+    snapshot = None if refresh else read_snapshot()
+    if snapshot is not None and is_fresh(snapshot.get("saved_at")):
+        return _envelope(snapshot)
 
-    # Stale / missing / forced: recompute (single-flight via the lock).
     async with _compute_lock:
-        # Re-check after acquiring the lock: a concurrent request may have just
-        # refreshed the snapshot while we waited.
+        # Re-check after acquiring the lock: a concurrent request/background
+        # refresh may have just persisted a fresh snapshot while we waited.
         if not refresh:
-            snapshot = _read_snapshot()
-            if snapshot is not None and _is_fresh(snapshot.get("saved_at")):
-                return {
-                    "saved_at": snapshot.get("saved_at"),
-                    "saved_at_pt": snapshot.get("saved_at_pt"),
-                    "age_minutes": _age_minutes(snapshot.get("saved_at")),
-                    "cached": True,
-                    "result": snapshot.get("result"),
-                }
+            snapshot = read_snapshot()
+            if snapshot is not None and is_fresh(snapshot.get("saved_at")):
+                return _envelope(snapshot)
         try:
-            result = await _compute_sweep()
-        except Exception as e:  # noqa: BLE001 - run_sector_rotation shouldn't raise, but be safe
-            logger.error(f"sector-rotation sweep failed: {e}", exc_info=True)
-            # Last resort: serve a stale snapshot if we have one.
-            stale = _read_snapshot()
+            result = await compute_and_store(generate_ai=True, with_contributors=True)
+        except Exception as e:  # noqa: BLE001 - shouldn't raise, but be safe
+            logger.error("sector-rotation sweep failed: %s", e, exc_info=True)
+            stale = read_snapshot()
             if stale is not None:
-                return {
-                    "saved_at": stale.get("saved_at"),
-                    "saved_at_pt": stale.get("saved_at_pt"),
-                    "age_minutes": _age_minutes(stale.get("saved_at")),
-                    "cached": True,
-                    "stale": True,
-                    "result": stale.get("result"),
-                }
+                return _envelope(stale, stale=True)
             return JSONResponse(
                 status_code=503,
                 content={"error": "sector-rotation sweep unavailable"},
             )
 
-    now_utc = datetime.now(timezone.utc).isoformat()
     return {
-        "saved_at": now_utc,
+        "saved_at": datetime.now(timezone.utc).isoformat(),
         "age_minutes": 0,
         "cached": False,
+        "stale": False,
         "result": result,
-    }
-
-
-@sector_rotation_router.get("/latest")
-async def get_sector_rotation_latest() -> Any:
-    """Return only the persisted snapshot (no compute). 404 if none exists yet.
-
-    Lets the dashboard render the last sweep instantly on mount without ever
-    triggering a fresh (slow) sweep; the daily cron keeps the snapshot warm.
-    """
-    snapshot = _read_snapshot()
-    if snapshot is None:
-        return JSONResponse(
-            status_code=404, content={"error": "no sector-rotation snapshot available yet"}
-        )
-    return {
-        "saved_at": snapshot.get("saved_at"),
-        "saved_at_pt": snapshot.get("saved_at_pt"),
-        "age_minutes": _age_minutes(snapshot.get("saved_at")),
-        "cached": True,
-        "result": snapshot.get("result"),
     }
