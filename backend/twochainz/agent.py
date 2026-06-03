@@ -23,6 +23,13 @@ ALLOWED_TOOLS = [
     "Bash(finnhub-pp-cli:*)", "Bash(sec-edgar-pp-cli:*)",
     "Bash(usaspending-pp-cli:*)", "Bash(fred-pp-cli:*)",
     "Bash(opts:*)",  # the options engine — chains, Greeks, strategies
+    # Live market data via the Finnhub MCP server (read-only). 2Chainz runs headless (claude -p),
+    # so any tool not listed here silently bounces with no console to approve it — this is the
+    # "live tape" it kept failing to pull (quote_get bounced 8x). All read-only; advisory-only stands.
+    "mcp__finnhub__quote_get", "mcp__finnhub__stock_candles", "mcp__finnhub__stock_metrics",
+    "mcp__finnhub__news_company", "mcp__finnhub__news_market", "mcp__finnhub__stock_profile",
+    "mcp__finnhub__stock_recommendation", "mcp__finnhub__stock_insider-transactions",
+    "mcp__finnhub__stock_peers", "mcp__finnhub__calendar_earnings", "mcp__finnhub__lookup_symbol",
 ]
 
 SYSTEM = (
