@@ -133,3 +133,36 @@ These are the recurring architectural decisions we standardize on. New work shou
 
 - 🟡 **Agent-bridge + in-app messenger** — always-on Redis job-bus (`agent_bridge.py`, db /1, `agent:` namespace) + WSL2 local worker (`worker/agent_worker.py`, headless Claude under Max) + floating multi-conversation messenger widget (`MessengerWidget/*.tsx`, zustand + react-rnd). Routes Schyler's requests (code edits→PR, data summaries, brainstorm, trigger scans) to Claude on the box. **Plan:** `~/.claude/plans/jolly-gliding-yao.md`. **Status: PR OPEN, reviewed, NOT merged** — gated on prereqs: Cloudflare Access, branch-protect `main`, fine-grained PAT, DO secrets (`AGENT_WORKER_TOKEN`/`SESSION_SECRET`/`OWNER_PASSWORD_HASH`), confirm managed Redis exposes db /1 (else set `AGENT_BUS_REDIS_DB=0`). Live-validate: `claude -p` JSON `session_id` extraction + `acceptEdits`-grants-Bash in headless mode.
 - 🔵 **Scanner nervous-system tier** — zero-token scanners → escalate via the bus on threshold → worker → Telegram/messenger.
+
+---
+
+## 9. June 2026 — Charlotte-on-the-box era (current state)
+_Sections 1–8 above describe the DigitalOcean-era app through PR #13. Everything below is the current reality; where it conflicts, this section wins._
+
+### Hosting & ops (moved off DigitalOcean)
+- **Runs on the box** — ThinkStation **P350 Tiny**, 24/7. `docker-compose.box.yml` → `tdbox-{redis,backend,frontend,nginx}`. Ingress = **Cloudflare Tunnel** (`--protocol http2`, NOT QUIC — QUIC drops server-initiated WS) → nginx loopback `:8080`, behind **Cloudflare Access** (owner SSO; `AGENT_AUTH_DISABLED=true` makes Access the sole gate). **Local Redis** (db0 cache, db1 agent bus) — real BLPOP. **DigitalOcean fully decommissioned 2026-06-01.**
+- **Deploy:** `git pull && docker compose -f docker-compose.box.yml up -d --build [service]` (no more `deploy_on_push`).
+- **Reboot-proof:** Windows auto-login (Autologon, LSA-encrypted) → 3 logon tasks (WSL Autostart, SysWatch Collector, LibreHardwareMonitor) → systemd brings up docker/cloudflared/tailscaled/agent-bridge@1-5/2chainz/timers. **Tailscale SSH** for phone→box shell.
+- **Agent bus:** `/next` now uses **real BLPOP long-poll** (workers hold one request vs 1s-polling — was causing an idle fan-spool); dedicated no-socket-timeout redis client for the block. 5 workers `agent-bridge@1-5`.
+
+### New backend routers (additive, `main.py` try/except-registered)
+- `/api/options/*` (`options_routes.py`) — chains/Greeks/strategies/income/multileg/wheel (yfinance + Black-Scholes; `options_cli/`).
+- `/api/system/*` (`system_routes.py`) — host-metrics ingest (token-gated) + z-score spike detection + `/explain` via the Opus pool. Fed by Windows-side `scripts/syswatch.ps1`.
+- `/api/fintube/*` (`fintube_routes.py`, `fintube/`) — YouTube distillation + alpha leaderboard; `yt-dlp` transcripts → Opus pool.
+- `/api/udf/*` (`udf_routes.py`) — TradingView Advanced-Charts datafeed (OHLCV from yfinance).
+- `/api/brief/*` (Crack-a-Dawn), `/api/agent/*` (the messenger bus — **now LIVE**, supersedes §8's "PR open").
+
+### New frontend (`frontend/src/pages/`, inline-styled terminal-green)
+HomeDashboard (feed+portfolio, stale-while-revalidate), OptionsEngine, FinTube, SystemMonitor (global top banner), Markets (TradingView widgets), CrackADawn. `components/TVWidget.tsx` (reusable TV embed). PWA-installable (manifest + apple-touch icons) — **the app path since Schyler has no Mac**; native SwiftUI shell in `ios/` (mirrors the web).
+
+### Autonomous agents
+Crack-a-Dawn (6am brief), 2Chainz (@Siiigggbot strategist), FinTube scout — all on the free Opus worker pool, gated trades.
+
+### Parallel dev (hydra)
+`~/.local/bin/hydra` (tmux + git worktrees) spins parallel Charlotte heads, remote-controlled from the Claude app. **Memory is git-tracked**; conductor head = aggregator; per-head deep archives at `~/.hydra-archives/`.
+
+### Resolved from §7/§8
+- 🟢 Inbound auth → **Cloudflare Access** (sole gate). 🟢 messenger → **LIVE**. 🟠 `main` branch-protection still not enforced (mitigated: box deploy is manual, not push-triggered).
+
+### In-flight
+- 🟡 **TradingView Advanced Charts** — datafeed done (`/api/udf/*`); gated on Schyler's library-access application. Then: embed + AI charting copilot (explain/advise/**write custom indicators** via sandboxed spec).
