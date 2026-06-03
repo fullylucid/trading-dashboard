@@ -17,7 +17,7 @@ import { useEffect, useRef, useState } from 'react';
 import { dispose, init } from 'klinecharts';
 import type { Chart, DeepPartial, Styles } from 'klinecharts';
 
-import { fetchKLineData, type Resolution } from '../../lib/klineApi';
+import { TIMEFRAMES, fetchKLineData, type Resolution } from '../../lib/klineApi';
 
 const GREEN = '#00ff41';
 const RED = '#ff3b3b';
@@ -104,7 +104,10 @@ const CANDLE_PANE_ID = 'candle_pane';
 
 interface Props {
   symbol: string;
-  resolution: Resolution;
+  /** Starting timeframe; the component owns the selector after that. Default 'D'. */
+  initialResolution?: Resolution;
+  /** Show the built-in timeframe selector row. Default true. */
+  showTimeframe?: boolean;
   /** CSS height for the chart canvas. Defaults to a tall, responsive pane. */
   height?: number | string;
 }
@@ -123,13 +126,19 @@ function btnStyle(active: boolean): React.CSSProperties {
   };
 }
 
-const KLineChartView: React.FC<Props> = ({ symbol, resolution, height = '70vh' }) => {
+const KLineChartView: React.FC<Props> = ({
+  symbol,
+  initialResolution = 'D',
+  showTimeframe = true,
+  height = '70vh',
+}) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
   // Track which sub-pane each pane-indicator lives in so we can remove it.
   const paneIdsRef = useRef<Record<string, string>>({});
   const candleOverlaysRef = useRef<Set<string>>(new Set());
 
+  const [resolution, setResolution] = useState<Resolution>(initialResolution);
   const [ready, setReady] = useState(false);
   const [enabled, setEnabled] = useState<Record<string, boolean>>({
     VOL: true,
@@ -232,6 +241,25 @@ const KLineChartView: React.FC<Props> = ({ symbol, resolution, height = '70vh' }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* Timeframe selector */}
+      {showTimeframe && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ color: GREEN_DIM, fontFamily: 'monospace', fontSize: 11 }}>
+            timeframe
+          </span>
+          {TIMEFRAMES.map((tf) => (
+            <button
+              key={tf.value}
+              type="button"
+              onClick={() => setResolution(tf.value)}
+              style={btnStyle(resolution === tf.value)}
+            >
+              {tf.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Indicator toggles */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{ color: GREEN_DIM, fontFamily: 'monospace', fontSize: 11 }}>
