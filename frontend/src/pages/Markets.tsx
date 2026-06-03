@@ -10,7 +10,7 @@ const DEFAULT_SYMBOLS = ['NASDAQ:AMD', 'NASDAQ:NVDA', 'AMEX:SPY', 'NASDAQ:QQQ', 
 export default function Markets() {
   const [symbol, setSymbol] = useState('NASDAQ:AMD');
 
-  const wrap: React.CSSProperties = { minHeight: '100vh', background: '#000', color: GREEN, fontFamily: 'monospace', padding: '60px 16px 40px', maxWidth: 1040, margin: '0 auto' };
+  const wrap: React.CSSProperties = { minHeight: '100vh', background: '#000', color: GREEN, fontFamily: 'monospace', padding: '16px 16px 24px', maxWidth: 1040, margin: '0 auto' };
 
   return (
     <div style={wrap}>

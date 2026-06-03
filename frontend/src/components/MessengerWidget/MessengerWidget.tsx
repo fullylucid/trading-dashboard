@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Rnd } from 'react-rnd';
+import { TICKER_H } from '../../layout';
 import useMessengerStore from '../../store/messengerStore';
 import ConversationList from './ConversationList';
 import ChatPane from './ChatPane';
@@ -78,7 +79,7 @@ function MessengerWidget() {
         aria-label="Open messenger"
         style={{
           position: 'fixed',
-          bottom: 20,
+          bottom: TICKER_H + 16,  // float above the fixed bottom ticker
           right: 20,
           zIndex: 3000,
           background: '#000',

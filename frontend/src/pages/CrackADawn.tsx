@@ -94,7 +94,7 @@ export default function CrackADawn() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#000', color: GREEN,
-                  fontFamily: 'monospace', padding: '60px 16px 40px', maxWidth: 760, margin: '0 auto' }}>
+                  fontFamily: 'monospace', padding: '16px 16px 24px', maxWidth: 760, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <h1 style={{ fontSize: 20, margin: 0, textShadow: `0 0 8px ${GREEN}` }}>🌅 Crack-a-Dawn</h1>
