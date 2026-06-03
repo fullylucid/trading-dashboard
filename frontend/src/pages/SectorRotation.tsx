@@ -28,6 +28,7 @@ import SectorContributors from '../components/analytics/SectorContributors';
 import RotationAssessment from '../components/analytics/RotationAssessment';
 import ExplainButton from '../components/analytics/ExplainButton';
 import PageHeader from '../components/PageHeader';
+import { useIsMobile } from '../hooks/useMediaQuery';
 import type {
   RsRatioRow,
   RotationRow,
@@ -204,6 +205,11 @@ const SectorRotation: React.FC = () => {
     };
   }, [fetchLatest, triggerRefresh, pollOnce, stopPolling]);
 
+  const isMobile = useIsMobile();
+  // On phone-width viewports the side-by-side card rows stack into one column.
+  const twoCol = isMobile ? '1fr' : '1fr 1fr';
+  const rrgCol = isMobile ? '1fr' : 'minmax(0, 1.2fr) minmax(0, 1fr)';
+
   const result = envelope?.result ?? null;
 
   const sectors = result?.market?.sectors ?? null;
@@ -301,7 +307,7 @@ const SectorRotation: React.FC = () => {
           <RotationAssessment assessment={assessment} />
 
           {/* RRG + donut row */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr)', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: rrgCol, gap: 20 }}>
             <div style={panel}>
               <h2 style={heading}>Relative Rotation Graph</h2>
               <SectorRRG sectors={sectors} size={400} />
@@ -319,7 +325,7 @@ const SectorRotation: React.FC = () => {
           </div>
 
           {/* Leader boards */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: twoCol, gap: 20 }}>
             <div style={panel}>
               <h2 style={{ ...heading, color: STATUS_COLOR['rotating-IN'] }}>▲ Rotating In</h2>
               <LeaderTable rows={leadersIn} positive />
@@ -331,7 +337,7 @@ const SectorRotation: React.FC = () => {
           </div>
 
           {/* Affected holdings */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: twoCol, gap: 20 }}>
             <div style={panel}>
               <h2 style={{ ...heading, color: STATUS_COLOR['rotating-IN'] }}>Holdings With Tailwinds</h2>
               <SymbolChips symbols={tailwinds} color={STATUS_COLOR['rotating-IN']} empty="No holdings in rotating-in sectors." />
