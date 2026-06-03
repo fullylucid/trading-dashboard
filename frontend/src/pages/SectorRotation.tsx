@@ -27,6 +27,7 @@ import SectorDonut from '../components/analytics/SectorDonut';
 import SectorContributors from '../components/analytics/SectorContributors';
 import RotationAssessment from '../components/analytics/RotationAssessment';
 import ExplainButton from '../components/analytics/ExplainButton';
+import PageHeader from '../components/PageHeader';
 import type {
   RsRatioRow,
   RotationRow,
@@ -232,53 +233,46 @@ const SectorRotation: React.FC = () => {
 
   return (
     <div style={{ maxWidth: 1200, margin: '0 auto', padding: '16px 16px 24px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 20 }}>
-        <div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
-            Sector Rotation
-          </h1>
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
-            {result?.summary?.headline ?? 'How capital is rotating across sectors, fused from 5 free streams.'}
-          </div>
-          {result != null && (
-            <ExplainButton
-              kind="sector"
-              label="✦ Explain the rotation"
-              context={{
-                summary: result.summary,
-                rotating_in: leadersIn.slice(0, 5),
-                rotating_out: leadersOut.slice(0, 5),
-              }}
-            />
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {envelope?.saved_at != null && (
-            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-              {envelope.cached ? 'cached' : 'fresh'} · {fmtAge(envelope.age_minutes)}
-              {envelope.stale ? ' · stale' : ''}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => void triggerRefresh()}
-            disabled={computing}
-            style={{
-              background: computing ? 'transparent' : 'var(--neon-green)',
-              color: computing ? 'var(--text-secondary)' : 'var(--bg-base)',
-              border: '1px solid var(--neon-green)',
-              borderRadius: 4,
-              padding: '6px 14px',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: computing ? 'not-allowed' : 'pointer',
+      <PageHeader
+        title="🔄 Sector Rotation"
+        subtitle={result?.summary?.headline ?? 'How capital is rotating across sectors, fused from 5 free streams.'}
+      >
+        {result != null && (
+          <ExplainButton
+            kind="sector"
+            label="✦ Explain the rotation"
+            context={{
+              summary: result.summary,
+              rotating_in: leadersIn.slice(0, 5),
+              rotating_out: leadersOut.slice(0, 5),
             }}
-          >
-            {computing ? 'Sweeping…' : '↻ Refresh sweep'}
-          </button>
-        </div>
-      </div>
+          />
+        )}
+        {envelope?.saved_at != null && (
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+            {envelope.cached ? 'cached' : 'fresh'} · {fmtAge(envelope.age_minutes)}
+            {envelope.stale ? ' · stale' : ''}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => void triggerRefresh()}
+          disabled={computing}
+          style={{
+            background: computing ? 'transparent' : 'var(--neon-green)',
+            color: computing ? 'var(--text-secondary)' : 'var(--bg-base)',
+            border: '1px solid var(--neon-green)',
+            borderRadius: 4,
+            padding: '6px 14px',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: computing ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {computing ? 'Sweeping…' : '↻ Refresh sweep'}
+        </button>
+      </PageHeader>
 
       {error && (
         <div style={{ ...panel, borderColor: 'var(--danger)', color: 'var(--danger)', marginBottom: 16 }}>

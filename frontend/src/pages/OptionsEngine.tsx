@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { GREEKS, STRATEGIES, METRICS } from './optionsEducation';
 import TVWidget from '../components/TVWidget';
+import PageHeader from '../components/PageHeader';
 
 const GREEN = '#00ff41';
 const RED = '#ff5555';
@@ -163,9 +164,8 @@ export default function OptionsEngine() {
   ];
 
   return (
-    <div style={{ minHeight: '100vh', background: '#000', color: GREEN, fontFamily: 'monospace', padding: '60px 16px 40px', maxWidth: 1040, margin: '0 auto' }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-        <h1 style={{ fontSize: 20, margin: 0, textShadow: `0 0 8px ${GREEN}` }}>📐 Options Engine</h1>
+    <div style={{ minHeight: '100vh', background: '#000', color: GREEN, fontFamily: 'monospace', padding: '16px 16px 24px', maxWidth: 1040, margin: '0 auto' }}>
+      <PageHeader title="📐 Options Engine">
         <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())}
           onKeyDown={(e) => e.key === 'Enter' && loadChain(symbol)} placeholder="ticker" style={{ ...box, width: 90 }} />
         <button onClick={() => loadChain(symbol)} style={{ ...box, cursor: 'pointer' }}>Load</button>
@@ -175,7 +175,7 @@ export default function OptionsEngine() {
           </select>
         )}
         {chain && <span style={{ fontSize: 12, opacity: 0.8 }}>spot ${chain.spot.toFixed(2)} · r {(chain.rate * 100).toFixed(2)}%</span>}
-      </div>
+      </PageHeader>
 
       <GreeksGlossary />
 

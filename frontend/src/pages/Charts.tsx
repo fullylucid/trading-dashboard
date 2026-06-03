@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 
 import ChartWorkspace from '../components/charts/ChartWorkspace';
+import PageHeader from '../components/PageHeader';
 
 interface ScanItem {
   symbol: string;
@@ -60,17 +61,17 @@ const Charts: React.FC = () => {
   );
 
   return (
-    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <h1 className="text-2xl font-bold text-white">Charts</h1>
-        <span className="text-xs text-gray-500">
-          {tickers.length > 0
+    <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8">
+      <PageHeader
+        title="📉 Charts"
+        subtitle={
+          tickers.length > 0
             ? `${tickers.length} holdings from latest scan`
             : loaded
               ? 'No scan snapshot — showing benchmarks'
-              : 'Loading…'}
-        </span>
-      </div>
+              : 'Loading…'
+        }
+      />
 
       <ChartWorkspace
         tickers={tickerList}

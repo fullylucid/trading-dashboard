@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import PageHeader from '../components/PageHeader';
 
 const GREEN = '#00ff41';
 const RED = '#ff5555';
@@ -73,10 +74,9 @@ export default function HomeDashboard() {
 
   return (
     <div style={wrap}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>📈 Home</h2>
+      <PageHeader title="📈 Home">
         {refreshing && <span style={{ fontSize: 10, color: DIM, border: `1px solid ${DIM}`, borderRadius: 10, padding: '1px 8px' }}>↻ refreshing…</span>}
-      </div>
+      </PageHeader>
 
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         {/* ---------- LEFT 3/4: feed ---------- */}

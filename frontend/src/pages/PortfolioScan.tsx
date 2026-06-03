@@ -30,6 +30,7 @@ import SignalRadar from '../components/analytics/SignalRadar';
 import type { SignalsBlock, RegimeBlock } from '../components/analytics/types';
 
 import ChartWorkspace from '../components/charts/ChartWorkspace';
+import PageHeader from '../components/PageHeader';
 
 import type {
   PortfolioRisk,
@@ -552,20 +553,19 @@ const PortfolioScan: React.FC = () => {
   }, [result?.ranked]);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8">
+      <PageHeader title="📊 Portfolio Scan">
+        <button
+          onClick={() => void runScan()}
+          disabled={scanning}
+          className={`py-2 px-4 rounded-lg font-medium text-white ${
+            scanning ? 'bg-green-700 cursor-not-allowed' : 'bg-green-600 hover:bg-green-500'
+          }`}
+        >
+          {scanning ? 'Scanning…' : '▶ Run Fresh Scan'}
+        </button>
+      </PageHeader>
       <div className="bg-gray-800 border border-gray-700 rounded-lg p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-          <h1 className="text-2xl font-bold text-white">Portfolio Scan</h1>
-          <button
-            onClick={() => void runScan()}
-            disabled={scanning}
-            className={`py-2 px-4 rounded-lg font-medium text-white ${
-              scanning ? 'bg-green-700 cursor-not-allowed' : 'bg-green-600 hover:bg-green-500'
-            }`}
-          >
-            {scanning ? 'Scanning…' : '▶ Run Fresh Scan'}
-          </button>
-        </div>
 
         {savedAtPt && (
           <div className={`inline-block text-sm border rounded px-3 py-1 mb-4 ${badgeColor}`}>

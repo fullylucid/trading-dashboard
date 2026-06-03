@@ -1,4 +1,5 @@
 import { useState, useEffect, ReactNode } from 'react';
+import PageHeader from '../components/PageHeader';
 
 const GREEN = '#00ff41';
 
@@ -95,9 +96,7 @@ export default function CrackADawn() {
   return (
     <div style={{ minHeight: '100vh', background: '#000', color: GREEN,
                   fontFamily: 'monospace', padding: '16px 16px 24px', maxWidth: 760, margin: '0 auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-        <h1 style={{ fontSize: 20, margin: 0, textShadow: `0 0 8px ${GREEN}` }}>🌅 Crack-a-Dawn</h1>
+      <PageHeader title="🌅 Crack-a-Dawn">
         {dates.length > 0 && (
           <label style={{ fontSize: 12, opacity: 0.8 }}>
             archive&nbsp;
@@ -108,7 +107,7 @@ export default function CrackADawn() {
             </select>
           </label>
         )}
-      </div>
+      </PageHeader>
 
       <div style={{ border: `1px solid rgba(0,255,65,0.35)`, borderRadius: 6,
                     padding: 16, background: 'rgba(0,255,65,0.03)',
