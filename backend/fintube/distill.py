@@ -36,10 +36,40 @@ _GENERAL = (
     '"recommendations":["<concrete advice/actions the creator gives>"]}}'
 )
 
+# Discovery mode: the scout surfaced this video from an open YouTube search, so it has NOT
+# been vetted by a human. On top of the normal distillation we ask the model to (a) score
+# how relevant + worth-the-time it is for Schyler specifically, and (b) write a one-line
+# pitch. The relevance score gates what gets pushed to Telegram, so be a tough grader —
+# clickbait, rehashed news, beginner fluff, and thinly-veiled ads should score low.
+_DISCOVERY = (
+    "You are Tradeskeebot's research scout. This {cat} YouTube video was found by an "
+    "automated search and is UNVETTED. Schyler is a swing/day trader and AI/agent builder; "
+    "he values, in order: novel trading strategies (indicator algorithms, trading-bot "
+    "architectures, quant methods), concrete AI-agent engineering enhancements, and new "
+    "open-source repos/tools/feature ideas worth adopting. He does NOT want clickbait, "
+    "rehashed market news, get-rich-quick pitches, beginner 101 content, or ads.\n"
+    "Return ONLY JSON, no prose, no markdown fences:\n"
+    '{{"category":"{cat}","summary":"<2-3 sentence gist>",'
+    '"pitch":"<ONE punchy line on why this is worth Schyler\'s time — name the specific '
+    'idea/tool/technique, not generic praise>",'
+    '"key_insights":["<3-5 concrete, non-obvious takeaways or steps>"],'
+    '"tools_mentioned":["<libraries/repos/products/papers/techniques named>"],'
+    '"relevance":<float 0.0-1.0, how well it fits Schyler\'s interests above>,'
+    '"worth_sharing":<true|false — true ONLY if genuinely novel/actionable for him>}}\n'
+    "Score honestly: most search results are mediocre. Reserve relevance>0.8 for content "
+    "that teaches a specific, actionable strategy/architecture/tool he'd plausibly use."
+)
 
-def build_prompt(transcript: str, title: str, channel: str, category: str) -> str:
+
+def build_prompt(transcript: str, title: str, channel: str, category: str,
+                 mode: str = "default") -> str:
     t = transcript[:MAX_CHARS]
-    head = _FINANCE if category == "finance" else _GENERAL.format(cat=category)
+    if mode == "discovery":
+        head = _DISCOVERY.format(cat=category)
+    elif category == "finance":
+        head = _FINANCE
+    else:
+        head = _GENERAL.format(cat=category)
     return (f"{head}\n\nVIDEO: {title}\nCHANNEL: {channel}\nCATEGORY: {category}\n\n"
             f"TRANSCRIPT:\n{t}")
 
@@ -59,13 +89,13 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
 
 
 async def distill(transcript: str, title: str, channel: str, category: str,
-                  timeout: int = 180) -> Optional[Dict[str, Any]]:
+                  timeout: int = 180, mode: str = "default") -> Optional[Dict[str, Any]]:
     try:
         from agent_bridge import run_agent_job  # lazy: avoid import coupling
     except Exception:  # noqa: BLE001
         logger.warning("agent bridge unavailable for distill")
         return None
-    prompt = build_prompt(transcript, title, channel, category)
+    prompt = build_prompt(transcript, title, channel, category, mode=mode)
     text = await run_agent_job(prompt, kind="data", timeout=timeout)
     if not text:
         return None

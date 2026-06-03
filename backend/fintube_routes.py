@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from fintube import distill, ingest, scoring, store, transcripts
+from fintube import distill, ingest, scoring, scout, store, transcripts
 
 fintube_router = APIRouter(prefix="/api/fintube", tags=["fintube"])
 logger = logging.getLogger("fintube_routes")
@@ -75,6 +75,52 @@ def add_channel(req: AddChannelReq) -> Dict[str, Any]:
 @fintube_router.delete("/channels/{channel_id}")
 def del_channel(channel_id: str) -> Dict[str, Any]:
     return {"channels": store.remove_channel(channel_id)}
+
+
+# ----------------------------------------------------------------- topics (scout briefs)
+@fintube_router.get("/topics")
+def topics() -> Dict[str, Any]:
+    return {"topics": store.list_topics(), "categories": store.CATEGORIES}
+
+
+class AddTopicReq(BaseModel):
+    query: str                     # a YouTube search query
+    category: str = "general"
+    id: Optional[str] = None       # slug; derived from the query if omitted
+    enabled: bool = True
+
+
+@fintube_router.post("/topics")
+def add_topic(req: AddTopicReq) -> Dict[str, Any]:
+    if not req.query.strip():
+        raise HTTPException(400, "query is required")
+    return {"topics": store.add_topic(req.model_dump())}
+
+
+@fintube_router.delete("/topics/{topic_id}")
+def del_topic(topic_id: str) -> Dict[str, Any]:
+    return {"topics": store.remove_topic(topic_id)}
+
+
+# ----------------------------------------------------------------- scout (discovery run)
+class ScoutReq(BaseModel):
+    send: bool = True              # push qualifying finds to Telegram
+    lookback_days: int = scout.LOOKBACK_DAYS
+    min_relevance: float = scout.MIN_RELEVANCE
+    max_push: int = scout.MAX_PUSH
+
+
+@fintube_router.post("/scout")
+async def run_scout(req: ScoutReq) -> Dict[str, Any]:
+    """Kick a discovery sweep as an in-app background task (the feed/Telegram fill in as
+    it finishes). The host systemd timer hits this twice daily; also callable by hand."""
+    if scout.is_running():
+        return {"status": "already running"}
+    asyncio.create_task(scout.run_scout_guarded(
+        send=req.send, lookback_days=req.lookback_days,
+        min_relevance=req.min_relevance, max_push=req.max_push))
+    return {"status": "started",
+            "note": "discovered videos appear in the feed and Telegram as they finish"}
 
 
 # ----------------------------------------------------------------- feed
