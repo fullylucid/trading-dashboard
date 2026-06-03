@@ -82,6 +82,54 @@ export interface CompaniesBlock {
   }>;
 }
 
+/** Compact per-mover news read (`constituents.fetch_mover_news`). */
+export interface MoverNews {
+  count: number;
+  net_tone: number;
+  label: 'positive' | 'negative' | 'neutral';
+  top_headline: string | null;
+}
+
+/** One constituent's contribution to its sector's move (`contributors.by_etf[ETF].leaders_*[]`). */
+export interface ContributorRow {
+  symbol: string;
+  weight: number;
+  pct_change: number | null;
+  contribution: number | null;
+  in_portfolio: boolean;
+  in_watchlist: boolean;
+  news: MoverNews | null;
+}
+
+/** Per-sector constituent contribution block (`contributors.by_etf[ETF]`). */
+export interface SectorContributorBlock {
+  etf: string;
+  sector: string | null;
+  net_contribution: number;
+  n_up: number;
+  n_down: number;
+  n_tracked: number;
+  breadth: number | null;
+  leaders_up: ContributorRow[];
+  leaders_down: ContributorRow[];
+}
+
+/** `result.contributors` — which stocks are pulling each sector. */
+export interface ContributorsBlock {
+  by_etf: Record<string, SectorContributorBlock>;
+  quotes_ok: number;
+  quotes_tried: number;
+  sources_ok: boolean;
+}
+
+/** `result.assessment` — the LLM daily rotation read (concise + full briefing). */
+export interface AssessmentBlock {
+  short: string | null;
+  full: string | null;
+  model: string | null;
+  generated_at: string | null;
+}
+
 /** Payload-level market-regime block (`scan_analytics.regime_block`). */
 export interface RegimeBlock {
   regime_class: string | null;
