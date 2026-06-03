@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import PageHeader from '../components/PageHeader';
 
 const GREEN = '#00ff41';
 const RED = '#ff5555';
@@ -147,11 +148,11 @@ export default function FinTube() {
   const byCat: Record<string, Channel[]> = {};
   channels.forEach((c) => { (byCat[c.category] ||= []).push(c); });
 
-  const wrap: React.CSSProperties = { minHeight: '100vh', background: '#000', color: GREEN, fontFamily: 'monospace', padding: '60px 16px 40px', maxWidth: 1040, margin: '0 auto' };
+  const wrap: React.CSSProperties = { minHeight: '100vh', background: '#000', color: GREEN, fontFamily: 'monospace', padding: '16px 16px 24px', maxWidth: 1040, margin: '0 auto' };
 
   return (
     <div style={wrap}>
-      <h2 style={{ margin: '0 0 12px', fontSize: 18 }}>📺 FinTube — content distillation hub</h2>
+      <PageHeader title="📺 FinTube" subtitle="content distillation hub" />
 
       {/* add box */}
       <div style={{ ...card }}>

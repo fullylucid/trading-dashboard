@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import TVWidget from '../components/TVWidget';
+import PageHeader from '../components/PageHeader';
 
 const GREEN = '#00ff41';
 const DIM = 'rgba(0,255,65,0.55)';
@@ -14,8 +15,7 @@ export default function Markets() {
 
   return (
     <div style={wrap}>
-      <h2 style={{ margin: '0 0 4px', fontSize: 18 }}>🌐 Markets</h2>
-      <div style={{ fontSize: 11, color: DIM, marginBottom: 14 }}>Live market widgets (TradingView) — overview, heatmap, calendar, news.</div>
+      <PageHeader title="🌐 Markets" subtitle="Live market widgets (TradingView) — overview, heatmap, calendar, news." />
 
       {/* scrolling ticker */}
       <TVWidget
