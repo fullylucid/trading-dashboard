@@ -10,6 +10,7 @@ import pytest
 from sector_rotation.constituents import (
     SECTOR_CONSTITUENTS,
     contribution_of,
+    fetch_move_pct,
     fetch_quote_pct,
     normalize_weights,
     rank_contributors,
@@ -104,3 +105,11 @@ def test_fetch_quote_pct_no_key_returns_none():
     # No network: empty key short-circuits before any request.
     assert fetch_quote_pct("AAPL", api_key="") is None
     assert fetch_quote_pct("", api_key="abc") is None
+
+
+def test_fetch_move_pct_no_sources_returns_none():
+    # Skip yfinance (network) and the Finnhub fallback (no key) -> None, no network.
+    assert (
+        fetch_move_pct("AAPL", api_key="", use_yfinance=False, finnhub_fallback=True)
+        is None
+    )

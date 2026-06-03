@@ -3,8 +3,9 @@
  *
  * Consumes `result.contributors.by_etf`. For each sector (ordered by the absolute
  * size of its net constituent move), shows the leaders pulling it up and the
- * laggards dragging it down: % move, a contribution bar, a 📍 flag for names in
- * the book, and a news-tone dot + headline tooltip when available.
+ * laggards dragging it down: % move (extended-hours aware — counts after-hours,
+ * overnight, and pre-market), a contribution bar, a 📍 flag for names in the
+ * book, and a news-tone dot + headline tooltip when available.
  *
  * Null-guarded throughout — the backend degrades any uncomputable field to
  * null/[] and may omit the whole block, so every level renders defensively.
@@ -68,8 +69,8 @@ const SectorContributors: React.FC<SectorContributorsProps> = ({ contributors, m
   if (sectors.length === 0) {
     return (
       <div style={emptyStyle}>
-        No constituent moves yet — run a sweep during/after market hours to see which stocks are
-        pulling each sector.
+        No constituent moves yet — the next sweep will show which stocks are pulling each sector
+        (counting after-hours and overnight moves).
       </div>
     );
   }

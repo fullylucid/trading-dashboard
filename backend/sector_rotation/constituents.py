@@ -14,7 +14,10 @@ the literal index contribution — good enough to rank "who is pulling the secto
 
 For each sector we then:
 
-1. Pull each tracked name's **daily % change** (Finnhub ``/quote`` ``dp``).
+1. Pull each tracked name's **% move including extended hours** — yfinance
+   ``fast_info`` (latest pre/post-market price vs the prior regular close), so
+   after-hours, overnight, and pre-market moves are counted, not just the regular
+   session. Finnhub ``/quote`` ``dp`` is a regular-hours-only fallback.
 2. Compute ``contribution = normalized_weight * pct_change`` (in the same units as
    ``pct_change``; multiply by 100 for an approximate basis-points read).
 3. Rank the positive contributors (**leaders up**) and negative contributors
@@ -235,13 +238,70 @@ def summarize_sector(
 
 _FINNHUB_QUOTE_URL = "https://finnhub.io/api/v1/quote"
 _REQUEST_TIMEOUT = 6.0
-# Conservative spacing so a ~120-symbol sweep stays under Finnhub's 60 req/min
-# free-tier ceiling (~1.1s/req). Override with SECTOR_QUOTE_SPACING for testing.
-_QUOTE_SPACING = float(os.environ.get("SECTOR_QUOTE_SPACING", "1.05"))
+# Politeness spacing between per-name yfinance quote fetches (no hard rate limit,
+# but be a good citizen). Override with SECTOR_QUOTE_SPACING (0 in tests).
+_QUOTE_SPACING = float(os.environ.get("SECTOR_QUOTE_SPACING", "0.3"))
+# Spacing between per-mover Finnhub news fetches — these DO hit the 60 req/min
+# free-tier ceiling, so keep ~1.1s. Override with SECTOR_NEWS_SPACING.
+_NEWS_SPACING = float(os.environ.get("SECTOR_NEWS_SPACING", "1.1"))
 
 
 def _finnhub_key() -> str:
     return os.environ.get("FINNHUB_API_KEY", "").strip()
+
+
+def _move_via_yfinance(symbol: str) -> Optional[float]:
+    """IO: % move *including* pre/post-market via yfinance ``fast_info``. Never raises.
+
+    ``move = (last_price - previous_close) / previous_close * 100`` where
+    ``last_price`` is the latest trade *including extended hours* and
+    ``previous_close`` is the prior regular-session close. This captures:
+      - pre-market: overnight gap + pre-market move vs yesterday's close,
+      - regular hours: the full intraday move,
+      - post-market: the full day + after-hours move.
+    Returns ``None`` if yfinance is unavailable or the fields are missing/invalid.
+    """
+    try:
+        import yfinance as yf  # local import: optional dep, keep module light
+    except Exception as e:  # pragma: no cover - dep may be absent
+        logger.debug("constituents: yfinance unavailable: %s", e)
+        return None
+    try:
+        fi = yf.Ticker(str(symbol).strip().upper()).fast_info
+        last = getattr(fi, "last_price", None)
+        prev = getattr(fi, "previous_close", None)
+        if last is None or prev is None:
+            return None
+        last_f, prev_f = float(last), float(prev)
+        if prev_f <= 0 or last_f != last_f or prev_f != prev_f:  # NaN/zero guard
+            return None
+        return (last_f - prev_f) / prev_f * 100.0
+    except Exception as e:  # noqa: BLE001 - tolerant by contract
+        logger.debug("constituents: yfinance quote failed for %s: %s", symbol, e)
+        return None
+
+
+def fetch_move_pct(
+    symbol: str,
+    *,
+    api_key: Optional[str] = None,
+    use_yfinance: bool = True,
+    finnhub_fallback: bool = True,
+) -> Optional[float]:
+    """IO: extended-hours-aware % move for ``symbol``. Never raises.
+
+    Primary source is yfinance ``fast_info`` (counts after-hours / overnight /
+    pre-market). Falls back to Finnhub ``/quote`` (regular-hours only) when
+    yfinance yields nothing, so a single flaky source never blanks a name.
+    Returns ``None`` only when both sources are unavailable.
+    """
+    if use_yfinance:
+        pct = _move_via_yfinance(symbol)
+        if pct is not None:
+            return pct
+    if finnhub_fallback:
+        return fetch_quote_pct(symbol, api_key)
+    return None
 
 
 def fetch_quote_pct(symbol: str, api_key: Optional[str] = None) -> Optional[float]:
@@ -372,7 +432,7 @@ def compute_contributors(
         rows: List[Dict[str, Any]] = []
         for sym, w in members:
             quotes_tried += 1
-            pct = fetch_quote_pct(sym, api_key)
+            pct = fetch_move_pct(sym, api_key=api_key)  # incl. after-hours/overnight
             if pct is not None:
                 quotes_ok += 1
             rows.append(
@@ -392,6 +452,7 @@ def compute_contributors(
         summary = summarize_sector(etf, rows, top_n=top_n)
 
         # Enrich the standout movers (union of top up + top down) with news.
+        # News hits Finnhub's rate-limited endpoint, so space these out.
         if with_news and api_key:
             movers = (summary["leaders_up"][:news_top_movers]
                       + summary["leaders_down"][:news_top_movers])
@@ -402,6 +463,8 @@ def compute_contributors(
                     continue
                 seen.add(sym)
                 m["news"] = fetch_mover_news(sym)
+                if _NEWS_SPACING > 0:
+                    time.sleep(_NEWS_SPACING)
         by_etf[etf] = summary
 
     return {

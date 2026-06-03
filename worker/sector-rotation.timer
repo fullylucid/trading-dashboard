@@ -1,18 +1,23 @@
-# systemd timer: fire the sector-rotation warm once per day, after crack-a-dawn.
+# systemd timer: warm the sector-rotation snapshot twice each day.
 #
-# 6:15 AM PT — a quarter hour behind the crack-a-dawn briefing so the box isn't
-# doing both heavy sweeps at once. The schedule is expressed in America/Los_Angeles
-# so it tracks PT across DST without edits.
+#   06:15 PT  — a quarter hour behind the crack-a-dawn briefing, so the morning
+#               read reflects overnight / pre-market moves (the constituent
+#               quotes are extended-hours-aware via yfinance).
+#   13:15 PT  — 4:15pm ET, ~15 min after the close, so the "stocks pulling
+#               sectors" panel is populated with the full regular-day move plus
+#               any after-hours action whenever you look in the evening.
 #
-# Persistent=true => if the box was asleep/off at 6:15, the warm runs on the next
-# boot rather than silently skipping the day.
+# Times are in America/Los_Angeles so they track PT across DST without edits.
+# Persistent=true => if the box was asleep/off at a fire time, the warm runs on
+# the next boot rather than silently skipping it.
 
 [Unit]
-Description=Daily warm of the sector-rotation snapshot
+Description=Twice-daily warm of the sector-rotation snapshot
 Requires=sector-rotation.service
 
 [Timer]
 OnCalendar=*-*-* 06:15:00 America/Los_Angeles
+OnCalendar=*-*-* 13:15:00 America/Los_Angeles
 Persistent=true
 AccuracySec=1min
 
