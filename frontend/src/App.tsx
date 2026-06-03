@@ -12,6 +12,7 @@ import Markets from './pages/Markets';
 import SystemBanner from './pages/SystemMonitor';
 import TVWidget from './components/TVWidget';
 import MessengerWidget from './components/MessengerWidget/MessengerWidget';
+import { CHROME_TOP, CHROME_BOTTOM } from './layout';
 
 const ROUTES: { to: string; label: string; end?: boolean }[] = [
   { to: '/', label: '📈 Dashboard', end: true },
@@ -158,16 +159,20 @@ function App() {
       <div className="app min-h-screen bg-gray-900 text-white">
         <SystemBanner />
         <NavMenu />
-        <Routes>
-          <Route path="/" element={<HomeDashboard />} />
-          <Route path="/crack-a-dawn" element={<CrackADawn />} />
-          <Route path="/options" element={<OptionsEngine />} />
-          <Route path="/fintube" element={<FinTube />} />
-          <Route path="/markets" element={<Markets />} />
-          <Route path="/charts" element={<Charts />} />
-          <Route path="/portfolio-scan" element={<PortfolioScan />} />
-          <Route path="/sector-rotation" element={<SectorRotation />} />
-        </Routes>
+        {/* Reserve clearance for the fixed chrome (top banner / ☰ button, bottom ticker)
+            so no routed page slides under it. Single-sourced in ./layout. */}
+        <main style={{ paddingTop: CHROME_TOP, paddingBottom: CHROME_BOTTOM }}>
+          <Routes>
+            <Route path="/" element={<HomeDashboard />} />
+            <Route path="/crack-a-dawn" element={<CrackADawn />} />
+            <Route path="/options" element={<OptionsEngine />} />
+            <Route path="/fintube" element={<FinTube />} />
+            <Route path="/markets" element={<Markets />} />
+            <Route path="/charts" element={<Charts />} />
+            <Route path="/portfolio-scan" element={<PortfolioScan />} />
+            <Route path="/sector-rotation" element={<SectorRotation />} />
+          </Routes>
+        </main>
         <MessengerWidget />
         <GlobalTicker />
       </div>

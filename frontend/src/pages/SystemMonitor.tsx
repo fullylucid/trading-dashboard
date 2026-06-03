@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { BANNER_H } from '../layout';
 
 const GREEN = '#00ff41';
 const RED = '#ff5555';
@@ -281,7 +282,7 @@ export function SystemFull({ cur, events }: { cur: Current | null; events: Ev[] 
 }
 
 // ============================================================ thin top banner
-const BANNER_H = 28;
+// BANNER_H imported from ../layout (single source for the shell's top clearance)
 
 function Pill({ label, value, color }: { label: string; value: string; color: string }) {
   return (

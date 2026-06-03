@@ -69,7 +69,7 @@ export default function HomeDashboard() {
   const totalVal = pdata.account_value ?? accounts.reduce((s, a) => s + (a.total_value || 0), 0);
   const maxAcct = Math.max(1, ...accounts.map((a) => a.total_value || 0));
 
-  const wrap: React.CSSProperties = { minHeight: '100vh', background: '#000', color: GREEN, fontFamily: 'monospace', padding: '52px 14px 60px', maxWidth: 1280, margin: '0 auto' };
+  const wrap: React.CSSProperties = { minHeight: '100vh', background: '#000', color: GREEN, fontFamily: 'monospace', padding: '16px 14px 24px', maxWidth: 1280, margin: '0 auto' };
 
   return (
     <div style={wrap}>

@@ -231,7 +231,7 @@ const SectorRotation: React.FC = () => {
   const firstSweep = computing && result == null;
 
   return (
-    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '24px 16px 64px' }}>
+    <div style={{ maxWidth: 1200, margin: '0 auto', padding: '16px 16px 24px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 20 }}>
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
