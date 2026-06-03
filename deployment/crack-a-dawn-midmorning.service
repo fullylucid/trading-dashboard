@@ -1,0 +1,15 @@
+[Unit]
+Description=Crack-a-Dawn mid-morning sweep (open + first hour)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=user
+WorkingDirectory=/home/user/trading-dashboard/backend
+Environment=PYTHONPATH=/home/user/trading-dashboard/backend
+Environment=PATH=/home/user/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=CLAUDE_BIN=/home/user/.local/bin/claude
+EnvironmentFile=/home/user/.config/trading-dashboard/stack.env
+ExecStart=/usr/bin/python3 -m crack_a_dawn.run --session midmorning
+TimeoutStartSec=1800

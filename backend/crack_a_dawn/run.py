@@ -1,10 +1,15 @@
 """
-Crack-a-Dawn — orchestrator. Runs as a dedicated box cron (systemd timer) at 6 AM PT.
+Crack-a-Dawn — orchestrator. Runs as a dedicated box cron (systemd timer).
 
-    python -m crack_a_dawn.run [--no-send] [--limit N]
+    python -m crack_a_dawn.run [--no-send] [--limit N] [--session premarket|midmorning]
 
 universe -> Attention Score -> ground (headlines) -> Opus synthesis -> persist -> Telegram.
 Always emits/sends *something* (incl. quiet/holiday/error) so silence means a failure.
+
+Sessions: the 6 AM PT timer runs the default `premarket` brief; a second 7:30 AM PT
+timer runs `--session midmorning` (the open + first-hour sweep). The session sets the
+title, the move-window wording, and a brief-file suffix so the second run does NOT
+overwrite the morning brief (and stays out of the date-indexed frontend archive).
 """
 from __future__ import annotations
 
@@ -29,6 +34,13 @@ logger = logging.getLogger("crack_a_dawn.run")
 BRIEFS_DIR = os.getenv("CRACKDAWN_BRIEFS_DIR", os.path.expanduser("~/.config/trading-dashboard/briefs"))
 LEAD_TIERS = {TIER_ACT, TIER_UNEXPLAINED, TIER_KNOW}
 
+# session -> (title label, move-window phrasing, brief-file suffix).
+# premarket keeps the original behavior byte-for-byte (empty label/suffix).
+SESSIONS = {
+    "premarket": ("", "overnight", ""),
+    "midmorning": ("Mid-Morning Sweep", "this morning since the open", "-midmorning"),
+}
+
 
 def _market_context() -> str:
     import yfinance as yf
@@ -41,12 +53,12 @@ def _market_context() -> str:
     return ", ".join(bits) or "market data unavailable"
 
 
-def _persist(date_str: str, brief_md: str, scored: List[MoverScore]) -> str:
+def _persist(date_str: str, brief_md: str, scored: List[MoverScore], suffix: str = "") -> str:
     os.makedirs(BRIEFS_DIR, exist_ok=True)
-    md_path = os.path.join(BRIEFS_DIR, f"{date_str}.md")
+    md_path = os.path.join(BRIEFS_DIR, f"{date_str}{suffix}.md")
     with open(md_path, "w") as f:
         f.write(brief_md)
-    with open(os.path.join(BRIEFS_DIR, f"{date_str}.json"), "w") as f:
+    with open(os.path.join(BRIEFS_DIR, f"{date_str}{suffix}.json"), "w") as f:
         json.dump({
             "date": date_str,
             "brief_markdown": brief_md,
@@ -74,14 +86,19 @@ def main() -> int:
     ap.add_argument("--no-send", action="store_true", help="skip Telegram")
     ap.add_argument("--limit", type=int, default=8, help="max flagged names to synthesize")
     ap.add_argument("--force", action="store_true", help="run even on a non-trading day")
+    ap.add_argument("--session", choices=sorted(SESSIONS), default="premarket",
+                    help="premarket (6 AM brief) or midmorning (7:30 AM sweep)")
     args = ap.parse_args()
+
+    label, move_window, suffix = SESSIONS[args.session]
+    tag = f" {label}" if label else ""
 
     today = dt.date.today()
     date_str = today.isoformat()
-    logger.info("Crack-a-Dawn run for %s", date_str)
+    logger.info("Crack-a-Dawn run for %s (session=%s)", date_str, args.session)
 
     if not args.force and not is_trading_day(today):
-        msg = f"🌅 Crack-a-Dawn — {date_str}: US market closed today (weekend/holiday). No brief."
+        msg = f"🌅 Crack-a-Dawn{tag} — {date_str}: US market closed today (weekend/holiday). No brief."
         if not args.no_send:
             notify.send(msg)
         logger.info("non-trading day — skipping")
@@ -89,7 +106,7 @@ def main() -> int:
 
     held, tickers = get_universe()
     if not tickers:
-        msg = f"🌅 Crack-a-Dawn {date_str}: no universe (portfolio/watchlist empty or unreachable)."
+        msg = f"🌅 Crack-a-Dawn{tag} {date_str}: no universe (portfolio/watchlist empty or unreachable)."
         if not args.no_send:
             notify.send(msg)
         logger.warning(msg)
@@ -104,12 +121,12 @@ def main() -> int:
 
     mkt = _market_context()
     grounding = ground([s.ticker for s in flagged], today=today)
-    prompt = build_prompt(date_str, mkt, flagged, held, grounding)
+    prompt = build_prompt(date_str, mkt, flagged, held, grounding, label=label, move_window=move_window)
 
     logger.info("synthesizing brief over %d flagged names…", len(flagged))
     brief = synthesize(prompt)
     if not brief:
-        msg = (f"🌅 Crack-a-Dawn {date_str}: scoring ran ({len(flagged)} flagged) but synthesis "
+        msg = (f"🌅 Crack-a-Dawn{tag} {date_str}: scoring ran ({len(flagged)} flagged) but synthesis "
                f"failed. Top: " + ", ".join(f"{ball(s.move_pct)}{s.ticker} {s.move_pct:+.1f}%"
                                              for s in flagged[:5]))
         if not args.no_send:
@@ -117,7 +134,7 @@ def main() -> int:
         logger.error("synthesis failed; sent fallback")
         return 2
 
-    md_path = _persist(date_str, brief, scored)
+    md_path = _persist(date_str, brief, scored, suffix)
     logger.info("brief saved -> %s", md_path)
 
     if not args.no_send:

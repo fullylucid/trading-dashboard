@@ -20,6 +20,13 @@ TIMEOUT = int(os.getenv("TWOCHAINZ_TIMEOUT", "600"))
 
 ALLOWED_TOOLS = [
     "WebSearch", "WebFetch",
+    # Live data via the MCP servers (configured globally in ~/.claude.json:
+    # finnhub/fred/sec-edgar/usaspending). Granted at server level — same
+    # read-only sources 2Chainz already trusts via the *-pp-cli bash tools.
+    # Without these, the headless agent bounces every mcp__finnhub__* call
+    # ("haven't granted it yet") and can't pull live quotes for a full report.
+    "mcp__finnhub", "mcp__fred", "mcp__sec-edgar", "mcp__usaspending",
+    # Legacy bash CLIs — kept as a fallback path for the same data.
     "Bash(finnhub-pp-cli:*)", "Bash(sec-edgar-pp-cli:*)",
     "Bash(usaspending-pp-cli:*)", "Bash(fred-pp-cli:*)",
     "Bash(opts:*)",  # the options engine — chains, Greeks, strategies
