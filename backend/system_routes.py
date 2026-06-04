@@ -325,3 +325,25 @@ async def explain(req: ExplainRequest) -> Dict[str, Any]:
                 "error": "worker pool did not answer (busy or offline) — try again"}
     saved = _write_explanation(r, req.id, text)
     return {"ok": True, "explanation": text, "event": saved}
+
+
+@system_router.get("/claude-usage")
+def claude_usage() -> Dict[str, Any]:
+    """Claude Max subscription usage % — weekly (all models) + 5h session, plus reset times.
+
+    Pushed into Redis key `claude:usage` by the host-side `claude-usage.sh` collector
+    (the OAuth token stays on the host; only the %s land here). Read-only passthrough;
+    returns {"available": False} if the collector hasn't run / the key expired.
+    """
+    r = _r()
+    if r is None:
+        return {"available": False}
+    raw = r.get("claude:usage")
+    if not raw:
+        return {"available": False}
+    try:
+        data = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return {"available": False}
+    data["available"] = True
+    return data
