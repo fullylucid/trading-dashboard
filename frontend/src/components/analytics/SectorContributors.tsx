@@ -13,6 +13,7 @@
 
 import { useMemo } from 'react';
 import type { ContributorRow, ContributorsBlock, SectorContributorBlock } from './types';
+import { useIsMobile } from '../../hooks/useMediaQuery';
 
 const UP = '#22c55e';
 const DOWN = '#ef4444';
@@ -45,6 +46,7 @@ const emptyStyle: React.CSSProperties = {
 };
 
 const SectorContributors: React.FC<SectorContributorsProps> = ({ contributors, maxSectors }) => {
+  const isMobile = useIsMobile();
   const sectors = useMemo<SectorContributorBlock[]>(() => {
     const byEtf = contributors?.by_etf ?? null;
     if (!byEtf) return [];
@@ -94,7 +96,7 @@ const SectorContributors: React.FC<SectorContributorsProps> = ({ contributors, m
               </span>
             )}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
             <ContributorColumn title="Pulling up" rows={s.leaders_up ?? []} color={UP} maxAbs={maxAbs} />
             <ContributorColumn title="Dragging down" rows={s.leaders_down ?? []} color={DOWN} maxAbs={maxAbs} />
           </div>

@@ -15,3 +15,10 @@ export const NAV_BTN_H = 44;  // floating ☰ nav button (top:12) hangs to ~42px
 // Top must clear the taller of the banner and the ☰ button.
 export const CHROME_TOP = Math.max(BANNER_H, NAV_BTN_H);
 export const CHROME_BOTTOM = TICKER_H;
+
+// Single-sourced responsive breakpoint. Inline-styled pages can't carry @media
+// rules, so multi-column layouts flip to a single column below this width via
+// the `useIsMobile()` hook (see ./hooks/useMediaQuery). Phones (≤ ~430px CSS px)
+// and small tablets in portrait fall under it; desktop/landscape-tablet stay multi-col.
+export const MOBILE_MAX = 760;
+export const MOBILE_QUERY = `(max-width: ${MOBILE_MAX}px)`;
