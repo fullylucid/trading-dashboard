@@ -31,6 +31,23 @@ const titleBarStyle: React.CSSProperties = {
   userSelect: 'none',
 };
 
+// Finger-sized tap targets for collapse/close (the old bare glyphs were ~12px and un-tappable).
+const msgrBtnStyle: React.CSSProperties = {
+  background: 'transparent',
+  border: 'none',
+  color: GREEN,
+  cursor: 'pointer',
+  fontSize: 16,
+  lineHeight: 1,
+  padding: '2px 10px',
+  minWidth: 38,
+  minHeight: 26,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: 4,
+};
+
 function LoginGate() {
   const login = useMessengerStore((s) => s.login);
   const [pw, setPw] = useState('');
@@ -108,6 +125,7 @@ function MessengerWidget() {
       minHeight={collapsedHeight}
       bounds="window"
       dragHandleClassName="messenger-drag-handle"
+      cancel=".messenger-btn"
       onDragStop={(_e, d) => setGeometry({ x: d.x, y: d.y })}
       onResizeStop={(_e, _dir, ref, _delta, pos) =>
         setGeometry({ w: ref.offsetWidth, h: ref.offsetHeight, x: pos.x, y: pos.y })
@@ -122,13 +140,18 @@ function MessengerWidget() {
               {wsConnected ? '● live' : '○ offline'}
             </span>
           </span>
-          <span style={{ display: 'flex', gap: 10 }}>
-            <span style={{ cursor: 'pointer' }} onClick={toggleCollapsed} title="Collapse">
+          <span style={{ display: 'flex', gap: 4 }}>
+            {/* real buttons + `messenger-btn` (excluded from Rnd drag via cancel) so a tap
+                collapses/closes instead of starting a drag; finger-sized tap targets. */}
+            <button type="button" className="messenger-btn" onClick={toggleCollapsed}
+              title={geometry.collapsed ? 'Expand' : 'Collapse'} aria-label="Collapse messenger"
+              style={msgrBtnStyle}>
               {geometry.collapsed ? '▢' : '—'}
-            </span>
-            <span style={{ cursor: 'pointer' }} onClick={toggleOpen} title="Close">
+            </button>
+            <button type="button" className="messenger-btn" onClick={toggleOpen}
+              title="Close" aria-label="Close messenger" style={msgrBtnStyle}>
               ✕
-            </span>
+            </button>
           </span>
         </div>
         {!geometry.collapsed && (
