@@ -15,9 +15,16 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { dispose, init } from 'klinecharts';
-import type { Chart, DeepPartial, Styles } from 'klinecharts';
+import type { Chart, DeepPartial, KLineData, Styles } from 'klinecharts';
 
 import { TIMEFRAMES, fetchKLineData, type Resolution } from '../../lib/klineApi';
+import { computeIndicator, type IndicatorSpec } from '../../lib/indicatorApi';
+import {
+  addSpecIndicator,
+  removeSpecIndicator,
+  type CustomHandle,
+} from './customIndicators';
+import { EXAMPLE_SPECS } from './exampleSpecs';
 
 const GREEN = '#00ff41';
 const RED = '#ff3b3b';
@@ -149,6 +156,19 @@ const KLineChartView: React.FC<Props> = ({
   const [errMsg, setErrMsg] = useState<string>('');
   const [barCount, setBarCount] = useState(0);
 
+  // Custom (spec-driven) indicators. The currently-loaded bars are stashed so the
+  // engine computes over exactly what's on screen; barsVersion bumps on each load
+  // to trigger a recompute of every active custom indicator.
+  const barsRef = useRef<KLineData[]>([]);
+  const [barsVersion, setBarsVersion] = useState(0);
+  const [customSpecs, setCustomSpecs] = useState<
+    { key: string; spec: IndicatorSpec; label: string; error?: string }[]
+  >([]);
+  const customRenderedRef = useRef<Map<string, { handle: CustomHandle; version: number }>>(
+    new Map(),
+  );
+  const customKeyRef = useRef(0);
+
   // --- Init / dispose the chart instance (once). ---
   useEffect(() => {
     const el = containerRef.current;
@@ -167,6 +187,7 @@ const KLineChartView: React.FC<Props> = ({
       chartRef.current = null;
       paneIdsRef.current = {};
       candleOverlaysRef.current.clear();
+      customRenderedRef.current.clear();
     };
   }, []);
 
@@ -182,8 +203,10 @@ const KLineChartView: React.FC<Props> = ({
       .then((bars) => {
         if (controller.signal.aborted) return;
         chart.applyNewData(bars);
+        barsRef.current = bars;
         setBarCount(bars.length);
         setStatus(bars.length === 0 ? 'empty' : 'ready');
+        setBarsVersion((v) => v + 1); // triggers custom-indicator recompute
       })
       .catch((err) => {
         if (controller.signal.aborted || axiosCanceled(err)) return;
@@ -223,6 +246,58 @@ const KLineChartView: React.FC<Props> = ({
       }
     }
   }, [ready, enabled]);
+
+  // --- Reconcile custom spec indicators: compute over the current bars, then
+  // register/create; recompute when the bars change; remove deactivated ones. ---
+  useEffect(() => {
+    if (!ready) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    let aborted = false;
+    const rendered = customRenderedRef.current;
+
+    // Drop any rendered indicator whose spec was removed from state.
+    const activeKeys = new Set(customSpecs.map((s) => s.key));
+    for (const [key, entry] of rendered) {
+      if (!activeKeys.has(key)) {
+        removeSpecIndicator(chart, entry.handle);
+        rendered.delete(key);
+      }
+    }
+
+    (async () => {
+      for (const s of customSpecs) {
+        if (s.error) continue;
+        const existing = rendered.get(s.key);
+        if (existing && existing.version === barsVersion) continue; // up to date
+        const bars = barsRef.current;
+        if (!bars.length) continue;
+        try {
+          const result = await computeIndicator(s.spec, bars);
+          if (aborted) return;
+          if (existing) removeSpecIndicator(chart, existing.handle);
+          const handle = addSpecIndicator(chart, s.key, result);
+          if (handle) rendered.set(s.key, { handle, version: barsVersion });
+        } catch (e) {
+          setCustomSpecs((prev) =>
+            prev.map((x) => (x.key === s.key ? { ...x, error: errMessage(e) } : x)),
+          );
+        }
+      }
+    })();
+
+    return () => {
+      aborted = true;
+    };
+  }, [ready, barsVersion, customSpecs]);
+
+  const addCustomSpec = (spec: IndicatorSpec, label: string) => {
+    const key = `c${customKeyRef.current++}`;
+    setCustomSpecs((prev) => [...prev, { key, spec, label }]);
+  };
+
+  const removeCustomSpec = (key: string) =>
+    setCustomSpecs((prev) => prev.filter((s) => s.key !== key));
 
   const toggleIndicator = (name: string) =>
     setEnabled((prev) => ({ ...prev, [name]: !prev[name] }));
@@ -297,6 +372,73 @@ const KLineChartView: React.FC<Props> = ({
         </button>
       </div>
 
+      {/* Custom spec indicators (computed by the backend engine — no eval) */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ color: GREEN_DIM, fontFamily: 'monospace', fontSize: 11 }}>
+          custom
+        </span>
+        <select
+          aria-label="Add custom indicator"
+          value=""
+          onChange={(e) => {
+            const spec = EXAMPLE_SPECS.find((s) => s.name === e.target.value);
+            if (spec) addCustomSpec(spec, spec.name);
+          }}
+          style={{
+            background: '#000',
+            color: GREEN,
+            border: `1px solid ${GREEN_DIM}`,
+            fontFamily: 'monospace',
+            fontSize: 12,
+            padding: '4px 8px',
+            borderRadius: 4,
+          }}
+        >
+          <option value="">+ add spec…</option>
+          {EXAMPLE_SPECS.map((s) => (
+            <option key={s.name} value={s.name}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        {customSpecs.map((s) => (
+          <span
+            key={s.key}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              border: `1px solid ${s.error ? RED : GREEN}`,
+              borderRadius: 4,
+              padding: '2px 6px',
+              fontFamily: 'monospace',
+              fontSize: 12,
+              color: s.error ? RED : GREEN,
+            }}
+            title={s.error || s.spec.name}
+          >
+            {s.label}
+            {s.error ? ' ⚠' : ''}
+            <button
+              type="button"
+              aria-label={`Remove ${s.label}`}
+              onClick={() => removeCustomSpec(s.key)}
+              style={{
+                background: 'transparent',
+                color: 'inherit',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: 13,
+                lineHeight: 1,
+                padding: 0,
+              }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+
       {/* Chart canvas */}
       <div style={{ position: 'relative' }}>
         <div
@@ -348,6 +490,22 @@ function axiosCanceled(err: unknown): boolean {
       ? (err as { code?: string }).code === 'ERR_CANCELED'
       : false)
   );
+}
+
+/** Best-effort human message from a compute/validate error (incl. backend detail). */
+function errMessage(err: unknown): string {
+  if (typeof err === 'object' && err !== null) {
+    const resp = (err as { response?: { data?: { detail?: unknown } } }).response;
+    const detail = resp?.data?.detail;
+    if (detail) {
+      if (typeof detail === 'string') return detail;
+      const errors = (detail as { errors?: string[] }).errors;
+      if (Array.isArray(errors) && errors.length) return errors.join('; ');
+    }
+    const msg = (err as { message?: string }).message;
+    if (msg) return msg;
+  }
+  return 'compute failed';
 }
 
 export default KLineChartView;
