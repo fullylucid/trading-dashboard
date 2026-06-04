@@ -360,6 +360,13 @@ try:
 except Exception as e:  # noqa: BLE001 — additive; never block startup
     logging.getLogger(__name__).warning("indicator router not registered: %s", e)
 
+try:
+    from charting_routes import charting_router
+    app.include_router(charting_router)
+    logger.info("Charting-ideas scout router registered at /api/charting/*")
+except Exception as e:  # noqa: BLE001 — additive; never block startup
+    logging.getLogger(__name__).warning("charting router not registered: %s", e)
+
 
 # ============================================================================
 # Agent live-stream WebSocket
