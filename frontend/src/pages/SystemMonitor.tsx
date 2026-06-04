@@ -297,6 +297,7 @@ export default function SystemBanner() {
   const [cur, setCur] = useState<Current | null>(null);
   const [events, setEvents] = useState<Ev[]>([]);
   const [open, setOpen] = useState(false);
+  const [usage, setUsage] = useState<{ available?: boolean; weekly_pct?: number; weekly_resets_at?: string; session_pct?: number } | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   const poll = useCallback(async () => {
@@ -305,13 +306,17 @@ export default function SystemBanner() {
   const pollEvents = useCallback(async () => {
     try { const r = await fetch('/api/system/events?limit=40'); if (r.ok) setEvents((await r.json()).events || []); } catch { /* ignore */ }
   }, []);
+  const pollUsage = useCallback(async () => {
+    try { const r = await fetch('/api/system/claude-usage'); if (r.ok) setUsage(await r.json()); } catch { /* ignore */ }
+  }, []);
 
   useEffect(() => {
-    poll(); pollEvents();
+    poll(); pollEvents(); pollUsage();
     const a = setInterval(poll, 3000);
     const b = setInterval(pollEvents, 10000);
-    return () => { clearInterval(a); clearInterval(b); };
-  }, [poll, pollEvents]);
+    const c = setInterval(pollUsage, 60000);  // Claude usage moves slowly (collector runs ~5-min)
+    return () => { clearInterval(a); clearInterval(b); clearInterval(c); };
+  }, [poll, pollEvents, pollUsage]);
 
   // close on Esc / click-outside the panel
   useEffect(() => {
@@ -358,6 +363,10 @@ export default function SystemBanner() {
           </>
         ) : (
           <span style={{ color: DIM, fontSize: 11 }}>{online ? 'loading…' : 'collector offline'}</span>
+        )}
+        {usage?.available && usage.weekly_pct != null && (
+          <Pill label="🧠 Claude wk" value={`${Math.round(usage.weekly_pct)}%`}
+                color={usage.weekly_pct >= 90 ? RED : usage.weekly_pct >= 70 ? AMBER : GREEN} />
         )}
         <span style={{ marginLeft: 'auto', color: DIM, fontSize: 11 }}>{open ? '▲ close' : '▼ expand'}</span>
       </div>
