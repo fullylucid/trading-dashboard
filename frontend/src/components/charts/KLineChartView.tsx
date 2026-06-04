@@ -123,6 +123,8 @@ interface Props {
   showTimeframe?: boolean;
   /** CSS height for the chart canvas. Defaults to a tall, responsive pane. */
   height?: number | string;
+  /** Custom specs to render on mount (e.g. a scout idea being demoed). */
+  initialCustomSpecs?: { spec: IndicatorSpec; label: string }[];
 }
 
 function btnStyle(active: boolean): React.CSSProperties {
@@ -144,6 +146,7 @@ const KLineChartView: React.FC<Props> = ({
   initialResolution = 'D',
   showTimeframe = true,
   height = '70vh',
+  initialCustomSpecs,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
@@ -169,7 +172,7 @@ const KLineChartView: React.FC<Props> = ({
   const [barsVersion, setBarsVersion] = useState(0);
   const [customSpecs, setCustomSpecs] = useState<
     { key: string; spec: IndicatorSpec; label: string; error?: string }[]
-  >([]);
+  >(() => (initialCustomSpecs ?? []).map((s, i) => ({ key: `seed${i}`, spec: s.spec, label: s.label })));
   const customRenderedRef = useRef<Map<string, { handle: CustomHandle; version: number }>>(
     new Map(),
   );
