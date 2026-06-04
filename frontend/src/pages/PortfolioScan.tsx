@@ -9,9 +9,9 @@
  *   - RedundancyCallout  (compact concentration/redundancy read off
  *                         payload.portfolio_risk — replaces the old N×N heatmap)
  *   - AlertTimeline      (payload.alerts)
- *   - ChartWorkspace     (the CENTERPIECE — TradingView-style workspace with
- *                         custom AI indicators, individual/compare/portfolio
- *                         modes, sourced from /api/chart endpoints)
+ *   - KLineChartView     (the CENTERPIECE chart — KLineChart engine: candles +
+ *                         volume, toggleable indicators, drawing tools; follows
+ *                         the selected ticker. Shared with the Charts tab.)
  *   - SignalRadar        (selected ticker's analytics.signals)
  *
  * Everything analytics-side is additive + null-guarded: the page renders fully
@@ -29,7 +29,7 @@ import AlertTimeline from '../components/analytics/AlertTimeline';
 import SignalRadar from '../components/analytics/SignalRadar';
 import type { SignalsBlock, RegimeBlock } from '../components/analytics/types';
 
-import ChartWorkspace from '../components/charts/ChartWorkspace';
+import KLineChartView from '../components/charts/KLineChartView';
 import PageHeader from '../components/PageHeader';
 
 import type {
@@ -637,20 +637,18 @@ const PortfolioScan: React.FC = () => {
             {/* ---- CENTERPIECE: TradingView-style chart workspace ---- */}
             <div>
               <div className="flex flex-wrap items-center gap-3 mb-3">
-                <h2 className="text-xl font-bold text-green-300">Chart Workspace</h2>
+                <h2 className="text-xl font-bold text-green-300">Chart</h2>
                 <span className="text-xs text-gray-500">
-                  Individual · Compare · Portfolio — live AI indicator layers
+                  Candles · volume · indicators · drawing tools — KLineChart
                 </span>
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
                 <div className="xl:col-span-3">
                   {selectableSymbols.length > 0 ? (
-                    <ChartWorkspace
-                      tickers={selectableSymbols}
-                      initialSymbol={selected ?? undefined}
-                      initialMode="individual"
-                      initialRange="1y"
+                    <KLineChartView
+                      symbol={selected ?? selectableSymbols[0]}
+                      initialResolution="D"
                       height={560}
                     />
                   ) : (
