@@ -353,6 +353,13 @@ try:
 except Exception as e:  # noqa: BLE001 — additive; never block startup
     logging.getLogger(__name__).warning("udf router not registered: %s", e)
 
+try:
+    from indicator_routes import indicator_router
+    app.include_router(indicator_router)
+    logger.info("Indicator-spec engine router registered at /api/indicator/*")
+except Exception as e:  # noqa: BLE001 — additive; never block startup
+    logging.getLogger(__name__).warning("indicator router not registered: %s", e)
+
 
 # ============================================================================
 # Agent live-stream WebSocket
