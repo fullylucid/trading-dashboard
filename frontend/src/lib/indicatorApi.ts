@@ -72,3 +72,37 @@ export async function validateIndicator(spec: unknown): Promise<ValidateResult> 
   const { data } = await axios.post<ValidateResult>('/api/indicator/validate', { spec });
   return data;
 }
+
+/** A spec saved in the arsenal (the approved-spec library). */
+export interface ArsenalItem {
+  id: string;
+  name: string;
+  short_name: string;
+  pane: 'overlay' | 'separate';
+  source: string;
+  tags: string[];
+  created_at: string;
+  spec: IndicatorSpec;
+}
+
+/** List saved arsenal specs (newest first). Empty if storage is unavailable. */
+export async function listArsenal(): Promise<ArsenalItem[]> {
+  const { data } = await axios.get<{ items: ArsenalItem[] }>('/api/indicator/arsenal');
+  return data.items ?? [];
+}
+
+/** Validate + persist a spec into the arsenal. */
+export async function saveToArsenal(
+  spec: IndicatorSpec,
+  source = 'manual',
+  tags: string[] = [],
+): Promise<ArsenalItem> {
+  const { data } = await axios.post<ArsenalItem>('/api/indicator/arsenal', { spec, source, tags });
+  return data;
+}
+
+/** Remove a saved arsenal spec. */
+export async function deleteFromArsenal(id: string): Promise<boolean> {
+  const { data } = await axios.delete<{ deleted: boolean }>(`/api/indicator/arsenal/${id}`);
+  return data.deleted;
+}

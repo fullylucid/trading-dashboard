@@ -18,7 +18,13 @@ import { dispose, init } from 'klinecharts';
 import type { Chart, DeepPartial, KLineData, Styles } from 'klinecharts';
 
 import { TIMEFRAMES, fetchKLineData, type Resolution } from '../../lib/klineApi';
-import { computeIndicator, type IndicatorSpec } from '../../lib/indicatorApi';
+import {
+  computeIndicator,
+  listArsenal,
+  saveToArsenal,
+  type ArsenalItem,
+  type IndicatorSpec,
+} from '../../lib/indicatorApi';
 import {
   addSpecIndicator,
   removeSpecIndicator,
@@ -168,6 +174,18 @@ const KLineChartView: React.FC<Props> = ({
     new Map(),
   );
   const customKeyRef = useRef(0);
+  const [arsenal, setArsenal] = useState<ArsenalItem[]>([]);
+
+  // Load the saved-spec arsenal once (best-effort; empty if storage is down).
+  useEffect(() => {
+    let cancelled = false;
+    listArsenal()
+      .then((items) => !cancelled && setArsenal(items))
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // --- Init / dispose the chart instance (once). ---
   useEffect(() => {
@@ -299,6 +317,13 @@ const KLineChartView: React.FC<Props> = ({
   const removeCustomSpec = (key: string) =>
     setCustomSpecs((prev) => prev.filter((s) => s.key !== key));
 
+  const saveSpecToArsenal = (spec: IndicatorSpec) => {
+    saveToArsenal(spec, 'manual')
+      .then(() => listArsenal())
+      .then(setArsenal)
+      .catch(() => undefined);
+  };
+
   const toggleIndicator = (name: string) =>
     setEnabled((prev) => ({ ...prev, [name]: !prev[name] }));
 
@@ -381,8 +406,14 @@ const KLineChartView: React.FC<Props> = ({
           aria-label="Add custom indicator"
           value=""
           onChange={(e) => {
-            const spec = EXAMPLE_SPECS.find((s) => s.name === e.target.value);
-            if (spec) addCustomSpec(spec, spec.name);
+            const v = e.target.value;
+            if (v.startsWith('arsenal:')) {
+              const item = arsenal.find((a) => a.id === v.slice(8));
+              if (item) addCustomSpec(item.spec, item.name);
+            } else if (v.startsWith('example:')) {
+              const spec = EXAMPLE_SPECS.find((s) => s.name === v.slice(8));
+              if (spec) addCustomSpec(spec, spec.name);
+            }
           }}
           style={{
             background: '#000',
@@ -395,11 +426,22 @@ const KLineChartView: React.FC<Props> = ({
           }}
         >
           <option value="">+ add spec…</option>
-          {EXAMPLE_SPECS.map((s) => (
-            <option key={s.name} value={s.name}>
-              {s.name}
-            </option>
-          ))}
+          {arsenal.length > 0 && (
+            <optgroup label="Arsenal">
+              {arsenal.map((a) => (
+                <option key={a.id} value={`arsenal:${a.id}`}>
+                  {a.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          <optgroup label="Examples">
+            {EXAMPLE_SPECS.map((s) => (
+              <option key={s.name} value={`example:${s.name}`}>
+                {s.name}
+              </option>
+            ))}
+          </optgroup>
         </select>
         {customSpecs.map((s) => (
           <span
@@ -419,6 +461,25 @@ const KLineChartView: React.FC<Props> = ({
           >
             {s.label}
             {s.error ? ' ⚠' : ''}
+            {!s.error && (
+              <button
+                type="button"
+                aria-label={`Save ${s.label} to arsenal`}
+                title="Save to arsenal"
+                onClick={() => saveSpecToArsenal(s.spec)}
+                style={{
+                  background: 'transparent',
+                  color: 'inherit',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  lineHeight: 1,
+                  padding: 0,
+                }}
+              >
+                💾
+              </button>
+            )}
             <button
               type="button"
               aria-label={`Remove ${s.label}`}

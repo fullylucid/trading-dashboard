@@ -15,10 +15,11 @@ interpreted by a deterministic NumPy evaluator (see indicator_spec).
 """
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Path as PathParam, Request
 
 import indicator_spec as _engine
 from indicator_spec import SpecError
+import indicator_arsenal as _arsenal
 
 logger = logging.getLogger(__name__)
 
@@ -89,3 +90,36 @@ async def compute(request: Request) -> dict:
         logger.warning("indicator compute failed: %s", e)
         raise HTTPException(status_code=500, detail="Indicator compute failed") from None
     return result
+
+
+# ----------------------------------------------------------------------------
+# Arsenal — the library of approved specs (the acceptance sink)
+# ----------------------------------------------------------------------------
+
+@indicator_router.get("/arsenal")
+def arsenal_list() -> dict:
+    """All saved arsenal items, newest first (empty if storage is unavailable)."""
+    return {"items": _arsenal.list_items()}
+
+
+@indicator_router.post("/arsenal")
+async def arsenal_save(request: Request) -> dict:
+    """Validate + persist a spec into the arsenal. Body: ``{spec, source?, tags?}``."""
+    data = await _body(request)
+    try:
+        item = _arsenal.save_item(
+            data.get("spec"),
+            source=data.get("source", "manual"),
+            tags=data.get("tags"),
+        )
+    except SpecError as e:
+        raise HTTPException(status_code=400, detail={"errors": e.errors}) from None
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from None
+    return item
+
+
+@indicator_router.delete("/arsenal/{item_id}")
+def arsenal_delete(item_id: str = PathParam(..., description="Arsenal item id")) -> dict:
+    """Remove an arsenal item. ``{deleted: bool}`` (false if missing/unavailable)."""
+    return {"deleted": _arsenal.delete_item(item_id)}

@@ -283,3 +283,86 @@ def test_compute_endpoint(client):
 def test_compute_endpoint_invalid_spec_400(client):
     r = client.post("/api/indicator/compute", json={"spec": {"name": "x"}, "bars": _bars([1, 2])})
     assert r.status_code == 400
+
+
+# --------------------------------------------------------------------------- #
+# Arsenal — Redis-backed approved-spec library (with an in-memory fake redis)
+# --------------------------------------------------------------------------- #
+class _FakeRedis:
+    """Minimal hash-only fake covering what indicator_arsenal uses."""
+
+    def __init__(self):
+        self.h: dict = {}
+
+    def ping(self):
+        return True
+
+    def hgetall(self, key):
+        return dict(self.h)
+
+    def hget(self, key, field):
+        return self.h.get(field)
+
+    def hset(self, key, field, value):
+        self.h[field] = value
+        return 1
+
+    def hdel(self, key, field):
+        return 1 if self.h.pop(field, None) is not None else 0
+
+    def hlen(self, key):
+        return len(self.h)
+
+
+@pytest.fixture
+def arsenal(monkeypatch):
+    import indicator_arsenal as ars
+
+    fake = _FakeRedis()
+    monkeypatch.setattr(ars, "_r", lambda: fake)
+    return ars
+
+
+def _good_spec():
+    return _spec(
+        [{"id": "c", "op": "series", "ref": "close"},
+         {"id": "e", "op": "ema", "input": "c", "period": 9}],
+        [{"step": "e"}],
+        name="Saver",
+    )
+
+
+def test_arsenal_save_list_get_delete(arsenal):
+    item = arsenal.save_item(_good_spec(), source="manual", tags=["trend"])
+    assert item["id"].startswith("saver-")
+    assert item["spec"]["short_name"]  # normalized
+    assert item["tags"] == ["trend"]
+
+    items = arsenal.list_items()
+    assert len(items) == 1 and items[0]["id"] == item["id"]
+    assert arsenal.get_item(item["id"])["name"] == "Saver"
+    assert arsenal.delete_item(item["id"]) is True
+    assert arsenal.list_items() == []
+
+
+def test_arsenal_save_rejects_invalid_spec(arsenal):
+    with pytest.raises(SpecError):
+        arsenal.save_item({"name": "bad"})  # no steps/plots
+
+
+def test_arsenal_endpoints(client, arsenal):
+    # save
+    r = client.post("/api/indicator/arsenal", json={"spec": _good_spec(), "source": "test"})
+    assert r.status_code == 200
+    item_id = r.json()["id"]
+    # list
+    r = client.get("/api/indicator/arsenal")
+    assert r.status_code == 200 and any(i["id"] == item_id for i in r.json()["items"])
+    # delete
+    r = client.delete(f"/api/indicator/arsenal/{item_id}")
+    assert r.status_code == 200 and r.json()["deleted"] is True
+
+
+def test_arsenal_save_endpoint_invalid_400(client, arsenal):
+    r = client.post("/api/indicator/arsenal", json={"spec": {"name": "x"}})
+    assert r.status_code == 400
