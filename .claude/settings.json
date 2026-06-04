@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__finnhub__quote_get",
+      "mcp__finnhub__news_company",
+      "mcp__finnhub__news_market",
+      "mcp__finnhub__stock_metrics",
+      "mcp__finnhub__stock_candles",
+      "mcp__finnhub__stock_profile",
+      "mcp__finnhub__lookup_symbol",
+      "mcp__fred__series_observations",
+      "mcp__fred__search",
+      "mcp__sec-edgar__company_facts",
+      "mcp__sec-edgar__company_concept",
+      "Bash(npm view *)",
+      "Bash(docker compose -f docker-compose.box.yml ps *)",
+      "Bash(docker compose -f docker-compose.box.yml logs *)"
+    ]
+  }
+}
