@@ -96,18 +96,27 @@ def build_prompt(
     flagged: Sequence[MoverScore],
     held: Dict[str, float],
     grounding: Dict[str, List[Dict[str, str]]],
+    label: str = "",
+    move_window: str = "overnight",
 ) -> str:
+    """`label` distinguishes a same-day re-run (e.g. the 7:30 "Mid-Morning Sweep")
+    from the default pre-market brief — it sets the title line and the framing;
+    `move_window` is the phrase for when the moves happened. Both default to the
+    original pre-market behavior so the 6 AM brief is unchanged."""
     blocks = [
         _fmt_mover(s, held.get(s.ticker, 0.0), grounding.get(s.ticker, []))
         for s in flagged
     ]
     movers = "\n\n".join(blocks) if blocks else "(no names cleared the attention threshold)"
+    title_bit = f" {label}" if label else ""
+    desc = label or "pre-market"
     intro = (
-        f"Write Schyler's Crack-a-Dawn pre-market briefing for {date_str}.\n\n"
+        f"Write Schyler's Crack-a-Dawn {desc} briefing for {date_str}.\n\n"
+        f"TITLE LINE — use EXACTLY (including the emoji): *🌅 Crack-a-Dawn{title_bit} — {date_str}*\n\n"
         f"MARKET CONTEXT: {market_context}\n\n"
         "These names were flagged by the Attention Score (already ranked; sigma = move vs the "
-        "stock's own volatility, residual = move after stripping market/beta). Research WHY each "
-        "moved overnight and write it up:\n\n"
+        f"stock's own volatility, residual = move after stripping market/beta). Research WHY each "
+        f"moved {move_window} and write it up:\n\n"
         f"{movers}\n"
     )
     return intro + _OUTPUT_TEMPLATE

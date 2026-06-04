@@ -1,0 +1,9 @@
+[Unit]
+Description=Fire the Crack-a-Dawn mid-morning sweep at 7:30 AM PT on weekdays
+
+[Timer]
+OnCalendar=Mon..Fri 07:30 America/Los_Angeles
+Persistent=false
+
+[Install]
+WantedBy=timers.target
