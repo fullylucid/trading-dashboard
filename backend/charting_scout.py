@@ -21,6 +21,8 @@ we won't add without consent — see SOURCES).
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import logging
 import os
@@ -307,33 +309,49 @@ def _clamp01(x: Any) -> float:
 # Source adapters — each returns [{title, text, url, source_type}]
 # ============================================================================
 
-# Keywords that mark FinTube feed items as charting-relevant.
-_CHART_KW = ("indicator", "strateg", "chart", "pine", "rsi", "macd", "moving average",
-             "bollinger", "oscillator", "momentum", "trend", "backtest", "signal")
+# Charting-tuned discovery queries — the scout's OWN brief, so it surfaces chartable
+# techniques directly rather than scavenging FinTube's general (investment-call) feed.
+CHARTING_TOPICS = [
+    {"query": "custom tradingview indicator pine script tutorial", "category": "charting"},
+    {"query": "trading indicator strategy explained backtest", "category": "charting"},
+    {"query": "volume profile order flow trading technique", "category": "charting"},
+    {"query": "RSI MACD divergence trading strategy", "category": "charting"},
+    {"query": "supertrend vwap moving average crossover strategy", "category": "charting"},
+    {"query": "bollinger keltner squeeze momentum indicator", "category": "charting"},
+]
 
 
-def youtube_candidates(limit: int = 8) -> List[Dict[str, Any]]:
-    """Charting-relevant items from the existing FinTube distilled feed (reuse, no refetch)."""
+async def youtube_candidates(limit: int = 8, lookback_days: int = 21) -> List[Dict[str, Any]]:
+    """Dedicated charting discovery: run charting-tuned YouTube queries and pull
+    transcripts, reusing FinTube's discover + transcript machinery (NOT its feed).
+    Returns transcript-bearing candidates for spec generation. Best-effort/async."""
     try:
-        from fintube import store as ft_store
-        feed = ft_store.get_feed(limit=120) if hasattr(ft_store, "get_feed") else []
+        from fintube import discover as ft_discover, transcripts as ft_transcripts
     except Exception as e:  # noqa: BLE001
-        logger.info("scout youtube: fintube feed unavailable: %s", e)
+        logger.info("scout youtube: fintube discovery unavailable: %s", e)
+        return []
+    try:
+        cands = await asyncio.to_thread(
+            ft_discover.discover, CHARTING_TOPICS, lookback_days=lookback_days, per_query=8
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.info("scout youtube discover failed: %s", e)
         return []
     out: List[Dict[str, Any]] = []
-    for v in feed:
-        d = v.get("distill") or {}
-        blob = " ".join([
-            v.get("title", ""), d.get("summary", ""),
-            " ".join(d.get("key_insights", []) or []),
-            " ".join(d.get("tools_mentioned", []) or []),
-        ])
-        if not any(k in blob.lower() for k in _CHART_KW):
-            continue
-        url = v.get("url", "")
+    for c in cands:
+        url = c.get("url", "")
         if not url or _seen(url):
             continue
-        out.append({"title": v.get("title", "Untitled"), "text": blob, "url": url, "source_type": "youtube"})
+        try:
+            transcript = await asyncio.to_thread(ft_transcripts.fetch_transcript, url)
+        except Exception:  # noqa: BLE001
+            transcript = None
+        if not transcript:
+            continue
+        out.append({
+            "title": c.get("title", "Untitled"), "text": transcript,
+            "url": url, "source_type": "youtube",
+        })
         if len(out) >= limit:
             break
     return out
@@ -415,7 +433,10 @@ async def run_scout(sources: Optional[List[str]] = None, max_ideas: int = 12) ->
     by_source: Dict[str, int] = {}
     for name in wanted:
         try:
-            got = SOURCES[name]["adapter"]() or []  # type: ignore[operator]
+            res = SOURCES[name]["adapter"]()  # type: ignore[operator]
+            if inspect.isawaitable(res):
+                res = await res  # async adapters (e.g. youtube discovery + transcripts)
+            got = res or []
         except Exception as e:  # noqa: BLE001
             logger.info("scout source %s failed: %s", name, e)
             got = []

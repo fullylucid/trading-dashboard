@@ -176,6 +176,42 @@ def test_run_scout_stages_ideas(monkeypatch, fake_redis):
     assert len(scout.list_ideas()) == 1
 
 
+def test_run_scout_awaits_async_adapter(monkeypatch, fake_redis):
+    async def aadapter():
+        return [{"title": "T", "text": "ema crossover", "url": "http://u/async", "source_type": "fake"}]
+
+    monkeypatch.setattr(scout, "SOURCES", {"fake": {"adapter": aadapter, "implemented": True}})
+    _stub_worker(monkeypatch, {"title": "Test EMA", "confidence": 0.7, "spec": _VALID_SPEC})
+    result = asyncio.run(scout.run_scout(sources=["fake"], max_ideas=5))
+    assert result["staged"] == 1
+    assert len(scout.list_ideas()) == 1
+
+
+def test_youtube_candidates_dedicated_discovery(monkeypatch, fake_redis):
+    """Dedicated discovery: runs charting queries, pulls transcripts, drops no-transcript."""
+    ft = types.ModuleType("fintube")
+    disc = types.ModuleType("fintube.discover")
+    trans = types.ModuleType("fintube.transcripts")
+    disc.discover = lambda topics, lookback_days=21, per_query=8: [  # type: ignore[attr-defined]
+        {"url": "http://yt/1", "title": "Vid 1"},
+        {"url": "http://yt/2", "title": "Vid 2"},  # no transcript -> dropped
+    ]
+    trans.fetch_transcript = lambda url: (  # type: ignore[attr-defined]
+        "transcript about RSI divergence strategy" if url.endswith("1") else None
+    )
+    ft.discover = disc  # type: ignore[attr-defined]
+    ft.transcripts = trans  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fintube", ft)
+    monkeypatch.setitem(sys.modules, "fintube.discover", disc)
+    monkeypatch.setitem(sys.modules, "fintube.transcripts", trans)
+
+    out = asyncio.run(scout.youtube_candidates(limit=5))
+    assert len(out) == 1  # only Vid 1 had a transcript
+    assert out[0]["source_type"] == "youtube"
+    assert "RSI" in out[0]["text"]
+    assert scout.CHARTING_TOPICS  # the dedicated brief exists
+
+
 # --------------------------------------------------------------------------- #
 # Accept -> arsenal
 # --------------------------------------------------------------------------- #
