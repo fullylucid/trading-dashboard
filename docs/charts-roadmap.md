@@ -12,14 +12,14 @@ TradingView/Pine dependency); these are the concrete *features* he showed that w
 - Charting-ideas scout (dedicated discovery; YouTube + arXiv live, Reddit/X CLIs handed off)
 - (existing) PortfolioScan full scan; Telegram/scan alerts
 
-## In progress
-- **Re-homes** (backend `/api/chart/{symbol}/full` already computes these; render on KLineChart):
-  1. Fib + Support/Resistance level overlays
-  2. Buy/sell signal markers + insider markers
-  3. Relative-strength-vs-SPY line
+## In review (PR #69)
+- **Re-homes** (backend `/api/chart/{symbol}/full` already computes these; rendered on KLineChart via a "layers" toggle):
+  1. Fib + Support/Resistance level overlays ✅
+  2. Buy/sell signal markers + insider markers ✅
+  3. Relative-strength-vs-SPY line ✅
+- 4. **Multi-timeframe dashboard** ✅ — "MTF" toggle; trend + RSI(14) + last price across 15m/1H/1D/1W, computed per-TF via the indicator engine (absorbs his HTF-levels feature)
 
 ## Queued (priority order)
-4. **Multi-timeframe dashboard** — trend + RSI + MA across 1H/D/W/M on one chart (absorbs HTF-levels overlay)
 5. **Volume Profile + Point of Control** — volume-by-price histogram for S/R zones (needs price-bin compute)
 6. **VWAP + Anchored VWAP** — requires new engine ops (`cumsum` + vwap/anchor) + an anchor picker
 7. **Auto session key levels** — prev day/week/month H/L, today's open; auto-updating
