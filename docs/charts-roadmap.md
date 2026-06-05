@@ -19,8 +19,10 @@ TradingView/Pine dependency); these are the concrete *features* he showed that w
   3. Relative-strength-vs-SPY line ✅
 - 4. **Multi-timeframe dashboard** ✅ — "MTF" toggle; trend + RSI(14) + last price across 15m/1H/1D/1W, computed per-TF via the indicator engine (absorbs his HTF-levels feature)
 
-## Queued (priority order)
-5. **Volume Profile + Point of Control** — volume-by-price histogram for S/R zones (needs price-bin compute)
+## Shipped (cont.)
+- 5. **Volume Profile + Point of Control** ✅ — "VolProfile" toggle; volume-by-price histogram (DOM overlay positioned via `convertToPixel`, viewport-synced) + POC / Value-Area-High / Value-Area-Low horizontal lines via the reliable render path
+
+## Queued (priority order) — volume-by-price histogram for S/R zones (needs price-bin compute)
 6. **VWAP + Anchored VWAP** — requires new engine ops (`cumsum` + vwap/anchor) + an anchor picker
 7. **Auto session key levels** — prev day/week/month H/L, today's open; auto-updating
 8. **Sessions / kill-zones shading** — London/NY/Asia open-close + volatility windows (rebuild on KLineChart)

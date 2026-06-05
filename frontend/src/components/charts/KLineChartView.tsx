@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { dispose, init } from 'klinecharts';
+import { ActionType, dispose, init } from 'klinecharts';
 import type { Chart, DeepPartial, KLineData, Styles } from 'klinecharts';
 
 import { TIMEFRAMES, fetchKLineData, type Resolution } from '../../lib/klineApi';
@@ -32,7 +32,14 @@ import {
 } from './customIndicators';
 import { EXAMPLE_SPECS } from './exampleSpecs';
 import { fetchChartFull, type ChartFullResponse } from '../../lib/chartFullApi';
-import { buildLevelsResult, buildMarkersResult, buildRsResult } from './chartLayers';
+import {
+  buildLevelsResult,
+  buildMarkersResult,
+  buildRsResult,
+  buildVolumeProfileLevels,
+  computeVolumeProfile,
+  type VolumeProfile,
+} from './chartLayers';
 import MtfDashboard from './MtfDashboard';
 
 // Server-computed layers from /api/chart/{symbol}/full (re-homed onto KLineChart).
@@ -200,6 +207,12 @@ const KLineChartView: React.FC<Props> = ({
   const [fullVersion, setFullVersion] = useState(0);
   const layersRenderedRef = useRef<Map<string, { handle: CustomHandle; version: string }>>(new Map());
   const [showMtf, setShowMtf] = useState(false);
+  // Volume Profile: POC/VA lines (reliable render) + a DOM histogram overlay.
+  const [showVP, setShowVP] = useState(false);
+  const [vpProfile, setVpProfile] = useState<VolumeProfile | null>(null);
+  const [vpBars, setVpBars] = useState<{ top: number; height: number; widthPct: number; poc: boolean }[]>([]);
+  const [vpTick, setVpTick] = useState(0); // bumped on zoom/scroll/resize to reposition the histogram
+  const vpLevelsRef = useRef<CustomHandle | null>(null);
 
   // Load the saved-spec arsenal once (best-effort; empty if storage is down).
   useEffect(() => {
@@ -222,16 +235,28 @@ const KLineChartView: React.FC<Props> = ({
     chartRef.current = chart;
     setReady(true);
 
-    const onResize = () => chart.resize();
+    const bumpVp = () => setVpTick((t) => t + 1);
+    const onResize = () => {
+      chart.resize();
+      bumpVp();
+    };
     window.addEventListener('resize', onResize);
+    // Reposition the volume-profile histogram when the price axis moves.
+    chart.subscribeAction(ActionType.OnZoom, bumpVp);
+    chart.subscribeAction(ActionType.OnScroll, bumpVp);
+    chart.subscribeAction(ActionType.OnVisibleRangeChange, bumpVp);
     return () => {
       window.removeEventListener('resize', onResize);
+      chart.unsubscribeAction(ActionType.OnZoom, bumpVp);
+      chart.unsubscribeAction(ActionType.OnScroll, bumpVp);
+      chart.unsubscribeAction(ActionType.OnVisibleRangeChange, bumpVp);
       dispose(el);
       chartRef.current = null;
       paneIdsRef.current = {};
       candleOverlaysRef.current.clear();
       customRenderedRef.current.clear();
       layersRenderedRef.current.clear();
+      vpLevelsRef.current = null;
     };
   }, []);
 
@@ -348,6 +373,52 @@ const KLineChartView: React.FC<Props> = ({
   }, [ready, barsVersion, fullVersion, layers]);
 
   const toggleLayer = (name: string) => setLayers((prev) => ({ ...prev, [name]: !prev[name] }));
+
+  // --- Volume Profile: compute from bars, render POC/VA lines (reliable), set profile for the histogram. ---
+  useEffect(() => {
+    if (!ready) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    if (vpLevelsRef.current) {
+      removeSpecIndicator(chart, vpLevelsRef.current);
+      vpLevelsRef.current = null;
+    }
+    if (!showVP) {
+      setVpProfile(null);
+      setVpBars([]);
+      return;
+    }
+    const vp = computeVolumeProfile(barsRef.current);
+    setVpProfile(vp);
+    if (vp) {
+      const result = buildVolumeProfileLevels(vp, barsRef.current);
+      if (result) vpLevelsRef.current = addSpecIndicator(chart, 'vp-levels', result);
+    }
+  }, [ready, barsVersion, showVP]);
+
+  // --- Volume Profile histogram: map each bin to pixels (repositions on viewport change). ---
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!showVP || !vpProfile || !chart) {
+      setVpBars([]);
+      return;
+    }
+    const points = vpProfile.bins.flatMap((b) => [{ value: b.high }, { value: b.low }]);
+    const coords = chart.convertToPixel(points, { paneId: 'candle_pane' }) as Array<{ y?: number }>;
+    const out: { top: number; height: number; widthPct: number; poc: boolean }[] = [];
+    vpProfile.bins.forEach((b, i) => {
+      const yHigh = coords[2 * i]?.y;
+      const yLow = coords[2 * i + 1]?.y;
+      if (yHigh == null || yLow == null || b.volume <= 0) return;
+      out.push({
+        top: yHigh,
+        height: Math.max(1, yLow - yHigh),
+        widthPct: vpProfile.maxVol > 0 ? (b.volume / vpProfile.maxVol) * 100 : 0,
+        poc: b.mid === vpProfile.poc,
+      });
+    });
+    setVpBars(out);
+  }, [showVP, vpProfile, vpTick, barsVersion]);
 
   // --- Reconcile custom spec indicators: compute over the current bars, then
   // register/create; recompute when the bars change; remove deactivated ones. ---
@@ -478,6 +549,9 @@ const KLineChartView: React.FC<Props> = ({
         ))}
         <button type="button" onClick={() => setShowMtf((v) => !v)} style={btnStyle(showMtf)}>
           MTF
+        </button>
+        <button type="button" onClick={() => setShowVP((v) => !v)} style={btnStyle(showVP)}>
+          VolProfile
         </button>
       </div>
 
@@ -620,6 +694,25 @@ const KLineChartView: React.FC<Props> = ({
             borderRadius: 4,
           }}
         />
+        {/* Volume Profile histogram — right-aligned bars at each price bin */}
+        {showVP && vpBars.length > 0 && (
+          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+            {vpBars.map((b, i) => (
+              <div
+                key={i}
+                style={{
+                  position: 'absolute',
+                  right: 56, // clear the price axis
+                  top: b.top,
+                  height: b.height,
+                  width: `${Math.max(0.5, b.widthPct * 0.32)}%`,
+                  background: b.poc ? 'rgba(255,204,0,0.55)' : 'rgba(0,255,65,0.22)',
+                  borderTop: '1px solid rgba(0,0,0,0.4)',
+                }}
+              />
+            ))}
+          </div>
+        )}
         {(status === 'loading' || status === 'empty' || status === 'error') && (
           <div
             style={{
