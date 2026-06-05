@@ -51,7 +51,7 @@ async def find_from_image(image_b64: str, *, mime: str = "image/jpeg",
     if not vision.is_configured():
         return {"status": "vision-unconfigured", "query": None, "read": None, "candidates": []}
 
-    read = await vision.describe_image(image_b64, task="read_title", mime=mime, max_tokens=80)
+    read = await vision.analyze(image_b64=image_b64, task="read_title", mime=mime, max_tokens=80)
     query = _clean_query(read or "")
     if not query:
         return {"status": "no-text-read", "query": None, "read": read, "candidates": []}

@@ -216,8 +216,11 @@ async def leaderboard(force: bool = False) -> Dict[str, Any]:
 # ----------------------------------------------------------------- find-this-video (vision)
 @fintube_router.get("/vision-status")
 def vision_status() -> Dict[str, Any]:
-    """Lets the UI show/hide the camera 'find' tool depending on whether the VLM is wired up."""
-    return {"configured": vision.is_configured(), "model": vision.VLM_MODEL}
+    """Lets the UI show/hide the camera 'find' tool. backend is 'pool' (Claude workers read
+    the image), 'vlm' (external endpoint), or null (vision off)."""
+    backend = vision.active_backend()
+    return {"configured": vision.is_configured(), "backend": backend,
+            "model": vision.VLM_MODEL if backend == "vlm" else "claude-pool" if backend == "pool" else None}
 
 
 class FindReq(BaseModel):
