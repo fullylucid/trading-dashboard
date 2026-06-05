@@ -30,8 +30,9 @@ TradingView/Pine dependency); these are the concrete *features* he showed that w
 
 - 9. **Chart-condition smart alerts** ✅ — alert = indicator spec + condition (gt/lt/cross↑/cross↓) on a plot, evaluated server-side against the symbol's latest bars, delivered via Telegram (existing SIGNAL_BOT_*). Redis store + evaluator (dedup per bar) + `POST /api/alerts/check` (driven by a systemd timer, deployment/chart-alerts.*). "Alerts" panel for price-level alerts; engine supports arbitrary specs.
 
-## Queued (priority order)
-10. **Chart-integrated multi-symbol screener** — run an indicator spec / criteria across a watchlist (reuse the indicator engine)
+- 10. **Chart-integrated multi-symbol screener** ✅ — "Screen" toggle/panel; run a price condition (gt/lt/cross↑/cross↓) across a watchlist, matches-first results. `POST /api/indicator/screen` reuses the engine + the alert evaluator's bar-fetch/condition helpers.
+
+## Queued (optional / later)
 11. **(optional)** "Build my chart" preset wizard + curated arsenal bundles (MA suite, ICT/sessions, volume kit)
 
 ## Also queued (pre-existing Phase-3 backlog)

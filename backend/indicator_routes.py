@@ -123,3 +123,28 @@ async def arsenal_save(request: Request) -> dict:
 def arsenal_delete(item_id: str = PathParam(..., description="Arsenal item id")) -> dict:
     """Remove an arsenal item. ``{deleted: bool}`` (false if missing/unavailable)."""
     return {"deleted": _arsenal.delete_item(item_id)}
+
+
+# ----------------------------------------------------------------------------
+# Multi-symbol screener
+# ----------------------------------------------------------------------------
+
+@indicator_router.post("/screen")
+async def screen(request: Request) -> dict:
+    """Run a spec + condition across a watchlist. Body:
+    ``{symbols: [..], spec, plot_step, op, value}`` -> ``{results: [{symbol, value, matched}]}``."""
+    import indicator_screen as _screen
+    data = await _body(request)
+    try:
+        results = _screen.screen(
+            symbols=data.get("symbols") or [],
+            spec=data.get("spec"),
+            plot_step=data.get("plot_step", ""),
+            op=data.get("op", ""),
+            value=data.get("value"),
+        )
+    except SpecError as e:
+        raise HTTPException(status_code=400, detail={"errors": e.errors}) from None
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return {"results": results}
