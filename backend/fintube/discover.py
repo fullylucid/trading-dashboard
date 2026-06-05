@@ -110,6 +110,21 @@ def search_recent(
     return out
 
 
+def search_titles(query: str, *, n: int = 15, timeout: int = 120) -> List[Dict[str, Any]]:
+    """Raw title search for *resolution* (the find-this-video flow), NOT discovery.
+
+    Unlike ``search_recent`` this applies no freshness or duration filter — the target
+    video could be old or a Short; we want the best title match regardless. Returns parsed
+    candidates in YouTube's relevance order.
+    """
+    out: List[Dict[str, Any]] = []
+    for row in _search_raw(query, n, timeout):
+        c = _parse_row(row)
+        if c:
+            out.append(c)
+    return out
+
+
 def discover(
     topics: List[Dict[str, Any]],
     *,

@@ -116,6 +116,13 @@ export default function FinTube() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  // find-by-photo (vision) state
+  const [visionOn, setVisionOn] = useState(false);
+  const [findOpen, setFindOpen] = useState(false);
+  const [finding, setFinding] = useState(false);
+  const [findMsg, setFindMsg] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<{ video_id: string; title: string; channel?: string; url: string; published?: string; match?: number }[]>([]);
+
   const loadFeed = useCallback(async () => {
     const q = catFilter === 'all' ? '' : `?category=${catFilter}`;
     try { const r = await fetch(`/api/fintube/feed${q}`); if (r.ok) setVideos((await r.json()).videos || []); } catch { /* */ }
@@ -133,14 +140,16 @@ export default function FinTube() {
   useEffect(() => { loadFeed(); loadChannels(); }, [loadFeed, loadChannels]);
   useEffect(() => { if (view === 'leaderboard') loadLb(); }, [view, loadLb]);
   useEffect(() => { if (view === 'tickers') loadTks(); }, [view, loadTks]);
+  useEffect(() => { fetch('/api/fintube/vision-status').then(r => r.ok ? r.json() : null).then(d => setVisionOn(!!d?.configured)).catch(() => {}); }, []);
 
-  const submit = async () => {
-    if (!url.trim()) return;
+  const submit = async (overrideUrl?: string) => {
+    const target = (overrideUrl ?? url).trim();
+    if (!target) return;
     setBusy(true); setMsg('distilling… (transcript → Opus pool, ~30-60s)');
     try {
       const r = await fetch('/api/fintube/ingest', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url: url.trim(), category: cat, track }),
+        body: JSON.stringify({ url: target, category: cat, track }),
       });
       const d = await r.json();
       if (!r.ok) { setMsg(`error: ${d.detail || r.status}`); }
@@ -151,6 +160,29 @@ export default function FinTube() {
       }
     } catch (e: any) { setMsg(`error: ${e?.message || e}`); }
     finally { setBusy(false); }
+  };
+
+  const findByPhoto = async (file: File) => {
+    setFinding(true); setCandidates([]); setFindMsg('reading the screen with the local VLM…');
+    try {
+      const b64 = await new Promise<string>((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(String(fr.result).split(',')[1] || '');
+        fr.onerror = () => rej(fr.error);
+        fr.readAsDataURL(file);
+      });
+      const r = await fetch('/api/fintube/find', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ image_b64: b64, mime: file.type || 'image/jpeg' }),
+      });
+      const d = await r.json();
+      if (!r.ok) { setFindMsg(`error: ${d.detail || r.status}`); }
+      else if (d.status === 'vision-unconfigured') { setFindMsg('vision service not configured on the backend'); }
+      else if (d.status === 'no-text-read') { setFindMsg('couldn’t read a title from that image — try a clearer shot'); }
+      else if (!d.candidates?.length) { setFindMsg(`read “${d.read}” but found no matches`); }
+      else { setFindMsg(`read “${d.read}” → ${d.candidates.length} match(es):`); setCandidates(d.candidates); }
+    } catch (e: any) { setFindMsg(`error: ${e?.message || e}`); }
+    finally { setFinding(false); }
   };
 
   const refresh = async () => {
@@ -185,10 +217,33 @@ export default function FinTube() {
           <label style={{ fontSize: 11, color: DIM, display: 'flex', gap: 4, alignItems: 'center', cursor: 'pointer' }}>
             <input type="checkbox" checked={track} onChange={(e) => setTrack(e.target.checked)} /> track channel
           </label>
-          <button onClick={submit} disabled={busy} style={{ ...box, cursor: busy ? 'default' : 'pointer', color: busy ? DIM : GREEN }}>{busy ? '…' : '⚙ distill'}</button>
+          <button onClick={() => submit()} disabled={busy} style={{ ...box, cursor: busy ? 'default' : 'pointer', color: busy ? DIM : GREEN }}>{busy ? '…' : '⚙ distill'}</button>
           <button onClick={refresh} disabled={busy} style={{ ...box, cursor: busy ? 'default' : 'pointer' }} title="check all tracked channels for new videos">↻ refresh tracked</button>
+          {visionOn && <button onClick={() => setFindOpen(o => !o)} style={{ ...box, cursor: 'pointer', background: findOpen ? 'rgba(0,255,65,0.18)' : '#000' }} title="snap/upload a screen showing a video — the local VLM reads the title and finds it">📷 find by photo</button>}
         </div>
         {msg && <div style={{ fontSize: 11, color: DIM, marginTop: 6 }}>{msg}</div>}
+
+        {visionOn && findOpen && (
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${DIM}` }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <label style={{ ...box, cursor: 'pointer' }}>
+                📷 snap / upload
+                <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+                       onChange={(e) => { const f = e.target.files?.[0]; if (f) findByPhoto(f); e.currentTarget.value = ''; }} />
+              </label>
+              <span style={{ fontSize: 11, color: DIM }}>{finding ? '…reading' : 'point at a screen showing a YouTube video; the local VLM reads the title and resolves it'}</span>
+            </div>
+            {findMsg && <div style={{ fontSize: 11, color: DIM, marginTop: 6 }}>{findMsg}</div>}
+            {candidates.map((c) => (
+              <div key={c.video_id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', padding: '4px 0', borderTop: `1px solid rgba(0,255,65,0.12)` }}>
+                {c.match != null && <span style={{ fontSize: 10, color: c.match >= 0.6 ? GREEN : AMBER, minWidth: 34 }}>{Math.round(c.match * 100)}%</span>}
+                <a href={c.url} target="_blank" rel="noreferrer" style={{ color: GREEN, fontSize: 12, textDecoration: 'none', fontWeight: 700 }}>{c.title}</a>
+                <span style={{ fontSize: 10, color: DIM }}>{c.channel}{c.published ? ` · ${c.published}` : ''}</span>
+                <button onClick={() => submit(c.url)} disabled={busy} style={{ marginLeft: 'auto', ...box, padding: '1px 8px', fontSize: 10, cursor: busy ? 'default' : 'pointer' }}>⚙ distill</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* view switch */}
