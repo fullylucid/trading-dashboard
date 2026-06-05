@@ -21,7 +21,9 @@ export interface CustomHandle {
 
 function figureType(t: string): string {
   // KLineChart figure types: 'line' | 'bar' | 'circle'. Map our plot types.
-  return t === 'histogram' ? 'bar' : 'line';
+  if (t === 'histogram') return 'bar';
+  if (t === 'circle') return 'circle';
+  return 'line';
 }
 
 /**
