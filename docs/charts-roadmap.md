@@ -24,8 +24,9 @@ TradingView/Pine dependency); these are the concrete *features* he showed that w
 
 - 6. **VWAP + Anchored VWAP** ✅ — added engine `cumsum` op; VWAP = `cumsum(hlc3·vol)/cumsum(vol)` as a spec. "VWAP" toggle (session over all bars) + click-a-bar anchored VWAP (computed over bars sliced from the anchor); also an example spec in the picker.
 
+- 7. **Auto session key levels** ✅ — "KeyLevels" toggle; prior-day H/L/close, today's open, prior-week H/L, prior-month H/L, 52-week H/L as horizontal lines (computed from daily bars, cached per symbol)
+
 ## Queued (priority order)
-7. **Auto session key levels** — prev day/week/month H/L, today's open; auto-updating
 8. **Sessions / kill-zones shading** — London/NY/Asia open-close + volatility windows (rebuild on KLineChart)
 9. **Chart-condition smart alerts** — one alert over all enabled conditions → Telegram/Slack/Discord/email (reuse agent-bridge + messenger)
 10. **Chart-integrated multi-symbol screener** — run an indicator spec / criteria across a watchlist (reuse the indicator engine)

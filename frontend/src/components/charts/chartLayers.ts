@@ -206,6 +206,91 @@ export function buildVolumeProfileLevels(vp: VolumeProfile, bars: KLineData[]): 
   return { name: 'Volume Profile', short_name: 'VP', pane: 'overlay', precision: 2, plots, bars: bars.length };
 }
 
+// --- Auto session key levels ---------------------------------------------
+
+export interface KeyLevel {
+  label: string;
+  value: number;
+  color: string;
+}
+
+function hiLo(bars: KLineData[]): { high: number; low: number } {
+  let high = -Infinity;
+  let low = Infinity;
+  for (const b of bars) {
+    if (Number.isFinite(b.high)) high = Math.max(high, b.high);
+    if (Number.isFinite(b.low)) low = Math.min(low, b.low);
+  }
+  return { high, low };
+}
+
+/** Group bars by an integer key, preserving first-seen order. */
+function groupBy(bars: KLineData[], keyOf: (b: KLineData) => number): KLineData[][] {
+  const map = new Map<number, KLineData[]>();
+  for (const b of bars) {
+    const k = keyOf(b);
+    const arr = map.get(k);
+    if (arr) arr.push(b);
+    else map.set(k, [b]);
+  }
+  return [...map.values()];
+}
+
+/**
+ * Auto key levels from DAILY bars (ascending): prior-day H/L/close, today's open,
+ * prior-week H/L, prior-month H/L, and 52-week H/L. Weeks are epoch-7-day buckets,
+ * months are UTC calendar months — good enough for "the previous period's range".
+ * Pure / testable.
+ */
+export function computeKeyLevels(daily: KLineData[]): KeyLevel[] {
+  if (daily.length < 2) return [];
+  const out: KeyLevel[] = [];
+  const last = daily[daily.length - 1];
+  const prevDay = daily[daily.length - 2];
+
+  if (Number.isFinite(prevDay.high)) out.push({ label: 'PDH', value: prevDay.high, color: RED });
+  if (Number.isFinite(prevDay.low)) out.push({ label: 'PDL', value: prevDay.low, color: GREEN });
+  if (Number.isFinite(prevDay.close)) out.push({ label: 'PDC', value: prevDay.close, color: GREY });
+  if (Number.isFinite(last.open)) out.push({ label: 'TO', value: last.open, color: GOLD });
+
+  const weeks = groupBy(daily, (b) => Math.floor(b.timestamp / (7 * 86400_000)));
+  if (weeks.length >= 2) {
+    const { high, low } = hiLo(weeks[weeks.length - 2]);
+    if (Number.isFinite(high)) out.push({ label: 'PWH', value: high, color: 'rgba(255,59,59,0.6)' });
+    if (Number.isFinite(low)) out.push({ label: 'PWL', value: low, color: 'rgba(0,255,65,0.6)' });
+  }
+
+  const months = groupBy(daily, (b) => {
+    const d = new Date(b.timestamp);
+    return d.getUTCFullYear() * 12 + d.getUTCMonth();
+  });
+  if (months.length >= 2) {
+    const { high, low } = hiLo(months[months.length - 2]);
+    if (Number.isFinite(high)) out.push({ label: 'PMH', value: high, color: 'rgba(255,59,59,0.4)' });
+    if (Number.isFinite(low)) out.push({ label: 'PML', value: low, color: 'rgba(0,255,65,0.4)' });
+  }
+
+  const yr = daily.slice(-252);
+  const { high, low } = hiLo(yr);
+  if (Number.isFinite(high)) out.push({ label: '52WH', value: high, color: GREY });
+  if (Number.isFinite(low)) out.push({ label: '52WL', value: low, color: GREY });
+
+  return out;
+}
+
+/** Render key levels as constant horizontal lines over the displayed bars. */
+export function buildKeyLevelsResult(levels: KeyLevel[], bars: KLineData[]): ComputeResult | null {
+  if (!levels.length || !bars.length) return null;
+  const plots: ComputedPlot[] = levels.map((l, i) => ({
+    step: `kl${i}-${l.label}`,
+    label: l.label,
+    type: 'line',
+    color: l.color,
+    points: bars.map((b) => ({ time: b.timestamp, value: l.value })),
+  }));
+  return { name: 'Key Levels', short_name: 'KEY', pane: 'overlay', precision: 2, plots, bars: bars.length };
+}
+
 /** Relative-strength-vs-SPY (% outperformance) as a sub-pane line. */
 export function buildRsResult(full: ChartFullResponse): ComputeResult | null {
   const pts = (full.rs_vs_spy || [])

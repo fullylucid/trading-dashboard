@@ -40,7 +40,10 @@ import {
   computeVolumeProfile,
   vwapSpec,
   VWAP_ANCHORED_COLOR,
+  computeKeyLevels,
+  buildKeyLevelsResult,
   type VolumeProfile,
+  type KeyLevel,
 } from './chartLayers';
 import MtfDashboard from './MtfDashboard';
 
@@ -220,6 +223,10 @@ const KLineChartView: React.FC<Props> = ({
   const [vwapAnchor, setVwapAnchor] = useState<number | null>(null); // anchor bar timestamp (ms)
   const showVwapRef = useRef(false);
   const vwapRenderedRef = useRef<Map<string, { handle: CustomHandle; version: string }>>(new Map());
+  // Auto key levels (prev D/W/M H-L, today open, 52w) from daily bars.
+  const [showKeyLevels, setShowKeyLevels] = useState(false);
+  const keyLevelsRef = useRef<CustomHandle | null>(null);
+  const klCacheRef = useRef<{ symbol: string; levels: KeyLevel[] } | null>(null);
 
   // Load the saved-spec arsenal once (best-effort; empty if storage is down).
   useEffect(() => {
@@ -274,6 +281,7 @@ const KLineChartView: React.FC<Props> = ({
       layersRenderedRef.current.clear();
       vpLevelsRef.current = null;
       vwapRenderedRef.current.clear();
+      keyLevelsRef.current = null;
     };
   }, []);
 
@@ -440,6 +448,43 @@ const KLineChartView: React.FC<Props> = ({
   useEffect(() => {
     showVwapRef.current = showVwap;
   }, [showVwap]);
+
+  // --- Auto key levels: daily-bar-derived horizontal lines (cached per symbol). ---
+  useEffect(() => {
+    if (!ready) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    let aborted = false;
+    const remove = () => {
+      if (keyLevelsRef.current) {
+        removeSpecIndicator(chart, keyLevelsRef.current);
+        keyLevelsRef.current = null;
+      }
+    };
+    if (!showKeyLevels) {
+      remove();
+      return;
+    }
+    (async () => {
+      try {
+        if (klCacheRef.current?.symbol !== symbol) {
+          const daily = await fetchKLineData(symbol, 'D');
+          if (aborted) return;
+          klCacheRef.current = { symbol, levels: computeKeyLevels(daily) };
+        }
+        const bars = barsRef.current;
+        const result = buildKeyLevelsResult(klCacheRef.current.levels, bars);
+        if (aborted || !result) return;
+        remove();
+        keyLevelsRef.current = addSpecIndicator(chart, 'key-levels', result);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      aborted = true;
+    };
+  }, [ready, barsVersion, symbol, showKeyLevels]);
 
   // --- VWAP: session (all bars) + anchored (bars from the clicked anchor). ---
   useEffect(() => {
@@ -634,6 +679,9 @@ const KLineChartView: React.FC<Props> = ({
         </button>
         <button type="button" onClick={() => setShowVP((v) => !v)} style={btnStyle(showVP)}>
           VolProfile
+        </button>
+        <button type="button" onClick={() => setShowKeyLevels((v) => !v)} style={btnStyle(showKeyLevels)}>
+          KeyLevels
         </button>
         <button
           type="button"
