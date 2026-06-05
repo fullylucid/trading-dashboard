@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from fintube import distill, ingest, scoring, scout, store, tickers, transcripts
+from fintube import distill, find_video, ingest, scoring, scout, store, tickers, transcripts, vision
 
 fintube_router = APIRouter(prefix="/api/fintube", tags=["fintube"])
 logger = logging.getLogger("fintube_routes")
@@ -211,6 +211,29 @@ async def refresh() -> Dict[str, Any]:
 @fintube_router.get("/leaderboard")
 async def leaderboard(force: bool = False) -> Dict[str, Any]:
     return await asyncio.to_thread(scoring.compute_leaderboard, force)
+
+
+# ----------------------------------------------------------------- find-this-video (vision)
+@fintube_router.get("/vision-status")
+def vision_status() -> Dict[str, Any]:
+    """Lets the UI show/hide the camera 'find' tool depending on whether the VLM is wired up."""
+    return {"configured": vision.is_configured(), "model": vision.VLM_MODEL}
+
+
+class FindReq(BaseModel):
+    image_b64: str                 # base64 (no data: prefix needed)
+    mime: str = "image/jpeg"
+    max_results: int = 5
+
+
+@fintube_router.post("/find")
+async def find(req: FindReq) -> Dict[str, Any]:
+    """Resolve a YouTube video from a photo/screenshot/cam frame via the local VLM
+    (reads the on-screen title) + ytsearch. Returns ranked candidates to pick & distill."""
+    if not req.image_b64:
+        raise HTTPException(400, "image_b64 is required")
+    return await find_video.find_from_image(
+        req.image_b64, mime=req.mime, max_results=max(1, min(req.max_results, 10)))
 
 
 # ----------------------------------------------------------------- ticker intelligence
