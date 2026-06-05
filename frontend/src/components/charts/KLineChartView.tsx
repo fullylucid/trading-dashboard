@@ -47,6 +47,7 @@ import {
   type KeyLevel,
 } from './chartLayers';
 import MtfDashboard from './MtfDashboard';
+import AlertsPanel from './AlertsPanel';
 
 // Server-computed layers from /api/chart/{symbol}/full (re-homed onto KLineChart).
 const LAYER_BUILDERS: Record<
@@ -213,6 +214,7 @@ const KLineChartView: React.FC<Props> = ({
   const [fullVersion, setFullVersion] = useState(0);
   const layersRenderedRef = useRef<Map<string, { handle: CustomHandle; version: string }>>(new Map());
   const [showMtf, setShowMtf] = useState(false);
+  const [showAlerts, setShowAlerts] = useState(false);
   // Volume Profile: POC/VA lines (reliable render) + a DOM histogram overlay.
   const [showVP, setShowVP] = useState(false);
   const [vpProfile, setVpProfile] = useState<VolumeProfile | null>(null);
@@ -710,6 +712,9 @@ const KLineChartView: React.FC<Props> = ({
         <button type="button" onClick={() => setShowMtf((v) => !v)} style={btnStyle(showMtf)}>
           MTF
         </button>
+        <button type="button" onClick={() => setShowAlerts((v) => !v)} style={btnStyle(showAlerts)}>
+          Alerts
+        </button>
         <button type="button" onClick={() => setShowVP((v) => !v)} style={btnStyle(showVP)}>
           VolProfile
         </button>
@@ -762,6 +767,9 @@ const KLineChartView: React.FC<Props> = ({
 
       {/* Multi-timeframe dashboard (condensed read across 15m/1H/1D/1W) */}
       {showMtf && <MtfDashboard symbol={symbol} />}
+
+      {/* Chart-condition price alerts (delivered via Telegram) */}
+      {showAlerts && <AlertsPanel symbol={symbol} />}
 
       {/* Drawing tools */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
