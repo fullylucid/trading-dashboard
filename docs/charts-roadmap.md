@@ -26,8 +26,9 @@ TradingView/Pine dependency); these are the concrete *features* he showed that w
 
 - 7. **Auto session key levels** ✅ — "KeyLevels" toggle; prior-day H/L/close, today's open, prior-week H/L, prior-month H/L, 52-week H/L as horizontal lines (computed from daily bars, cached per symbol)
 
+- 8. **Sessions / kill-zones shading** ✅ — "Sessions" toggle (intraday only); translucent vertical bands for Asia/London/NY sessions + London/NY kill zones, positioned via `convertToPixel` (x-axis), viewport-synced
+
 ## Queued (priority order)
-8. **Sessions / kill-zones shading** — London/NY/Asia open-close + volatility windows (rebuild on KLineChart)
 9. **Chart-condition smart alerts** — one alert over all enabled conditions → Telegram/Slack/Discord/email (reuse agent-bridge + messenger)
 10. **Chart-integrated multi-symbol screener** — run an indicator spec / criteria across a watchlist (reuse the indicator engine)
 11. **(optional)** "Build my chart" preset wizard + curated arsenal bundles (MA suite, ICT/sessions, volume kit)

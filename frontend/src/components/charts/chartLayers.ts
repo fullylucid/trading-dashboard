@@ -291,6 +291,65 @@ export function buildKeyLevelsResult(levels: KeyLevel[], bars: KLineData[]): Com
   return { name: 'Key Levels', short_name: 'KEY', pane: 'overlay', precision: 2, plots, bars: bars.length };
 }
 
+// --- Trading sessions / kill zones ---------------------------------------
+
+export interface SessionDef {
+  key: string;
+  label: string;
+  start: number; // UTC hour (fractional), inclusive
+  end: number; // UTC hour (fractional), exclusive; may wrap past 24
+  color: string;
+}
+
+// UTC windows (DST-approximate). Sessions are translucent; kill zones brighter.
+export const SESSIONS: SessionDef[] = [
+  { key: 'asia', label: 'Asia', start: 0, end: 7, color: 'rgba(80,140,255,0.10)' },
+  { key: 'london', label: 'London', start: 7, end: 16, color: 'rgba(255,204,0,0.08)' },
+  { key: 'ny', label: 'New York', start: 13, end: 21, color: 'rgba(0,255,65,0.08)' },
+  { key: 'lkz', label: 'London KZ', start: 7, end: 10, color: 'rgba(255,204,0,0.18)' },
+  { key: 'nykz', label: 'NY KZ', start: 12, end: 15, color: 'rgba(0,255,65,0.20)' },
+];
+
+function utcHour(ts: number): number {
+  const d = new Date(ts);
+  return d.getUTCHours() + d.getUTCMinutes() / 60;
+}
+
+function inWindow(hour: number, start: number, end: number): boolean {
+  return start <= end ? hour >= start && hour < end : hour >= start || hour < end;
+}
+
+export interface SessionRuns {
+  key: string;
+  label: string;
+  color: string;
+  runs: [number, number][]; // [startTs, endTs] contiguous bar runs inside the window
+}
+
+/**
+ * For each session window, the contiguous runs of bars whose UTC time-of-day falls
+ * inside it (so the chart can shade vertical bands). Pure/testable. Intraday only —
+ * the caller should skip this on daily+ charts where time-of-day is meaningless.
+ */
+export function sessionRuns(bars: KLineData[], sessions: SessionDef[] = SESSIONS): SessionRuns[] {
+  return sessions.map((s) => {
+    const runs: [number, number][] = [];
+    let runStart: number | null = null;
+    let prev = 0;
+    for (const b of bars) {
+      const inside = inWindow(utcHour(b.timestamp), s.start, s.end);
+      if (inside && runStart === null) runStart = b.timestamp;
+      if (!inside && runStart !== null) {
+        runs.push([runStart, prev]);
+        runStart = null;
+      }
+      prev = b.timestamp;
+    }
+    if (runStart !== null) runs.push([runStart, prev]);
+    return { key: s.key, label: s.label, color: s.color, runs };
+  });
+}
+
 /** Relative-strength-vs-SPY (% outperformance) as a sub-pane line. */
 export function buildRsResult(full: ChartFullResponse): ComputeResult | null {
   const pts = (full.rs_vs_spy || [])
