@@ -68,14 +68,74 @@ function Chips({ items }: { items?: string[] }) {
   </div>;
 }
 
-function VideoCard({ v }: { v: VideoDoc }) {
+type VisualFrame = { idx: number; file: string; caption: string };
+type VisualsDoc = { status: string; frames: VisualFrame[]; error?: string; kept?: number; extracted?: number; analyzed?: number; dropped_unanalyzed?: number };
+
+function VisualsPanel({ videoId, url }: { videoId: string; url: string }) {
+  const [doc, setDoc] = useState<VisualsDoc | null>(null);
+  const [busy, setBusy] = useState(false);
+  const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const poll = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/fintube/visuals/${videoId}`);
+      if (r.ok) {
+        const d: VisualsDoc = await r.json();
+        setDoc(d);
+        if (d.status === 'running') { timer.current = setTimeout(poll, 3000); return; }
+      }
+    } catch { /* */ }
+    setBusy(false);
+  }, [videoId]);
+
+  useEffect(() => { fetch(`/api/fintube/visuals/${videoId}`).then(r => r.ok ? r.json() : null).then(d => { if (d && d.status !== 'none') setDoc(d); }).catch(() => {}); }, [videoId]);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  const start = async () => {
+    setBusy(true); setDoc({ status: 'running', frames: [] });
+    try { await fetch('/api/fintube/visuals', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ video_id: videoId, url }) }); } catch { /* */ }
+    poll();
+  };
+
+  const running = busy || doc?.status === 'running';
+  const frames = doc?.frames || [];
+  return (
+    <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid rgba(0,255,65,0.12)` }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <button onClick={start} disabled={running} style={{ ...box, padding: '2px 8px', fontSize: 10, cursor: running ? 'default' : 'pointer', color: running ? DIM : GREEN }}>
+          {running ? '🎞 studying frames…' : frames.length ? '🎞 re-extract visuals' : '🎞 extract visuals'}
+        </button>
+        {doc?.status === 'done' && <span style={{ fontSize: 10, color: DIM }}>kept {doc.kept}/{doc.analyzed} analyzed{doc.dropped_unanalyzed ? ` · ${doc.dropped_unanalyzed} more frames not analyzed (cap)` : ''}</span>}
+        {doc?.status === 'error' && <span style={{ fontSize: 10, color: AMBER }}>⚠ {doc.error}</span>}
+        {running && <span style={{ fontSize: 10, color: DIM }}>downloading + scene-detecting + captioning (can take a minute)…</span>}
+        {doc?.status === 'done' && !frames.length && <span style={{ fontSize: 10, color: DIM }}>no information-rich frames found</span>}
+      </div>
+      {!!frames.length && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10, marginTop: 8 }}>
+          {frames.map((f) => (
+            <div key={f.idx} style={{ border: `1px solid ${DIM}`, borderRadius: 6, overflow: 'hidden' }}>
+              <a href={`/api/fintube/visuals/${videoId}/frame/${f.idx}`} target="_blank" rel="noreferrer">
+                <img src={`/api/fintube/visuals/${videoId}/frame/${f.idx}`} alt={`frame ${f.idx}`} loading="lazy" style={{ width: '100%', display: 'block' }} />
+              </a>
+              <div style={{ fontSize: 10, color: DIM, padding: '4px 6px', lineHeight: 1.35 }}>{f.caption}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VideoCard({ v, visionOn }: { v: VideoDoc; visionOn: boolean }) {
   const d = v.distill;
+  const [showVisuals, setShowVisuals] = useState(false);
   return (
     <div style={card}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <a href={v.url} target="_blank" rel="noreferrer" style={{ color: GREEN, fontWeight: 700, fontSize: 13, textDecoration: 'none' }}>{v.title || v.video_id}</a>
         <span style={{ fontSize: 11, color: DIM }}>{v.channel} · {v.published}</span>
-        <span style={{ marginLeft: 'auto', fontSize: 10, border: `1px solid ${DIM}`, borderRadius: 10, padding: '1px 8px', color: DIM }}>{v.category}</span>
+        {visionOn && <button onClick={() => setShowVisuals(s => !s)} title="study this video's visuals (UI / charts / diagrams) via keyframes" style={{ ...box, padding: '0px 6px', fontSize: 10, cursor: 'pointer', color: showVisuals ? GREEN : DIM }}>🎞</button>}
+        <span style={{ marginLeft: visionOn ? 0 : 'auto', fontSize: 10, border: `1px solid ${DIM}`, borderRadius: 10, padding: '1px 8px', color: DIM }}>{v.category}</span>
         {d?.creator_view && <span style={{ fontSize: 11, color: viewColor(d.creator_view), fontWeight: 700 }}>{d.creator_view}</span>}
       </div>
       {v.error && <div style={{ fontSize: 11, color: AMBER, marginTop: 6 }}>⚠ {v.error}</div>}
@@ -96,6 +156,7 @@ function VideoCard({ v }: { v: VideoDoc }) {
           </div>}
         </>
       )}
+      {showVisuals && <VisualsPanel videoId={v.video_id} url={v.url} />}
     </div>
   );
 }
@@ -264,7 +325,7 @@ export default function FinTube() {
       {view === 'feed' && (
         <>
           {videos.length === 0 && <div style={{ ...card, fontSize: 12, color: DIM }}>No distilled videos yet. Paste a video/channel above, or hit “refresh tracked” to pull the latest from your channels.</div>}
-          {videos.map((v) => <VideoCard key={v.video_id} v={v} />)}
+          {videos.map((v) => <VideoCard key={v.video_id} v={v} visionOn={visionOn} />)}
         </>
       )}
 

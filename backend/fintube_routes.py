@@ -14,7 +14,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from fintube import distill, find_video, ingest, scoring, scout, store, tickers, transcripts, vision
+import os
+
+from fastapi.responses import FileResponse
+
+from fintube import (distill, find_video, ingest, scoring, scout, store, tickers,
+                     transcripts, vision, visuals)
 
 fintube_router = APIRouter(prefix="/api/fintube", tags=["fintube"])
 logger = logging.getLogger("fintube_routes")
@@ -237,6 +242,57 @@ async def find(req: FindReq) -> Dict[str, Any]:
         raise HTTPException(400, "image_b64 is required")
     return await find_video.find_from_image(
         req.image_b64, mime=req.mime, max_results=max(1, min(req.max_results, 10)))
+
+
+# ----------------------------------------------------------------- visual keyframes
+class VisualsReq(BaseModel):
+    url: str = ""
+    video_id: str = ""
+
+
+@fintube_router.post("/visuals")
+async def start_visuals(req: VisualsReq) -> Dict[str, Any]:
+    """Kick the keyframe pipeline for a video (background). HEAVY + gated: on-demand only.
+    The frames + captions fill in; poll GET /visuals/{video_id}."""
+    if not vision.is_configured():
+        raise HTTPException(400, "vision is not configured on this backend")
+    url = req.url.strip()
+    vid = req.video_id.strip()
+    if not vid and url:
+        kind, ident = ingest.parse_target(url)
+        if kind == "video":
+            vid = ident
+    if vid and not url:
+        url = f"https://www.youtube.com/watch?v={vid}"
+    if not vid or not url:
+        raise HTTPException(400, "need a video URL (or video_id)")
+
+    existing = store.get_video(vid)
+    title = (existing or {}).get("title", "")
+
+    if visuals.is_running(vid):
+        return {"status": "running", "video_id": vid}
+    asyncio.create_task(visuals.run_visuals(vid, url, title))
+    return {"status": "started", "video_id": vid,
+            "note": "frames appear as the pipeline finishes; poll /visuals/{video_id}"}
+
+
+@fintube_router.get("/visuals/{video_id}")
+def get_visuals(video_id: str) -> Dict[str, Any]:
+    doc = visuals.get_result(video_id)
+    if not doc:
+        return {"status": "none", "video_id": video_id, "frames": []}
+    if visuals.is_running(video_id):
+        doc["status"] = "running"
+    return doc
+
+
+@fintube_router.get("/visuals/{video_id}/frame/{idx}")
+def get_visual_frame(video_id: str, idx: int):
+    path = visuals.frame_path(video_id, idx)
+    if not os.path.isfile(path):
+        raise HTTPException(404, "frame not found")
+    return FileResponse(path, media_type="image/jpeg")
 
 
 # ----------------------------------------------------------------- ticker intelligence
