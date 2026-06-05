@@ -57,7 +57,18 @@ _TASKS = {
         "to a plain talking head, intro card, or ad)? Start your answer with strictly 'yes' or "
         "'no', then a short reason."
     ),
+    # combined gate + caption in one call: SKIP non-rich frames, else describe what's learnable
+    "study_frame": (
+        "Look at this video frame. If it shows information-rich visual material worth studying "
+        "— a UI / dashboard, a data visualization / chart, code, or an explanatory diagram — "
+        "describe in 1-2 concrete sentences what is notable about its design, layout, or "
+        "visualization technique, so it can be learned from. If it is just a talking head, an "
+        "intro/outro card, an ad, or blank/low-content, reply with EXACTLY: SKIP"
+    ),
 }
+
+# sentinel the study_frame task returns for frames not worth keeping
+SKIP_TOKEN = "SKIP"
 _DEFAULT_TASK = "caption_frame"
 
 
