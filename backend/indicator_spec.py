@@ -70,7 +70,7 @@ OHLCV_SERIES = ("open", "high", "low", "close", "volume", "hl2", "hlc3", "ohlc4"
 SOURCE_OPS = {"series", "const"}
 WINDOW_OPS = {"sma", "ema", "wma", "rsi", "stddev", "max", "min", "shift", "diff"}
 BINARY_OPS = {"add", "sub", "mul", "div", "cross"}
-UNARY_OPS = {"abs"}
+UNARY_OPS = {"abs", "cumsum"}
 CLAMP_OP = {"clamp"}
 ALL_OPS = SOURCE_OPS | WINDOW_OPS | BINARY_OPS | UNARY_OPS | CLAMP_OP
 
@@ -424,6 +424,11 @@ def interpret(spec: Dict[str, Any], bars: List[Dict[str, Any]]) -> Dict[str, Any
             res = (src - src.shift(step["period"])).to_numpy(dtype=float)
         elif op == "abs":
             res = np.abs(env[step["input"]])
+        elif op == "cumsum":
+            # Cumulative running sum (NaN treated as 0). Enables VWAP, OBV,
+            # cumulative returns. For anchored VWAP, the caller supplies bars
+            # sliced from the anchor, so the running sum starts there.
+            res = np.nancumsum(env[step["input"]])
         elif op == "clamp":
             res = np.clip(env[step["input"]], step.get("min", -np.inf), step.get("max", np.inf))
         elif op in ("add", "sub", "mul", "div"):
