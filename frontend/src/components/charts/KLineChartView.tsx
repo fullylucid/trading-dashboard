@@ -38,6 +38,8 @@ import {
   buildRsResult,
   buildVolumeProfileLevels,
   computeVolumeProfile,
+  vwapSpec,
+  VWAP_ANCHORED_COLOR,
   type VolumeProfile,
 } from './chartLayers';
 import MtfDashboard from './MtfDashboard';
@@ -213,6 +215,11 @@ const KLineChartView: React.FC<Props> = ({
   const [vpBars, setVpBars] = useState<{ top: number; height: number; widthPct: number; poc: boolean }[]>([]);
   const [vpTick, setVpTick] = useState(0); // bumped on zoom/scroll/resize to reposition the histogram
   const vpLevelsRef = useRef<CustomHandle | null>(null);
+  // VWAP: session (cumsum over all bars) + anchored (cumsum from a clicked bar).
+  const [showVwap, setShowVwap] = useState(false);
+  const [vwapAnchor, setVwapAnchor] = useState<number | null>(null); // anchor bar timestamp (ms)
+  const showVwapRef = useRef(false);
+  const vwapRenderedRef = useRef<Map<string, { handle: CustomHandle; version: string }>>(new Map());
 
   // Load the saved-spec arsenal once (best-effort; empty if storage is down).
   useEffect(() => {
@@ -245,11 +252,20 @@ const KLineChartView: React.FC<Props> = ({
     chart.subscribeAction(ActionType.OnZoom, bumpVp);
     chart.subscribeAction(ActionType.OnScroll, bumpVp);
     chart.subscribeAction(ActionType.OnVisibleRangeChange, bumpVp);
+    // Bar click → set the anchored-VWAP anchor (only while VWAP is on).
+    const onBarClick = (data?: unknown) => {
+      if (!showVwapRef.current) return;
+      const d = data as { timestamp?: number; kLineData?: { timestamp?: number }; data?: { timestamp?: number } };
+      const ts = d?.timestamp ?? d?.kLineData?.timestamp ?? d?.data?.timestamp;
+      if (typeof ts === 'number') setVwapAnchor(ts);
+    };
+    chart.subscribeAction(ActionType.OnCandleBarClick, onBarClick);
     return () => {
       window.removeEventListener('resize', onResize);
       chart.unsubscribeAction(ActionType.OnZoom, bumpVp);
       chart.unsubscribeAction(ActionType.OnScroll, bumpVp);
       chart.unsubscribeAction(ActionType.OnVisibleRangeChange, bumpVp);
+      chart.unsubscribeAction(ActionType.OnCandleBarClick, onBarClick);
       dispose(el);
       chartRef.current = null;
       paneIdsRef.current = {};
@@ -257,6 +273,7 @@ const KLineChartView: React.FC<Props> = ({
       customRenderedRef.current.clear();
       layersRenderedRef.current.clear();
       vpLevelsRef.current = null;
+      vwapRenderedRef.current.clear();
     };
   }, []);
 
@@ -420,6 +437,71 @@ const KLineChartView: React.FC<Props> = ({
     setVpBars(out);
   }, [showVP, vpProfile, vpTick, barsVersion]);
 
+  useEffect(() => {
+    showVwapRef.current = showVwap;
+  }, [showVwap]);
+
+  // --- VWAP: session (all bars) + anchored (bars from the clicked anchor). ---
+  useEffect(() => {
+    if (!ready) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    const rendered = vwapRenderedRef.current;
+    let aborted = false;
+    const remove = (key: string) => {
+      const e = rendered.get(key);
+      if (e) {
+        removeSpecIndicator(chart, e.handle);
+        rendered.delete(key);
+      }
+    };
+
+    if (!showVwap) {
+      remove('session');
+      remove('anchored');
+      return;
+    }
+
+    (async () => {
+      const bars = barsRef.current;
+      if (!bars.length) return;
+      const sv = `${barsVersion}`;
+      if (rendered.get('session')?.version !== sv) {
+        try {
+          const res = await computeIndicator(vwapSpec(), bars);
+          if (aborted) return;
+          remove('session');
+          const h = addSpecIndicator(chart, 'vwap-session', res);
+          if (h) rendered.set('session', { handle: h, version: sv });
+        } catch {
+          /* ignore */
+        }
+      }
+      if (vwapAnchor != null) {
+        const av = `${barsVersion}:${vwapAnchor}`;
+        if (rendered.get('anchored')?.version !== av) {
+          const slice = bars.filter((b) => b.timestamp >= vwapAnchor);
+          if (slice.length >= 2) {
+            try {
+              const res = await computeIndicator(vwapSpec(VWAP_ANCHORED_COLOR, 'aVWAP'), slice);
+              if (aborted) return;
+              remove('anchored');
+              const h = addSpecIndicator(chart, 'vwap-anchored', res);
+              if (h) rendered.set('anchored', { handle: h, version: av });
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+      } else {
+        remove('anchored');
+      }
+    })();
+    return () => {
+      aborted = true;
+    };
+  }, [ready, barsVersion, showVwap, vwapAnchor]);
+
   // --- Reconcile custom spec indicators: compute over the current bars, then
   // register/create; recompute when the bars change; remove deactivated ones. ---
   useEffect(() => {
@@ -553,6 +635,35 @@ const KLineChartView: React.FC<Props> = ({
         <button type="button" onClick={() => setShowVP((v) => !v)} style={btnStyle(showVP)}>
           VolProfile
         </button>
+        <button
+          type="button"
+          onClick={() =>
+            setShowVwap((v) => {
+              if (v) setVwapAnchor(null);
+              return !v;
+            })
+          }
+          style={btnStyle(showVwap)}
+        >
+          VWAP
+        </button>
+        {showVwap && (
+          <span style={{ color: GREEN_DIM, fontFamily: 'monospace', fontSize: 11 }}>
+            {vwapAnchor
+              ? `anchor ${new Date(vwapAnchor).toLocaleDateString()}`
+              : 'click a bar to anchor'}
+            {vwapAnchor && (
+              <button
+                type="button"
+                aria-label="Clear VWAP anchor"
+                onClick={() => setVwapAnchor(null)}
+                style={{ background: 'transparent', color: GREEN, border: 'none', cursor: 'pointer', padding: '0 4px' }}
+              >
+                ×
+              </button>
+            )}
+          </span>
+        )}
       </div>
 
       {/* Multi-timeframe dashboard (condensed read across 15m/1H/1D/1W) */}

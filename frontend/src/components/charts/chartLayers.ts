@@ -9,8 +9,38 @@
 
 import type { KLineData } from 'klinecharts';
 
-import type { ComputeResult, ComputedPlot } from '../../lib/indicatorApi';
+import type { ComputeResult, ComputedPlot, IndicatorSpec } from '../../lib/indicatorApi';
 import type { ChartFullResponse } from '../../lib/chartFullApi';
+
+const CYAN = '#22d3ee';
+const MAGENTA = '#ff5cf4';
+
+/**
+ * VWAP = cumsum(hlc3 · volume) / cumsum(volume), expressed in the constrained
+ * engine grammar (the `cumsum` op makes this possible). Computed over whatever
+ * bars are passed: full bars = session/range VWAP; bars sliced from an anchor =
+ * anchored VWAP. `color` distinguishes the two on the chart.
+ */
+export function vwapSpec(color = CYAN, label = 'VWAP'): IndicatorSpec {
+  return {
+    name: label,
+    short_name: label,
+    pane: 'overlay',
+    precision: 2,
+    steps: [
+      { id: 'tp', op: 'series', ref: 'hlc3' },
+      { id: 'v', op: 'series', ref: 'volume' },
+      { id: 'tpv', op: 'mul', inputs: ['tp', 'v'] },
+      { id: 'ctpv', op: 'cumsum', input: 'tpv' },
+      { id: 'cv', op: 'cumsum', input: 'v' },
+      { id: 'vw', op: 'div', inputs: ['ctpv', 'cv'] },
+    ],
+    plots: [{ step: 'vw', label, color }],
+  };
+}
+
+export const VWAP_SESSION_COLOR = CYAN;
+export const VWAP_ANCHORED_COLOR = MAGENTA;
 
 const GREEN = '#00ff41';
 const RED = '#ff3b3b';

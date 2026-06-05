@@ -179,6 +179,35 @@ def test_diff_period_one():
     assert [p["value"] for p in out["plots"][0]["points"]] == [3.0, -2.0, 9.0]
 
 
+def test_cumsum_running_total():
+    spec = validate_spec(_spec(
+        [{"id": "c", "op": "series", "ref": "close"},
+         {"id": "cs", "op": "cumsum", "input": "c"}],
+        [{"step": "cs"}],
+    ))
+    out = interpret(spec, _bars([1, 2, 3, 4]))
+    assert [p["value"] for p in out["plots"][0]["points"]] == [1.0, 3.0, 6.0, 10.0]
+
+
+def test_vwap_via_cumsum():
+    # VWAP = cumsum(hlc3*vol) / cumsum(vol). Two bars: hlc3=10 vol=100, hlc3=20 vol=300.
+    # bar1 = 1000/100 = 10; bar2 = (1000+6000)/400 = 17.5
+    spec = validate_spec(_spec(
+        [{"id": "tp", "op": "series", "ref": "hlc3"},
+         {"id": "v", "op": "series", "ref": "volume"},
+         {"id": "tpv", "op": "mul", "inputs": ["tp", "v"]},
+         {"id": "ctpv", "op": "cumsum", "input": "tpv"},
+         {"id": "cv", "op": "cumsum", "input": "v"},
+         {"id": "vw", "op": "div", "inputs": ["ctpv", "cv"]}],
+        [{"step": "vw", "label": "VWAP"}],
+    ))
+    bars = _bars([10, 20], highs=[10, 20], lows=[10, 20], vols=[100, 300])
+    out = interpret(spec, bars)
+    vals = [p["value"] for p in out["plots"][0]["points"]]
+    assert vals[0] == pytest.approx(10.0)
+    assert vals[1] == pytest.approx(17.5)
+
+
 def test_cross_up_and_down():
     # fast crosses above slow then below.
     closes = [1, 2, 3, 2, 1]

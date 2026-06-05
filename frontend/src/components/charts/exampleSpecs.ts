@@ -4,8 +4,10 @@
 // as worked examples of the spec grammar for the future AI spec-author prompt.
 
 import type { IndicatorSpec } from '../../lib/indicatorApi';
+import { vwapSpec } from './chartLayers';
 
 export const EXAMPLE_SPECS: IndicatorSpec[] = [
+  vwapSpec(),
   {
     name: 'EMA Ribbon',
     short_name: 'RIBBON',

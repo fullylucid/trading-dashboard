@@ -22,8 +22,9 @@ TradingView/Pine dependency); these are the concrete *features* he showed that w
 ## Shipped (cont.)
 - 5. **Volume Profile + Point of Control** ✅ — "VolProfile" toggle; volume-by-price histogram (DOM overlay positioned via `convertToPixel`, viewport-synced) + POC / Value-Area-High / Value-Area-Low horizontal lines via the reliable render path
 
-## Queued (priority order) — volume-by-price histogram for S/R zones (needs price-bin compute)
-6. **VWAP + Anchored VWAP** — requires new engine ops (`cumsum` + vwap/anchor) + an anchor picker
+- 6. **VWAP + Anchored VWAP** ✅ — added engine `cumsum` op; VWAP = `cumsum(hlc3·vol)/cumsum(vol)` as a spec. "VWAP" toggle (session over all bars) + click-a-bar anchored VWAP (computed over bars sliced from the anchor); also an example spec in the picker.
+
+## Queued (priority order)
 7. **Auto session key levels** — prev day/week/month H/L, today's open; auto-updating
 8. **Sessions / kill-zones shading** — London/NY/Asia open-close + volatility windows (rebuild on KLineChart)
 9. **Chart-condition smart alerts** — one alert over all enabled conditions → Telegram/Slack/Discord/email (reuse agent-bridge + messenger)
