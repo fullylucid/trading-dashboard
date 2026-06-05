@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import PageHeader from '../components/PageHeader';
 
 const GREEN = '#00ff41';
@@ -24,9 +24,21 @@ type VideoDoc = {
 };
 type Pick = { ticker: string; dir: number; ret: number; alpha: number; pub: string; title: string; in_flight?: boolean; horizon_days?: number; window_end?: string };
 type LbRow = { channel: string; calls: number; scored: number; settled?: number; in_flight?: number; watch_calls?: number; avg_alpha: number | null; hit_rate: number | null; picks: Pick[] };
+type TkCreator = { channel: string; action?: string; conviction?: string; pub?: string; avg_alpha?: number | null; scored?: number };
+type TkCall = { channel: string; action?: string; conviction?: string; horizon?: string; price_target?: number | null; thesis?: string; pub?: string; title?: string; url?: string; creator_alpha?: number | null; creator_scored?: number };
+type TickerRow = {
+  ticker: string; mentions: number; buy: number; sell: number; watch: number; hold: number;
+  crowd_lean: number; net: string; first_pub?: string | null; last_pub?: string | null;
+  price?: number | null; ret_since_first?: number | null; avg_price_target?: number | null;
+  upside?: number | null; smart_agrees?: boolean | null; top_creator?: string | null;
+  signal: string; creators: TkCreator[]; calls: TkCall[];
+};
 
 const actionColor = (a?: string) => (a === 'buy' ? GREEN : a === 'sell' ? RED : a === 'watch' ? AMBER : DIM);
 const viewColor = (v?: string) => (v === 'bullish' ? GREEN : v === 'bearish' ? RED : v === 'mixed' ? AMBER : DIM);
+const signalColor = (s: string) => (s.startsWith('contrarian') ? '#ff9d3c' : s.includes('long') ? GREEN : s.includes('short') ? RED : DIM);
+const pct = (x?: number | null, d = 1) => (x == null ? '—' : `${x >= 0 ? '+' : ''}${(x * 100).toFixed(d)}%`);
+const retColor = (x?: number | null) => (x == null ? DIM : x >= 0 ? GREEN : RED);
 const CATS = ['finance', 'ai-coding', 'science', 'engineering', 'general'];
 
 function CallsTable({ calls }: { calls: Call[] }) {
@@ -89,10 +101,12 @@ function VideoCard({ v }: { v: VideoDoc }) {
 }
 
 export default function FinTube() {
-  const [view, setView] = useState<'feed' | 'channels' | 'leaderboard'>('feed');
+  const [view, setView] = useState<'feed' | 'channels' | 'tickers' | 'leaderboard'>('feed');
   const [videos, setVideos] = useState<VideoDoc[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [lb, setLb] = useState<LbRow[]>([]);
+  const [tks, setTks] = useState<TickerRow[]>([]);
+  const [tkOpen, setTkOpen] = useState<string | null>(null);
   const [catFilter, setCatFilter] = useState<string>('all');
 
   // add-box state
@@ -112,9 +126,13 @@ export default function FinTube() {
   const loadLb = useCallback(async () => {
     try { const r = await fetch('/api/fintube/leaderboard'); if (r.ok) setLb((await r.json()).leaderboard || []); } catch { /* */ }
   }, []);
+  const loadTks = useCallback(async () => {
+    try { const r = await fetch('/api/fintube/tickers'); if (r.ok) setTks((await r.json()).tickers || []); } catch { /* */ }
+  }, []);
 
   useEffect(() => { loadFeed(); loadChannels(); }, [loadFeed, loadChannels]);
   useEffect(() => { if (view === 'leaderboard') loadLb(); }, [view, loadLb]);
+  useEffect(() => { if (view === 'tickers') loadTks(); }, [view, loadTks]);
 
   const submit = async () => {
     if (!url.trim()) return;
@@ -175,9 +193,9 @@ export default function FinTube() {
 
       {/* view switch */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
-        {(['feed', 'channels', 'leaderboard'] as const).map((v) => (
+        {(['feed', 'channels', 'tickers', 'leaderboard'] as const).map((v) => (
           <button key={v} onClick={() => setView(v)} style={{ ...box, cursor: 'pointer', background: view === v ? 'rgba(0,255,65,0.18)' : '#000' }}>
-            {v === 'feed' ? '📰 feed' : v === 'channels' ? '📡 channels' : '🏆 alpha leaderboard'}
+            {v === 'feed' ? '📰 feed' : v === 'channels' ? '📡 channels' : v === 'tickers' ? '🎯 tickers' : '🏆 alpha leaderboard'}
           </button>
         ))}
         {view === 'feed' && (
@@ -211,6 +229,64 @@ export default function FinTube() {
           ))}
           <div style={{ fontSize: 11, color: DIM }}>Add channels with the box up top (paste @handle or URL, pick a category, tick “track channel”).</div>
         </>
+      )}
+
+      {view === 'tickers' && (
+        <div style={card}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: DIM }}>Every ticker called across the finance feed, pivoted by symbol: crowd stance, who called it (ranked by track-record α), live price &amp; return since the first call, avg target, and a <b>consensus / contrarian</b> read — does the sharpest creator on this name agree with the crowd, or fade it? <span style={{ color: '#ff9d3c' }}>contrarian</span> = top-α creator disagrees with the crowd. Tap a row for the calls.</span>
+            <button onClick={() => fetch('/api/fintube/tickers?force=true').then(r => r.json()).then(d => setTks(d.tickers || []))} style={{ marginLeft: 'auto', ...box, padding: '2px 8px', fontSize: 10, cursor: 'pointer' }}>recompute</button>
+          </div>
+          {tks.length === 0 && <div style={{ fontSize: 12, color: DIM }}>No ticker calls yet — distill some finance videos with buy/sell/watch calls first.</div>}
+          {tks.length > 0 && (
+            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+              <thead><tr>
+                <th style={th}>ticker</th><th style={th}>calls (B/S/W)</th><th style={th}>signal</th>
+                <th style={th}>price</th><th style={th}>since 1st</th><th style={th}>avg tgt</th><th style={th}>top creator</th>
+              </tr></thead>
+              <tbody>
+                {tks.map((t) => {
+                  const open = tkOpen === t.ticker;
+                  return (
+                    <React.Fragment key={t.ticker}>
+                      <tr onClick={() => setTkOpen(open ? null : t.ticker)} style={{ cursor: 'pointer', background: open ? 'rgba(0,255,65,0.06)' : undefined }}>
+                        <td style={{ ...td, fontWeight: 700 }}>{open ? '▾ ' : '▸ '}{t.ticker}</td>
+                        <td style={td}>
+                          <span style={{ color: GREEN }}>{t.buy}</span>/<span style={{ color: RED }}>{t.sell}</span>/<span style={{ color: AMBER }}>{t.watch}</span>
+                        </td>
+                        <td style={{ ...td, color: signalColor(t.signal), fontWeight: 700 }}>{t.signal}</td>
+                        <td style={td}>{t.price != null ? `$${t.price}` : '—'}</td>
+                        <td style={{ ...td, color: retColor(t.ret_since_first), fontWeight: 700 }}>{pct(t.ret_since_first)}</td>
+                        <td style={td}>{t.avg_price_target != null ? <>${t.avg_price_target}{t.upside != null && <span style={{ color: retColor(t.upside) }}> ({pct(t.upside, 0)})</span>}</> : '—'}</td>
+                        <td style={td}>{t.top_creator || '—'}{t.smart_agrees === false && <span style={{ color: '#ff9d3c' }} title="top creator fades the crowd"> ⚑</span>}</td>
+                      </tr>
+                      {open && (
+                        <tr><td colSpan={7} style={{ ...td, paddingTop: 0, paddingBottom: 10 }}>
+                          <div style={{ fontSize: 10, color: DIM, margin: '4px 0 2px' }}>
+                            first call {t.first_pub || '—'} · latest {t.last_pub || '—'} · crowd lean {pct(t.crowd_lean, 0)}
+                          </div>
+                          {t.calls.map((c, i) => (
+                            <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', padding: '3px 0', borderTop: i ? `1px solid rgba(0,255,65,0.12)` : undefined }}>
+                              <span style={{ color: actionColor(c.action), fontWeight: 700, fontSize: 11, minWidth: 38 }}>{c.action || '—'}</span>
+                              <span style={{ fontWeight: 700, fontSize: 11 }}>{c.channel}</span>
+                              {c.creator_alpha != null && <span style={{ fontSize: 10, color: c.creator_alpha >= 0 ? GREEN : RED }} title="creator track-record α">α {pct(c.creator_alpha, 0)}</span>}
+                              {c.conviction && <span style={{ fontSize: 10, color: DIM }}>{c.conviction}</span>}
+                              {c.horizon && <span style={{ fontSize: 10, color: DIM }}>{c.horizon}</span>}
+                              {c.price_target != null && <span style={{ fontSize: 10, color: DIM }}>tgt ${c.price_target}</span>}
+                              <span style={{ fontSize: 10, color: DIM }}>{c.pub}</span>
+                              {c.thesis && <span style={{ fontSize: 11, color: DIM, flexBasis: '100%' }}>{c.thesis}</span>}
+                              {c.url && <a href={c.url} target="_blank" rel="noreferrer" style={{ fontSize: 10, color: DIM }}>↗ {c.title?.slice(0, 60)}</a>}
+                            </div>
+                          ))}
+                        </td></tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
       )}
 
       {view === 'leaderboard' && (
