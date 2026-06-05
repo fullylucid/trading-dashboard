@@ -92,6 +92,90 @@ export function buildMarkersResult(full: ChartFullResponse, bars: KLineData[]): 
   return { name: 'Signals', short_name: 'SIG', pane: 'overlay', precision: 2, plots, bars: bars.length };
 }
 
+// --- Volume Profile -------------------------------------------------------
+
+export interface VolumeBin {
+  low: number;
+  high: number;
+  mid: number;
+  volume: number;
+}
+export interface VolumeProfile {
+  bins: VolumeBin[];
+  poc: number; // price of the point-of-control (highest-volume bin)
+  vah: number; // value-area high
+  val: number; // value-area low
+  maxVol: number; // volume of the POC bin
+}
+
+/**
+ * Volume-by-price profile from the displayed bars (TradingView "visible range"
+ * style). Each bar's volume is spread evenly across the price bins it spans
+ * (low→high). POC = highest-volume bin; value area = the contiguous band around
+ * the POC holding ~70% of total volume. Pure — no charting, fully testable.
+ */
+export function computeVolumeProfile(bars: KLineData[], nBins = 24): VolumeProfile | null {
+  if (bars.length < 2 || nBins < 2) return null;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const b of bars) {
+    if (Number.isFinite(b.low)) lo = Math.min(lo, b.low);
+    if (Number.isFinite(b.high)) hi = Math.max(hi, b.high);
+  }
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) return null;
+
+  const size = (hi - lo) / nBins;
+  const vols = new Array(nBins).fill(0);
+  const binOf = (p: number) => Math.min(nBins - 1, Math.max(0, Math.floor((p - lo) / size)));
+  for (const b of bars) {
+    const v = Number.isFinite(b.volume as number) ? (b.volume as number) : 0;
+    if (v <= 0 || !Number.isFinite(b.low) || !Number.isFinite(b.high)) continue;
+    const a = binOf(b.low);
+    const z = binOf(b.high);
+    const span = z - a + 1;
+    const per = v / span;
+    for (let i = a; i <= z; i++) vols[i] += per;
+  }
+
+  const bins: VolumeBin[] = vols.map((vol, i) => ({
+    low: lo + i * size,
+    high: lo + (i + 1) * size,
+    mid: lo + (i + 0.5) * size,
+    volume: vol,
+  }));
+  let pocIdx = 0;
+  for (let i = 1; i < nBins; i++) if (vols[i] > vols[pocIdx]) pocIdx = i;
+  const total = vols.reduce((s, v) => s + v, 0);
+  // Expand a band out from the POC until it holds ~70% of volume.
+  let loI = pocIdx;
+  let hiI = pocIdx;
+  let acc = vols[pocIdx];
+  while (acc < total * 0.7 && (loI > 0 || hiI < nBins - 1)) {
+    const below = loI > 0 ? vols[loI - 1] : -1;
+    const above = hiI < nBins - 1 ? vols[hiI + 1] : -1;
+    if (above >= below) acc += vols[++hiI];
+    else acc += vols[--loI];
+  }
+  return {
+    bins,
+    poc: bins[pocIdx].mid,
+    vah: bins[hiI].high,
+    val: bins[loI].low,
+    maxVol: vols[pocIdx],
+  };
+}
+
+/** POC + value-area-high/low as horizontal lines (reliable render path). */
+export function buildVolumeProfileLevels(vp: VolumeProfile, bars: KLineData[]): ComputeResult | null {
+  if (!bars.length) return null;
+  const plots: ComputedPlot[] = [
+    { step: 'poc', label: 'POC', type: 'line', color: GOLD, points: bars.map((b) => ({ time: b.timestamp, value: vp.poc })) },
+    { step: 'vah', label: 'VAH', type: 'line', color: GREY, points: bars.map((b) => ({ time: b.timestamp, value: vp.vah })) },
+    { step: 'val', label: 'VAL', type: 'line', color: GREY, points: bars.map((b) => ({ time: b.timestamp, value: vp.val })) },
+  ];
+  return { name: 'Volume Profile', short_name: 'VP', pane: 'overlay', precision: 2, plots, bars: bars.length };
+}
+
 /** Relative-strength-vs-SPY (% outperformance) as a sub-pane line. */
 export function buildRsResult(full: ChartFullResponse): ComputeResult | null {
   const pts = (full.rs_vs_spy || [])
