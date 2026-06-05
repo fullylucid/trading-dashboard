@@ -367,6 +367,13 @@ try:
 except Exception as e:  # noqa: BLE001 — additive; never block startup
     logging.getLogger(__name__).warning("charting router not registered: %s", e)
 
+try:
+    from alert_routes import alert_router
+    app.include_router(alert_router)
+    logger.info("Chart-condition alert router registered at /api/alerts/*")
+except Exception as e:  # noqa: BLE001 — additive; never block startup
+    logging.getLogger(__name__).warning("alert router not registered: %s", e)
+
 
 # ============================================================================
 # Agent live-stream WebSocket

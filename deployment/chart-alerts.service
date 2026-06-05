@@ -1,0 +1,16 @@
+[Unit]
+Description=Chart-condition smart alerts — evaluate active alerts, deliver fired ones (Telegram)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=user
+# Triggers the in-app evaluator over the loopback API (where Redis + the OHLC cache live).
+# Each active alert is computed via the indicator engine against the symbol's latest bars
+# and fires at most once per new bar. AGENT_AUTH_DISABLED=true on the box, so no auth
+# header is needed; nginx/Cloudflare never see this loopback call.
+ExecStart=/usr/bin/curl --fail --silent --show-error --max-time 60 \
+    --retry 3 --retry-delay 10 --retry-connrefused \
+    -X POST http://127.0.0.1:8000/api/alerts/check
+TimeoutStartSec=120

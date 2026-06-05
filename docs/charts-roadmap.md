@@ -28,8 +28,9 @@ TradingView/Pine dependency); these are the concrete *features* he showed that w
 
 - 8. **Sessions / kill-zones shading** ✅ — "Sessions" toggle (intraday only); translucent vertical bands for Asia/London/NY sessions + London/NY kill zones, positioned via `convertToPixel` (x-axis), viewport-synced
 
+- 9. **Chart-condition smart alerts** ✅ — alert = indicator spec + condition (gt/lt/cross↑/cross↓) on a plot, evaluated server-side against the symbol's latest bars, delivered via Telegram (existing SIGNAL_BOT_*). Redis store + evaluator (dedup per bar) + `POST /api/alerts/check` (driven by a systemd timer, deployment/chart-alerts.*). "Alerts" panel for price-level alerts; engine supports arbitrary specs.
+
 ## Queued (priority order)
-9. **Chart-condition smart alerts** — one alert over all enabled conditions → Telegram/Slack/Discord/email (reuse agent-bridge + messenger)
 10. **Chart-integrated multi-symbol screener** — run an indicator spec / criteria across a watchlist (reuse the indicator engine)
 11. **(optional)** "Build my chart" preset wizard + curated arsenal bundles (MA suite, ICT/sessions, volume kit)
 
