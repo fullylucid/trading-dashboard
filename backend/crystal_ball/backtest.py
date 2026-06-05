@@ -62,6 +62,19 @@ def crystal_ball_signal_fn(close_window: np.ndarray,
     }
 
 
+def crystal_ball_lppl_signal_fn(close_window: np.ndarray,
+                                volume_window: Optional[np.ndarray]) -> Dict[str, Any]:
+    """Same as ``crystal_ball_signal_fn`` but WITH the LPPL overlay enabled
+    (fast per-bar fit). Used to A/B whether LPPL adds backtested edge."""
+    r = crystal_ball_read("BT", close_window, volume=volume_window,
+                          include_lppl=True, lppl_fast=True)
+    return {
+        "direction": r["direction"],
+        "prob": r["reversal_probability"],
+        "confidence": r["confidence"],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Core
 # ---------------------------------------------------------------------------

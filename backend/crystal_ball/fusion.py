@@ -60,6 +60,9 @@ def crystal_ball_read(
     volume=None,
     *,
     last_price: Optional[float] = None,
+    include_lppl: bool = False,
+    lppl_horizon: int = 15,
+    lppl_fast: bool = False,
 ) -> Dict[str, Any]:
     """Produce the fused reversal read for one symbol.
 
@@ -106,6 +109,17 @@ def crystal_ball_read(
 
     # --- Classic reversal signals -----------------------------------------
     signals = all_reversal_signals(c, volume)
+
+    # --- Optional LPPL singularity overlay (gated; default off so the
+    #     validated v0.2 behavior is unchanged). Fires rarely — only on a
+    #     qualified bubble/anti-bubble fit — so it acts as a high-conviction
+    #     overlay rather than an everyday signal. ----------------------------
+    if include_lppl:
+        try:
+            from .lppl import lppl_signal
+            signals.append(lppl_signal(c, horizon=lppl_horizon, fast=lppl_fast))
+        except Exception:  # noqa: BLE001 — LPPL must never break the base read
+            pass
 
     # --- Signed weighted vote from the classic signals ---------------------
     net = 0.0
