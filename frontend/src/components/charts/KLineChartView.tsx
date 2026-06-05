@@ -48,6 +48,7 @@ import {
 } from './chartLayers';
 import MtfDashboard from './MtfDashboard';
 import AlertsPanel from './AlertsPanel';
+import ScreenerPanel from './ScreenerPanel';
 
 // Server-computed layers from /api/chart/{symbol}/full (re-homed onto KLineChart).
 const LAYER_BUILDERS: Record<
@@ -215,6 +216,7 @@ const KLineChartView: React.FC<Props> = ({
   const layersRenderedRef = useRef<Map<string, { handle: CustomHandle; version: string }>>(new Map());
   const [showMtf, setShowMtf] = useState(false);
   const [showAlerts, setShowAlerts] = useState(false);
+  const [showScreener, setShowScreener] = useState(false);
   // Volume Profile: POC/VA lines (reliable render) + a DOM histogram overlay.
   const [showVP, setShowVP] = useState(false);
   const [vpProfile, setVpProfile] = useState<VolumeProfile | null>(null);
@@ -715,6 +717,9 @@ const KLineChartView: React.FC<Props> = ({
         <button type="button" onClick={() => setShowAlerts((v) => !v)} style={btnStyle(showAlerts)}>
           Alerts
         </button>
+        <button type="button" onClick={() => setShowScreener((v) => !v)} style={btnStyle(showScreener)}>
+          Screen
+        </button>
         <button type="button" onClick={() => setShowVP((v) => !v)} style={btnStyle(showVP)}>
           VolProfile
         </button>
@@ -770,6 +775,9 @@ const KLineChartView: React.FC<Props> = ({
 
       {/* Chart-condition price alerts (delivered via Telegram) */}
       {showAlerts && <AlertsPanel symbol={symbol} />}
+
+      {/* Multi-symbol screener (price condition across a watchlist) */}
+      {showScreener && <ScreenerPanel symbol={symbol} />}
 
       {/* Drawing tools */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>

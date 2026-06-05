@@ -108,3 +108,28 @@ export async function deleteFromArsenal(id: string): Promise<boolean> {
   const { data } = await axios.delete<{ deleted: boolean }>(`/api/indicator/arsenal/${id}`);
   return data.deleted;
 }
+
+export interface ScreenRow {
+  symbol: string;
+  value: number | null;
+  matched: boolean;
+  error?: string;
+}
+
+/** Run a spec + condition across a watchlist; returns matches-first results. */
+export async function screenIndicator(
+  symbols: string[],
+  spec: IndicatorSpec,
+  plotStep: string,
+  op: string,
+  value: number,
+): Promise<ScreenRow[]> {
+  const { data } = await axios.post<{ results: ScreenRow[] }>('/api/indicator/screen', {
+    symbols,
+    spec,
+    plot_step: plotStep,
+    op,
+    value,
+  });
+  return data.results ?? [];
+}
