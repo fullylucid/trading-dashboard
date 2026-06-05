@@ -33,6 +33,7 @@ import {
 import { EXAMPLE_SPECS } from './exampleSpecs';
 import { fetchChartFull, type ChartFullResponse } from '../../lib/chartFullApi';
 import { buildLevelsResult, buildMarkersResult, buildRsResult } from './chartLayers';
+import MtfDashboard from './MtfDashboard';
 
 // Server-computed layers from /api/chart/{symbol}/full (re-homed onto KLineChart).
 const LAYER_BUILDERS: Record<
@@ -198,6 +199,7 @@ const KLineChartView: React.FC<Props> = ({
   const fullSymbolRef = useRef<string>('');
   const [fullVersion, setFullVersion] = useState(0);
   const layersRenderedRef = useRef<Map<string, { handle: CustomHandle; version: string }>>(new Map());
+  const [showMtf, setShowMtf] = useState(false);
 
   // Load the saved-spec arsenal once (best-effort; empty if storage is down).
   useEffect(() => {
@@ -474,7 +476,13 @@ const KLineChartView: React.FC<Props> = ({
             {name}
           </button>
         ))}
+        <button type="button" onClick={() => setShowMtf((v) => !v)} style={btnStyle(showMtf)}>
+          MTF
+        </button>
       </div>
+
+      {/* Multi-timeframe dashboard (condensed read across 15m/1H/1D/1W) */}
+      {showMtf && <MtfDashboard symbol={symbol} />}
 
       {/* Drawing tools */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
