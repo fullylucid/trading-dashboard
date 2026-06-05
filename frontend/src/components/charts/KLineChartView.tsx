@@ -42,6 +42,7 @@ import {
   VWAP_ANCHORED_COLOR,
   computeKeyLevels,
   buildKeyLevelsResult,
+  sessionRuns,
   type VolumeProfile,
   type KeyLevel,
 } from './chartLayers';
@@ -227,6 +228,10 @@ const KLineChartView: React.FC<Props> = ({
   const [showKeyLevels, setShowKeyLevels] = useState(false);
   const keyLevelsRef = useRef<CustomHandle | null>(null);
   const klCacheRef = useRef<{ symbol: string; levels: KeyLevel[] } | null>(null);
+  // Session / kill-zone shading (intraday only) — vertical translucent bands.
+  const [showSessions, setShowSessions] = useState(false);
+  const [sessionRects, setSessionRects] = useState<{ left: number; width: number; color: string }[]>([]);
+  const isIntraday = ['1', '5', '15', '60'].includes(resolution);
 
   // Load the saved-spec arsenal once (best-effort; empty if storage is down).
   useEffect(() => {
@@ -444,6 +449,34 @@ const KLineChartView: React.FC<Props> = ({
     });
     setVpBars(out);
   }, [showVP, vpProfile, vpTick, barsVersion]);
+
+  // --- Session / kill-zone shading: map each in-window bar run to x-pixel bands. ---
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!showSessions || !isIntraday || !chart) {
+      setSessionRects([]);
+      return;
+    }
+    const bars = barsRef.current;
+    if (!bars.length) {
+      setSessionRects([]);
+      return;
+    }
+    const rects: { left: number; width: number; color: string }[] = [];
+    for (const s of sessionRuns(bars)) {
+      for (const [startTs, endTs] of s.runs) {
+        const coords = chart.convertToPixel(
+          [{ timestamp: startTs }, { timestamp: endTs }],
+          { paneId: 'candle_pane' },
+        ) as Array<{ x?: number }>;
+        const x0 = coords[0]?.x;
+        const x1 = coords[1]?.x;
+        if (x0 == null || x1 == null) continue;
+        rects.push({ left: Math.min(x0, x1), width: Math.max(2, Math.abs(x1 - x0)), color: s.color });
+      }
+    }
+    setSessionRects(rects);
+  }, [showSessions, isIntraday, barsVersion, vpTick]);
 
   useEffect(() => {
     showVwapRef.current = showVwap;
@@ -685,6 +718,19 @@ const KLineChartView: React.FC<Props> = ({
         </button>
         <button
           type="button"
+          onClick={() => setShowSessions((v) => !v)}
+          style={btnStyle(showSessions)}
+          title={isIntraday ? 'London/NY/Asia sessions + kill zones' : 'Intraday timeframes only'}
+        >
+          Sessions
+        </button>
+        {showSessions && !isIntraday && (
+          <span style={{ color: GREEN_DIM, fontFamily: 'monospace', fontSize: 11 }}>
+            (intraday only)
+          </span>
+        )}
+        <button
+          type="button"
           onClick={() =>
             setShowVwap((v) => {
               if (v) setVwapAnchor(null);
@@ -853,6 +899,17 @@ const KLineChartView: React.FC<Props> = ({
             borderRadius: 4,
           }}
         />
+        {/* Session / kill-zone shading — full-height vertical bands */}
+        {showSessions && isIntraday && sessionRects.length > 0 && (
+          <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+            {sessionRects.map((r, i) => (
+              <div
+                key={i}
+                style={{ position: 'absolute', top: 0, bottom: 0, left: r.left, width: r.width, background: r.color }}
+              />
+            ))}
+          </div>
+        )}
         {/* Volume Profile histogram — right-aligned bars at each price bin */}
         {showVP && vpBars.length > 0 && (
           <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
