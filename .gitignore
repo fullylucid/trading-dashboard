@@ -27,3 +27,6 @@ backend/__pycache__/
 frontend/build/
 frontend/node_modules/
 /tmp/hermes-portal/
+
+# Crystal Ball runtime prediction journal (per-machine track record)
+backend/data/crystal_ball_journal.json

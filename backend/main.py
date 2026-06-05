@@ -367,6 +367,13 @@ try:
 except Exception as e:  # noqa: BLE001 — additive; never block startup
     logging.getLogger(__name__).warning("charting router not registered: %s", e)
 
+try:
+    from crystal_ball_routes import router as crystal_ball_router
+    app.include_router(crystal_ball_router)
+    logger.info("Crystal Ball router registered at /api/crystal-ball/*")
+except Exception as e:  # noqa: BLE001 — additive; never block startup
+    logging.getLogger(__name__).warning("crystal-ball router not registered: %s", e)
+
 
 # ============================================================================
 # Agent live-stream WebSocket
