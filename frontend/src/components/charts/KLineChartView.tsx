@@ -31,6 +31,19 @@ import {
   type CustomHandle,
 } from './customIndicators';
 import { EXAMPLE_SPECS } from './exampleSpecs';
+import { fetchChartFull, type ChartFullResponse } from '../../lib/chartFullApi';
+import { buildLevelsResult, buildMarkersResult, buildRsResult } from './chartLayers';
+
+// Server-computed layers from /api/chart/{symbol}/full (re-homed onto KLineChart).
+const LAYER_BUILDERS: Record<
+  string,
+  (full: ChartFullResponse, bars: KLineData[]) => import('../../lib/indicatorApi').ComputeResult | null
+> = {
+  Levels: buildLevelsResult,
+  Signals: buildMarkersResult,
+  RS: (full) => buildRsResult(full),
+};
+const LAYER_NAMES = ['Levels', 'Signals', 'RS'] as const;
 
 const GREEN = '#00ff41';
 const RED = '#ff3b3b';
@@ -179,6 +192,13 @@ const KLineChartView: React.FC<Props> = ({
   const customKeyRef = useRef(0);
   const [arsenal, setArsenal] = useState<ArsenalItem[]>([]);
 
+  // Server-computed layers (fib/S-R levels, signal markers, RS-vs-SPY) from /full.
+  const [layers, setLayers] = useState<Record<string, boolean>>({});
+  const fullRef = useRef<ChartFullResponse | null>(null);
+  const fullSymbolRef = useRef<string>('');
+  const [fullVersion, setFullVersion] = useState(0);
+  const layersRenderedRef = useRef<Map<string, { handle: CustomHandle; version: string }>>(new Map());
+
   // Load the saved-spec arsenal once (best-effort; empty if storage is down).
   useEffect(() => {
     let cancelled = false;
@@ -209,6 +229,7 @@ const KLineChartView: React.FC<Props> = ({
       paneIdsRef.current = {};
       candleOverlaysRef.current.clear();
       customRenderedRef.current.clear();
+      layersRenderedRef.current.clear();
     };
   }, []);
 
@@ -267,6 +288,64 @@ const KLineChartView: React.FC<Props> = ({
       }
     }
   }, [ready, enabled]);
+
+  // --- Fetch the server-enriched /full payload when a layer is on (once per symbol). ---
+  useEffect(() => {
+    if (!ready) return;
+    const anyOn = LAYER_NAMES.some((n) => layers[n]);
+    if (!anyOn) return;
+    if (fullSymbolRef.current === symbol && fullRef.current) return; // cached
+    const controller = new AbortController();
+    fetchChartFull(symbol, '1y', controller.signal)
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        fullRef.current = data;
+        fullSymbolRef.current = symbol;
+        setFullVersion((v) => v + 1);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [ready, symbol, layers]);
+
+  // Drop cached /full when the symbol changes so layers refetch for the new symbol.
+  useEffect(() => {
+    if (fullSymbolRef.current !== symbol) fullRef.current = null;
+  }, [symbol]);
+
+  // --- Reconcile server layers (levels / signals / RS) with toggle state + data. ---
+  useEffect(() => {
+    if (!ready) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    const rendered = layersRenderedRef.current;
+    const full = fullRef.current;
+    const bars = barsRef.current;
+    const version = `${barsVersion}:${fullVersion}`;
+
+    for (const name of LAYER_NAMES) {
+      const on = !!layers[name];
+      const existing = rendered.get(name);
+      if (!on) {
+        if (existing) {
+          removeSpecIndicator(chart, existing.handle);
+          rendered.delete(name);
+        }
+        continue;
+      }
+      if (existing && existing.version === version) continue; // up to date
+      if (!full || !bars.length) continue;
+      const result = LAYER_BUILDERS[name](full, bars);
+      if (existing) {
+        removeSpecIndicator(chart, existing.handle);
+        rendered.delete(name);
+      }
+      if (!result) continue; // no data for this layer
+      const handle = addSpecIndicator(chart, `layer-${name}`, result);
+      if (handle) rendered.set(name, { handle, version });
+    }
+  }, [ready, barsVersion, fullVersion, layers]);
+
+  const toggleLayer = (name: string) => setLayers((prev) => ({ ...prev, [name]: !prev[name] }));
 
   // --- Reconcile custom spec indicators: compute over the current bars, then
   // register/create; recompute when the bars change; remove deactivated ones. ---
@@ -374,6 +453,23 @@ const KLineChartView: React.FC<Props> = ({
             type="button"
             onClick={() => toggleIndicator(name)}
             style={btnStyle(!!enabled[name])}
+          >
+            {name}
+          </button>
+        ))}
+      </div>
+
+      {/* Server layers (fib/S-R levels, signal markers, RS-vs-SPY) from /full */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ color: GREEN_DIM, fontFamily: 'monospace', fontSize: 11 }}>
+          layers
+        </span>
+        {LAYER_NAMES.map((name) => (
+          <button
+            key={name}
+            type="button"
+            onClick={() => toggleLayer(name)}
+            style={btnStyle(!!layers[name])}
           >
             {name}
           </button>

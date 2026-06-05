@@ -33,7 +33,9 @@ export interface IndicatorSpec {
 export interface ComputedPlot {
   step: string;
   label: string;
-  type: 'line' | 'histogram' | 'baseline';
+  // 'circle' is a frontend-only render hint for sparse markers (the backend
+  // engine only emits line/histogram/baseline); see chartLayers.
+  type: 'line' | 'histogram' | 'baseline' | 'circle';
   color?: string;
   points: { time: number; value: number }[];
 }
