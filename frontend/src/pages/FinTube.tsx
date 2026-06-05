@@ -22,7 +22,8 @@ type VideoDoc = {
   video_id: string; title: string; channel: string; channel_id: string; published: string;
   url: string; category: string; distill?: Distill | null; error?: string; distilled_at?: string;
 };
-type LbRow = { channel: string; calls: number; scored: number; avg_alpha: number | null; hit_rate: number | null; picks: { ticker: string; dir: number; ret: number; alpha: number; pub: string; title: string }[] };
+type Pick = { ticker: string; dir: number; ret: number; alpha: number; pub: string; title: string; in_flight?: boolean; horizon_days?: number; window_end?: string };
+type LbRow = { channel: string; calls: number; scored: number; settled?: number; in_flight?: number; watch_calls?: number; avg_alpha: number | null; hit_rate: number | null; picks: Pick[] };
 
 const actionColor = (a?: string) => (a === 'buy' ? GREEN : a === 'sell' ? RED : a === 'watch' ? AMBER : DIM);
 const viewColor = (v?: string) => (v === 'bullish' ? GREEN : v === 'bearish' ? RED : v === 'mixed' ? AMBER : DIM);
@@ -215,7 +216,7 @@ export default function FinTube() {
       {view === 'leaderboard' && (
         <div style={card}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-            <span style={{ fontSize: 12, color: DIM }}>Finance calls scored by forward return vs SPY (signed by buy/sell). Higher avg α = sharper picks; negative = fade candidates.</span>
+            <span style={{ fontSize: 12, color: DIM }}>Each buy/sell scored over its own <b>horizon</b> (e.g. a “weeks” call judged on weeks, not months) vs SPY, signed by direction. <i>Hit rate = % that beat SPY (α&gt;0)</i>. <span style={{ color: AMBER }}>·live</span> = horizon still open, scored to date. Higher avg α = sharper picks; negative = fade candidates.</span>
             <button onClick={() => fetch('/api/fintube/leaderboard?force=true').then(r => r.json()).then(d => setLb(d.leaderboard || []))} style={{ marginLeft: 'auto', ...box, padding: '2px 8px', fontSize: 10, cursor: 'pointer' }}>recompute</button>
           </div>
           {lb.length === 0 && <div style={{ fontSize: 12, color: DIM }}>No scored calls yet — distill some finance videos with ticker calls first.</div>}
@@ -226,11 +227,13 @@ export default function FinTube() {
                 {lb.map((row) => (
                   <tr key={row.channel}>
                     <td style={{ ...td, fontWeight: 700 }}>{row.channel}</td>
-                    <td style={td}>{row.calls}</td>
-                    <td style={td}>{row.scored}</td>
+                    <td style={td}>{row.calls}{row.watch_calls ? <span style={{ color: DIM }}> +{row.watch_calls}👁</span> : null}</td>
+                    <td style={td}>{row.scored}{row.in_flight ? <span style={{ color: AMBER }}> ·{row.in_flight} live</span> : null}</td>
                     <td style={td}>{row.hit_rate != null ? `${(row.hit_rate * 100).toFixed(0)}%` : '—'}</td>
                     <td style={{ ...td, color: row.avg_alpha == null ? DIM : row.avg_alpha >= 0 ? GREEN : RED, fontWeight: 700 }}>{row.avg_alpha != null ? `${(row.avg_alpha * 100).toFixed(1)}%` : '—'}</td>
-                    <td style={{ ...td, color: DIM }}>{row.picks.slice(0, 4).map((p) => `${p.ticker} ${(p.alpha * 100).toFixed(0)}%`).join(', ')}</td>
+                    <td style={{ ...td, color: DIM }}>{row.picks.slice(0, 4).map((p, i) => (
+                      <span key={i}>{i ? ', ' : ''}<span style={{ color: p.alpha >= 0 ? GREEN : RED }} title={p.in_flight ? `open · ${p.horizon_days}d horizon` : `settled ${p.window_end || ''}`}>{p.ticker} {(p.alpha * 100).toFixed(0)}%{p.in_flight ? '·' : ''}</span></span>
+                    ))}</td>
                   </tr>
                 ))}
               </tbody>
