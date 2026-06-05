@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from fintube import distill, ingest, scoring, scout, store, transcripts
+from fintube import distill, ingest, scoring, scout, store, tickers, transcripts
 
 fintube_router = APIRouter(prefix="/api/fintube", tags=["fintube"])
 logger = logging.getLogger("fintube_routes")
@@ -211,3 +211,11 @@ async def refresh() -> Dict[str, Any]:
 @fintube_router.get("/leaderboard")
 async def leaderboard(force: bool = False) -> Dict[str, Any]:
     return await asyncio.to_thread(scoring.compute_leaderboard, force)
+
+
+# ----------------------------------------------------------------- ticker intelligence
+@fintube_router.get("/tickers")
+async def ticker_intel(force: bool = False) -> Dict[str, Any]:
+    """Per-ticker rollup across the finance feed: crowd stance, who-called-it + their
+    track record, live price/return, avg target, and a consensus/contrarian read."""
+    return await asyncio.to_thread(tickers.compute_ticker_intel, force)
