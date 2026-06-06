@@ -41,6 +41,17 @@ const pct = (x?: number | null, d = 1) => (x == null ? '—' : `${x >= 0 ? '+' :
 const retColor = (x?: number | null) => (x == null ? DIM : x >= 0 ? GREEN : RED);
 const CATS = ['finance', 'ai-coding', 'science', 'engineering', 'general'];
 
+function matchVideo(v: VideoDoc, q: string): boolean {
+  if (!q.trim()) return true;
+  const d = v.distill;
+  const hay = [
+    v.title, v.channel, v.category, d?.summary, d?.philosophy, d?.macro_thesis,
+    ...(d?.calls || []).map((c) => `${c.ticker || ''} ${c.action || ''} ${c.thesis || ''}`),
+    ...(d?.key_insights || []), ...(d?.tools_mentioned || []), ...(d?.recommendations || []),
+  ].filter(Boolean).join('  ').toLowerCase();
+  return q.toLowerCase().split(/\s+/).every((term) => hay.includes(term));
+}
+
 function CallsTable({ calls }: { calls: Call[] }) {
   return (
     <table style={{ borderCollapse: 'collapse', width: '100%', marginTop: 6 }}>
@@ -131,6 +142,13 @@ function VideoCard({ v, visionOn }: { v: VideoDoc; visionOn: boolean }) {
   const [showVisuals, setShowVisuals] = useState(false);
   return (
     <div style={card}>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <a href={v.url} target="_blank" rel="noreferrer" style={{ flexShrink: 0, lineHeight: 0 }}>
+          <img src={`https://i.ytimg.com/vi/${v.video_id}/hqdefault.jpg`} alt="" loading="lazy"
+               onError={(e) => { e.currentTarget.style.display = 'none'; }}
+               style={{ width: 128, height: 72, objectFit: 'cover', borderRadius: 4, border: `1px solid ${DIM}`, background: '#000' }} />
+        </a>
+        <div style={{ flex: '1 1 280px', minWidth: 0 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <a href={v.url} target="_blank" rel="noreferrer" style={{ color: GREEN, fontWeight: 700, fontSize: 13, textDecoration: 'none' }}>{v.title || v.video_id}</a>
         <span style={{ fontSize: 11, color: DIM }}>{v.channel} · {v.published}</span>
@@ -157,6 +175,8 @@ function VideoCard({ v, visionOn }: { v: VideoDoc; visionOn: boolean }) {
         </>
       )}
       {showVisuals && <VisualsPanel videoId={v.video_id} url={v.url} />}
+        </div>
+      </div>
     </div>
   );
 }
@@ -169,6 +189,7 @@ export default function FinTube() {
   const [tks, setTks] = useState<TickerRow[]>([]);
   const [tkOpen, setTkOpen] = useState<string | null>(null);
   const [catFilter, setCatFilter] = useState<string>('all');
+  const [feedQuery, setFeedQuery] = useState('');
 
   // add-box state
   const [url, setUrl] = useState('');
@@ -315,19 +336,28 @@ export default function FinTube() {
           </button>
         ))}
         {view === 'feed' && (
-          <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} style={{ ...box, cursor: 'pointer', marginLeft: 'auto' }}>
-            <option value="all">all categories</option>
-            {CATS.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <>
+            <input value={feedQuery} onChange={(e) => setFeedQuery(e.target.value)} placeholder="🔎 search feed — ticker, creator, text"
+                   style={{ ...box, marginLeft: 'auto', flex: '0 1 260px', minWidth: 140 }} />
+            <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} style={{ ...box, cursor: 'pointer' }}>
+              <option value="all">all categories</option>
+              {CATS.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </>
         )}
       </div>
 
-      {view === 'feed' && (
-        <>
-          {videos.length === 0 && <div style={{ ...card, fontSize: 12, color: DIM }}>No distilled videos yet. Paste a video/channel above, or hit “refresh tracked” to pull the latest from your channels.</div>}
-          {videos.map((v) => <VideoCard key={v.video_id} v={v} visionOn={visionOn} />)}
-        </>
-      )}
+      {view === 'feed' && (() => {
+        const shown = videos.filter((v) => matchVideo(v, feedQuery));
+        return (
+          <>
+            {videos.length === 0 && <div style={{ ...card, fontSize: 12, color: DIM }}>No distilled videos yet. Paste a video/channel above, or hit “refresh tracked” to pull the latest from your channels.</div>}
+            {videos.length > 0 && shown.length === 0 && <div style={{ ...card, fontSize: 12, color: DIM }}>No videos match “{feedQuery}”. <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setFeedQuery('')}>clear</span></div>}
+            {feedQuery.trim() && shown.length > 0 && <div style={{ fontSize: 11, color: DIM, marginBottom: 8 }}>{shown.length} of {videos.length} match “{feedQuery}”</div>}
+            {shown.map((v) => <VideoCard key={v.video_id} v={v} visionOn={visionOn} />)}
+          </>
+        );
+      })()}
 
       {view === 'channels' && (
         <>
