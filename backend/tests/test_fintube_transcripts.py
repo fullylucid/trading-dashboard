@@ -5,7 +5,7 @@ tags, cue-position artifacts, and heavy rolling-caption duplication. _parse_vtt 
 strip all of that down to clean, de-duplicated prose.
 """
 
-from fintube.transcripts import _parse_vtt
+from fintube.transcripts import _parse_vtt, _parse_vtt_timed, _hms_to_s, timed_text
 
 
 def _write(tmp_path, text):
@@ -88,3 +88,33 @@ def test_parse_non_consecutive_duplicates_kept(tmp_path):
         "00:00:04.000 --> 00:00:06.000\nokay\n"
     )
     assert _parse_vtt(_write(tmp_path, vtt)) == "okay next okay"
+
+
+# --------------------------------------------------------------------------- #
+# timed parsing + marker injection
+# --------------------------------------------------------------------------- #
+def test_hms_to_s():
+    assert _hms_to_s("00", "00", "00", "000") == 0.0
+    assert _hms_to_s("00", "12", "30", "500") == 750.5
+    assert _hms_to_s("01", "00", "00", "000") == 3600.0
+
+
+def test_parse_vtt_timed_keeps_start_times(tmp_path):
+    vtt = (
+        "WEBVTT\n\n"
+        "00:00:05.000 --> 00:00:08.000\nfirst\n\n"
+        "00:02:00.000 --> 00:02:03.000\nsecond\n"
+    )
+    segs = _parse_vtt_timed(_write(tmp_path, vtt))
+    assert segs == [(5.0, "first"), (120.0, "second")]
+
+
+def test_timed_text_injects_mmss_markers():
+    segs = [(0.0, "intro"), (35.0, "midpoint"), (95.0, "later")]
+    out = timed_text(segs, every=30)
+    # markers appear at 0,30,60,90 boundaries as each is crossed, before the text
+    assert "[00:00] intro" in out
+    assert "[00:30]" in out and "midpoint" in out
+    assert "[01:30]" in out and "later" in out
+    # the 95s segment should have crossed the 60s and 90s marks too
+    assert "[01:00]" in out

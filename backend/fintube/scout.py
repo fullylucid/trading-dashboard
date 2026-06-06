@@ -48,7 +48,7 @@ def _qualifies(doc: Dict[str, Any], min_relevance: float) -> bool:
 
 async def _process(cand: Dict[str, Any]) -> Dict[str, Any]:
     """Transcript + discovery-distill a single candidate; persist; return the feed doc."""
-    transcript = await asyncio.to_thread(transcripts.fetch_transcript, cand["url"])
+    transcript = await asyncio.to_thread(transcripts.fetch_transcript, cand["url"], 90, True)
     doc: Dict[str, Any] = {
         "video_id": cand["video_id"], "title": cand.get("title", ""),
         "channel": cand.get("channel", ""), "channel_id": cand.get("channel_id", ""),
