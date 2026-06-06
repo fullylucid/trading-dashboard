@@ -142,6 +142,32 @@ def video(video_id: str) -> Dict[str, Any]:
     return d
 
 
+@fintube_router.delete("/video/{video_id}")
+def delete_video(video_id: str) -> Dict[str, Any]:
+    """Remove a video from the feed (stays suppressed from auto-discovery)."""
+    removed = store.remove_video(video_id, keep_seen=True)
+    return {"removed": removed, "video_id": video_id}
+
+
+class RedistillReq(BaseModel):
+    video_id: str
+
+
+@fintube_router.post("/redistill")
+async def redistill(req: RedistillReq) -> Dict[str, Any]:
+    """Re-run distillation on a video already in the feed (e.g. after a prompt change),
+    replacing its entry in place. Inline (~40s), like a single ingest."""
+    old = store.get_video(req.video_id)
+    if not old:
+        raise HTTPException(404, "not in feed")
+    meta = {k: old.get(k, "") for k in ("video_id", "title", "channel", "channel_id", "published")}
+    meta["url"] = old.get("url") or f"https://www.youtube.com/watch?v={req.video_id}"
+    cat = old.get("category", "general")
+    store.remove_video(req.video_id, keep_seen=True)   # drop the stale entry; _ingest_one re-saves
+    doc = await _ingest_one(meta, cat)
+    return {"type": "video", "redistilled": True, "doc": doc}
+
+
 # ----------------------------------------------------------------- ad-hoc ingest
 class IngestReq(BaseModel):
     url: str

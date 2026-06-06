@@ -152,6 +152,29 @@ def save_video(doc: Dict[str, Any]) -> None:
     c.ltrim(FEED_KEY, -FEED_MAX, -1)
 
 
+def remove_video(video_id: str, keep_seen: bool = True) -> bool:
+    """Drop a video from the feed. keep_seen=True leaves it in SEEN so auto-discovery
+    (scout/refresh) won't re-add a deliberately-removed video; a re-distill removes then
+    re-saves under the same id. Returns True if something was removed."""
+    c = r()
+    if c is None:
+        return False
+    raw = c.lrange(FEED_KEY, 0, -1)
+    kept = [x for x in raw if json.loads(x).get("video_id") != video_id]
+    if len(kept) == len(raw):
+        removed = False
+    else:
+        removed = True
+    pipe = c.pipeline()
+    pipe.delete(FEED_KEY)
+    if kept:
+        pipe.rpush(FEED_KEY, *kept)
+    if not keep_seen:
+        pipe.srem(SEEN_KEY, video_id)
+    pipe.execute()
+    return removed
+
+
 def get_feed(limit: int = 60, category: Optional[str] = None) -> List[Dict[str, Any]]:
     c = r()
     if c is None:

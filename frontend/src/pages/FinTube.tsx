@@ -137,9 +137,21 @@ function VisualsPanel({ videoId, url }: { videoId: string; url: string }) {
   );
 }
 
-function VideoCard({ v, visionOn }: { v: VideoDoc; visionOn: boolean }) {
+function VideoCard({ v, visionOn, onChanged }: { v: VideoDoc; visionOn: boolean; onChanged: () => void }) {
   const d = v.distill;
   const [showVisuals, setShowVisuals] = useState(false);
+  const [acting, setActing] = useState<string | null>(null);
+
+  const redistill = async () => {
+    setActing('redistill');
+    try { await fetch('/api/fintube/redistill', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ video_id: v.video_id }) }); onChanged(); } catch { /* */ } finally { setActing(null); }
+  };
+  const del = async () => {
+    if (!window.confirm(`Remove "${v.title || v.video_id}" from the feed?`)) return;
+    setActing('del');
+    try { await fetch(`/api/fintube/video/${v.video_id}`, { method: 'DELETE' }); onChanged(); } catch { /* */ } finally { setActing(null); }
+  };
+
   return (
     <div style={card}>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -153,7 +165,9 @@ function VideoCard({ v, visionOn }: { v: VideoDoc; visionOn: boolean }) {
         <a href={v.url} target="_blank" rel="noreferrer" style={{ color: GREEN, fontWeight: 700, fontSize: 13, textDecoration: 'none' }}>{v.title || v.video_id}</a>
         <span style={{ fontSize: 11, color: DIM }}>{v.channel} · {v.published}</span>
         {visionOn && <button onClick={() => setShowVisuals(s => !s)} title="study this video's visuals (UI / charts / diagrams) via keyframes" style={{ ...box, padding: '0px 6px', fontSize: 10, cursor: 'pointer', color: showVisuals ? GREEN : DIM }}>🎞</button>}
-        <span style={{ marginLeft: visionOn ? 0 : 'auto', fontSize: 10, border: `1px solid ${DIM}`, borderRadius: 10, padding: '1px 8px', color: DIM }}>{v.category}</span>
+        <button onClick={redistill} disabled={!!acting} title="re-run distillation on this video" style={{ ...box, padding: '0px 6px', fontSize: 10, cursor: acting ? 'default' : 'pointer', color: acting === 'redistill' ? GREEN : DIM }}>{acting === 'redistill' ? '…' : '⟳'}</button>
+        <button onClick={del} disabled={!!acting} title="remove from feed" style={{ ...box, padding: '0px 6px', fontSize: 10, cursor: acting ? 'default' : 'pointer', color: RED, borderColor: RED }}>{acting === 'del' ? '…' : '✕'}</button>
+        <span style={{ marginLeft: 'auto', fontSize: 10, border: `1px solid ${DIM}`, borderRadius: 10, padding: '1px 8px', color: DIM }}>{v.category}</span>
         {d?.creator_view && <span style={{ fontSize: 11, color: viewColor(d.creator_view), fontWeight: 700 }}>{d.creator_view}</span>}
       </div>
       {v.error && <div style={{ fontSize: 11, color: AMBER, marginTop: 6 }}>⚠ {v.error}</div>}
@@ -354,7 +368,7 @@ export default function FinTube() {
             {videos.length === 0 && <div style={{ ...card, fontSize: 12, color: DIM }}>No distilled videos yet. Paste a video/channel above, or hit “refresh tracked” to pull the latest from your channels.</div>}
             {videos.length > 0 && shown.length === 0 && <div style={{ ...card, fontSize: 12, color: DIM }}>No videos match “{feedQuery}”. <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setFeedQuery('')}>clear</span></div>}
             {feedQuery.trim() && shown.length > 0 && <div style={{ fontSize: 11, color: DIM, marginBottom: 8 }}>{shown.length} of {videos.length} match “{feedQuery}”</div>}
-            {shown.map((v) => <VideoCard key={v.video_id} v={v} visionOn={visionOn} />)}
+            {shown.map((v) => <VideoCard key={v.video_id} v={v} visionOn={visionOn} onChanged={loadFeed} />)}
           </>
         );
       })()}
