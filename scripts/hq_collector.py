@@ -58,6 +58,12 @@ DOC_MAX_BYTES = 80_000  # cap any single doc we ship (very large READMEs get tru
 WORKING_WINDOW_S = 75
 CURRENT_MAX_LEN = 160
 
+# Fleet activity feed: PR opened/merged events + each head's commits ahead of origin/main,
+# within this lookback, newest-first, capped.
+ACTIVITY_WINDOW_S = 72 * 3600
+ACTIVITY_MAX = 60
+ACTIVITY_COMMITS_PER_HEAD = 10
+
 # Known repos -> display name. Anything else falls back to a title-cased basename.
 ROOM_NAMES = {
     "trading-dashboard": "Trading Dashboard",
@@ -371,25 +377,92 @@ def git_info(workdir: str) -> Dict[str, Any]:
     }
 
 
-def gh_open_prs(repo: str) -> List[Dict[str, Any]]:
+def gh_repo_prs(repo: str) -> List[Dict[str, Any]]:
+    """One gh call per repo: the most-recently-updated PRs across all states. Feeds BOTH the
+    room open-PR list and the activity feed's opened/merged events (these repos have few PRs,
+    so the recent slice reliably includes every currently-open one)."""
     raw = _run(
-        ["gh", "pr", "list", "--repo", repo, "--state", "open",
-         "--json", "number,title,headRefName,mergeable", "-L", "30"],
+        ["gh", "pr", "list", "--repo", repo, "--state", "all", "--search", "sort:updated-desc",
+         "--json", "number,title,state,headRefName,mergeable,createdAt,mergedAt", "-L", "40"],
         timeout=12.0,
     )
     try:
-        items = json.loads(raw) if raw else []
+        return json.loads(raw) if raw else []
     except ValueError:
         return []
-    out = []
-    for p in items:
-        out.append({
+
+
+def open_prs_from(prs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Room open-PR shape from the raw gh list (state == OPEN)."""
+    return [
+        {
             "number": p.get("number"),
             "title": redact(p.get("title")),
             "branch": p.get("headRefName"),
             "mergeable": p.get("mergeable") == "MERGEABLE",
+        }
+        for p in prs if p.get("state") == "OPEN"
+    ]
+
+
+def pr_events_from(
+    prs: List[Dict[str, Any]], repo: str, room_id: str,
+    branch_to_head: Dict[str, str], since_ts: float,
+) -> List[Dict[str, Any]]:
+    """Activity events for PRs opened/merged within the window. A PR can emit both."""
+    events: List[Dict[str, Any]] = []
+    for p in prs:
+        num = p.get("number")
+        head = branch_to_head.get(p.get("headRefName"))
+        base = {
+            "room": room_id, "head": head, "number": num,
+            "text": redact(p.get("title")),
+            "url": f"https://github.com/{repo}/pull/{num}" if num else None,
+        }
+        opened = _iso_to_epoch(p.get("createdAt"))
+        if opened is not None and opened >= since_ts:
+            events.append({**base, "ts": opened, "kind": "pr_opened"})
+        merged = _iso_to_epoch(p.get("mergedAt"))
+        if merged is not None and merged >= since_ts:
+            events.append({**base, "ts": merged, "kind": "pr_merged"})
+    return events
+
+
+def head_commit_events(workdir: str, head: str, room_id: str, since_ts: float) -> List[Dict[str, Any]]:
+    """A head's own commits ahead of origin/main, within the window — its in-progress work.
+    Branch-scoped, so low duplication across heads. Commit subjects are secret-scrubbed."""
+    out = _run([
+        "git", "-C", workdir, "log", "origin/main..HEAD",
+        f"--since=@{int(since_ts)}", f"-n{ACTIVITY_COMMITS_PER_HEAD}",
+        "--no-merges", "--format=%H%x00%ct%x00%s",
+    ])
+    events: List[Dict[str, Any]] = []
+    for line in out.splitlines():
+        parts = line.split("\x00")
+        if len(parts) != 3:
+            continue
+        sha, ct, subj = parts
+        events.append({
+            "ts": _int(ct), "kind": "commit", "head": head, "room": room_id,
+            "sha": sha[:9], "text": redact(subj),
         })
-    return out
+    return events
+
+
+def finalize_activity(items: List[Dict[str, Any]], cap: int = ACTIVITY_MAX) -> List[Dict[str, Any]]:
+    """De-dup (by kind+number for PRs, kind+sha for commits), sort newest-first, cap."""
+    seen = set()
+    uniq = []
+    for it in items:
+        if it.get("ts") is None:
+            continue
+        key = (it["kind"], it.get("number"), it.get("sha"))
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(it)
+    uniq.sort(key=lambda x: x["ts"], reverse=True)
+    return uniq[:cap]
 
 
 def collect_room_docs(workdir: str) -> List[Dict[str, Any]]:
@@ -489,15 +562,19 @@ def _int(s: Any) -> Optional[int]:
         return None
 
 
-def _age(ts_iso: Optional[str], now: float) -> Optional[float]:
+def _iso_to_epoch(ts_iso: Optional[str]) -> Optional[float]:
     if not ts_iso:
         return None
     try:
-        t = ts_iso.replace("Z", "+00:00")
         from datetime import datetime
-        return now - datetime.fromisoformat(t).timestamp()
+        return datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).timestamp()
     except Exception:
         return None
+
+
+def _age(ts_iso: Optional[str], now: float) -> Optional[float]:
+    epoch = _iso_to_epoch(ts_iso)
+    return None if epoch is None else now - epoch
 
 
 # ---------------------------------------------------------------------------- #
@@ -513,6 +590,8 @@ def build_snapshot() -> Dict[str, Any]:
     rooms: Dict[str, Dict[str, Any]] = {}
     pr_cache: Dict[str, List[Dict[str, Any]]] = {}
     room_workdirs: Dict[str, List[str]] = {}
+    activity: List[Dict[str, Any]] = []
+    since_ts = now - ACTIVITY_WINDOW_S
 
     for name, workdir in registry:
         room_id, room_name = room_for(workdir)
@@ -531,9 +610,12 @@ def build_snapshot() -> Dict[str, Any]:
         git = git_info(workdir)
         remote = git.pop("remote", None)
 
-        # gather PRs per unique repo, cached
+        # gather PRs per unique repo, cached (one gh call serves rooms + activity)
         if remote and remote not in pr_cache:
-            pr_cache[remote] = gh_open_prs(remote)
+            pr_cache[remote] = gh_repo_prs(remote)
+
+        # this head's in-progress commits (ahead of origin/main, within window)
+        activity.extend(head_commit_events(workdir, name, room_id, since_ts))
 
         room = rooms.setdefault(room_id, {
             "id": room_id, "name": room_name, "repo": remote, "heads": [], "open_prs": [],
@@ -561,14 +643,18 @@ def build_snapshot() -> Dict[str, Any]:
             "fossil_dir": os.path.join(ARCHIVES, name),
         })
 
-    # attach PRs to rooms (match PR branch -> head where possible)
+    # attach open PRs to rooms (match PR branch -> head where possible) + emit PR activity
     branch_to_head = {h["branch"]: h["name"] for h in heads if h.get("branch")}
+    seen_repos: set = set()
     for room in rooms.values():
-        prs = pr_cache.get(room.get("repo") or "", [])
-        for pr in prs:
-            pr = dict(pr)
+        repo = room.get("repo") or ""
+        prs = pr_cache.get(repo, [])
+        for pr in open_prs_from(prs):
             pr["head"] = branch_to_head.get(pr.get("branch"))
             room["open_prs"].append(pr)
+        if repo and repo not in seen_repos:  # PR events once per repo, not once per room
+            seen_repos.add(repo)
+            activity.extend(pr_events_from(prs, repo, room["id"], branch_to_head, since_ts))
 
     memory = collect_memory()
 
@@ -576,7 +662,7 @@ def build_snapshot() -> Dict[str, Any]:
         "generated_at": int(now),
         "rooms": sorted(rooms.values(), key=lambda r: r["name"].lower()),
         "heads": sorted(heads, key=lambda h: (h["room"], h["name"].lower())),
-        "activity": [],                       # Slice 4
+        "activity": finalize_activity(activity),
         "memory_index": memory["index"],      # lightweight index (full bodies in hq:memory)
     }
 
@@ -621,7 +707,7 @@ def main() -> int:
         ndocs = sum(len(r["docs"]) for r in rooms_detail["rooms"].values())
         print(f"[hq-collector] fleet={ok} rooms={ok_rooms} memory={ok_mem} "
               f"heads={len(fleet['heads'])} rooms={len(fleet['rooms'])} docs={ndocs} "
-              f"mem={len(memory['index'])}")
+              f"mem={len(memory['index'])} activity={len(fleet['activity'])}")
     return 0 if (ok and ok_rooms and ok_mem) else 1
 
 

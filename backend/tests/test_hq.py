@@ -204,6 +204,54 @@ def test_extract_wikilinks_empty():
 
 
 # --------------------------------------------------------------------------- #
+# activity feed pure helpers
+# --------------------------------------------------------------------------- #
+_PRS = [
+    {"number": 82, "title": "feat: X", "state": "MERGED", "headRefName": "feat/x",
+     "mergeable": "MERGEABLE", "createdAt": "2026-06-06T15:59:54Z", "mergedAt": "2026-06-06T16:00:16Z"},
+    {"number": 80, "title": "feat: mem", "state": "OPEN", "headRefName": "feat/hq-memory",
+     "mergeable": "MERGEABLE", "createdAt": "2026-06-06T15:53:25Z", "mergedAt": None},
+    {"number": 5, "title": "ancient", "state": "MERGED", "headRefName": "old",
+     "mergeable": "CONFLICTING", "createdAt": "2020-01-01T00:00:00Z", "mergedAt": "2020-01-02T00:00:00Z"},
+]
+
+
+def test_open_prs_from_filters_to_open():
+    out = hq.open_prs_from(_PRS)
+    assert [p["number"] for p in out] == [80]
+    assert out[0]["mergeable"] is True
+    assert out[0]["branch"] == "feat/hq-memory"
+
+
+def test_pr_events_within_window_only():
+    since = hq._iso_to_epoch("2026-06-01T00:00:00Z")
+    ev = hq.pr_events_from(_PRS, "o/r", "room1", {"feat/hq-memory": "hq"}, since)
+    kinds = sorted((e["kind"], e["number"]) for e in ev)
+    # #82 opened+merged, #80 opened (still open); ancient #5 excluded by window
+    assert ("pr_opened", 82) in kinds
+    assert ("pr_merged", 82) in kinds
+    assert ("pr_opened", 80) in kinds
+    assert all(e["number"] != 5 for e in ev)
+    # head mapping via branch_to_head
+    assert next(e for e in ev if e["number"] == 80)["head"] == "hq"
+    assert next(e for e in ev if e["number"] == 80)["url"] == "https://github.com/o/r/pull/80"
+
+
+def test_finalize_activity_dedups_sorts_caps():
+    items = [
+        {"kind": "commit", "sha": "a", "ts": 100, "text": "a"},
+        {"kind": "commit", "sha": "a", "ts": 100, "text": "dup"},   # dup by (kind,sha)
+        {"kind": "pr_merged", "number": 9, "ts": 300, "text": "p"},
+        {"kind": "commit", "sha": "b", "ts": 200, "text": "b"},
+        {"kind": "commit", "sha": "c", "ts": None, "text": "skip"},  # no ts -> dropped
+    ]
+    out = hq.finalize_activity(items, cap=2)
+    assert [x["ts"] for x in out] == [300, 200]  # newest-first, capped at 2
+    full = hq.finalize_activity(items)
+    assert len(full) == 3  # one dup + one None removed from 5
+
+
+# --------------------------------------------------------------------------- #
 # collector pure helpers
 # --------------------------------------------------------------------------- #
 def _load_collector():
