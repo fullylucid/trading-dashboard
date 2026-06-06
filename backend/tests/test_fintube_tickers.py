@@ -109,10 +109,20 @@ def test_nvda_price_and_return(intel):
     assert nvda["ret_since_first"] == pytest.approx(0.30, abs=1e-4)  # 200 -> 260 since 2026-01-01
 
 
-def test_nvda_avg_target_and_upside(intel):
+def test_nvda_median_target_and_upside(intel):
     nvda = intel[0]["NVDA"]
-    assert nvda["avg_price_target"] == pytest.approx(310.0)          # mean(300, 320)
+    assert nvda["price_target"] == pytest.approx(310.0)             # median(300, 320)
+    assert nvda["target_n"] == 2
     assert nvda["upside"] == pytest.approx(310 / 260 - 1, abs=1e-4)
+
+
+def test_median_target_resists_moonshot_outlier():
+    # median(300, 320, 5000) = 320, not the mean (~1873) that one moonshot would produce
+    from fintube.tickers import _median
+    assert _median([300, 320, 5000]) == 320
+    assert _median([300, 320]) == 310
+    assert _median([400]) == 400
+    assert _median([]) is None
 
 
 def test_tsla_watchlist_only(intel):
