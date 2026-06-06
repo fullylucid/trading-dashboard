@@ -18,11 +18,12 @@ type Distill = {
   calls?: Call[]; key_insights?: string[]; tools_mentioned?: string[]; recommendations?: string[];
   claims?: { claim: string; stance: string }[];
   moments?: { t: number; label: string }[];
+  pitch?: string; relevance?: number; worth_sharing?: boolean;
 };
 type VideoDoc = {
   video_id: string; title: string; channel: string; channel_id: string; published: string;
   url: string; category: string; distill?: Distill | null; error?: string; distilled_at?: string;
-  transcript_quality?: string;
+  transcript_quality?: string; source?: string; matched_queries?: string[];
 };
 
 const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -49,7 +50,7 @@ function matchVideo(v: VideoDoc, q: string): boolean {
   if (!q.trim()) return true;
   const d = v.distill;
   const hay = [
-    v.title, v.channel, v.category, d?.summary, d?.philosophy, d?.macro_thesis,
+    v.title, v.channel, v.category, v.source, d?.pitch, d?.summary, d?.philosophy, d?.macro_thesis,
     ...(d?.calls || []).map((c) => `${c.ticker || ''} ${c.action || ''} ${c.thesis || ''}`),
     ...(d?.key_insights || []), ...(d?.tools_mentioned || []), ...(d?.recommendations || []),
   ].filter(Boolean).join('  ').toLowerCase();
@@ -172,12 +173,15 @@ function VideoCard({ v, visionOn, onChanged }: { v: VideoDoc; visionOn: boolean;
         <button onClick={redistill} disabled={!!acting} title="re-run distillation on this video" style={{ ...box, padding: '0px 6px', fontSize: 10, cursor: acting ? 'default' : 'pointer', color: acting === 'redistill' ? GREEN : DIM }}>{acting === 'redistill' ? '…' : '⟳'}</button>
         <button onClick={del} disabled={!!acting} title="remove from feed" style={{ ...box, padding: '0px 6px', fontSize: 10, cursor: acting ? 'default' : 'pointer', color: RED, borderColor: RED }}>{acting === 'del' ? '…' : '✕'}</button>
         <span style={{ marginLeft: 'auto', fontSize: 10, border: `1px solid ${DIM}`, borderRadius: 10, padding: '1px 8px', color: DIM }}>{v.category}</span>
+        {v.source === 'scout' && <span title={v.matched_queries?.length ? `found by scout: ${v.matched_queries.join(', ')}` : 'auto-discovered by the scout'} style={{ fontSize: 10, color: '#ff9d3c', border: '1px solid #ff9d3c', borderRadius: 10, padding: '1px 8px' }}>🕷 scout</span>}
+        {d?.relevance != null && <span style={{ fontSize: 10, fontWeight: 700, color: d.relevance >= 0.8 ? GREEN : d.relevance >= 0.6 ? AMBER : DIM }}>{Math.round(d.relevance * 100)}% match</span>}
         {d?.creator_view && <span style={{ fontSize: 11, color: viewColor(d.creator_view), fontWeight: 700 }}>{d.creator_view}</span>}
       </div>
       {v.error && <div style={{ fontSize: 11, color: AMBER, marginTop: 6 }}>⚠ {v.error}</div>}
       {!v.error && v.transcript_quality === 'thin' && <div style={{ fontSize: 10, color: AMBER, marginTop: 4 }}>⚠ thin transcript — distill may be shallow</div>}
       {d && (
         <>
+          {d.pitch && <div style={{ fontSize: 12, marginTop: 6, lineHeight: 1.45, color: GREEN }}>💡 {d.pitch}</div>}
           {d.summary && <div style={{ fontSize: 12, marginTop: 6, lineHeight: 1.45 }}>{d.summary}</div>}
           {d.philosophy && <div style={{ fontSize: 11, color: DIM, marginTop: 4 }}><b>Philosophy:</b> {d.philosophy}</div>}
           {d.macro_thesis && <div style={{ fontSize: 11, color: DIM, marginTop: 2 }}><b>Macro:</b> {d.macro_thesis}</div>}
