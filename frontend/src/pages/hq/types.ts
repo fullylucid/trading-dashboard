@@ -36,11 +36,25 @@ export type Room = {
   docs?: Doc[];
 };
 
+export type ActivityKind = 'commit' | 'pr_opened' | 'pr_merged';
+
+export type ActivityItem = {
+  ts: number;
+  kind: ActivityKind;
+  head: string | null;
+  room: string;
+  number?: number;
+  sha?: string;
+  text: string;
+  url?: string | null;
+};
+
 export type Fleet = {
   available: boolean;
   generated_at?: number;
   rooms?: Room[];
   heads?: Head[];
+  activity?: ActivityItem[];
   memory_index?: MemoryIndexEntry[];
 };
 

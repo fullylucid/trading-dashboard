@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import { GREEN, DIM, AMBER, RED, BLUE, card, fmtAge, HeadCard, Pill } from './hq/ui';
+import ActivityFeed from './hq/ActivityFeed';
 import type { Fleet, Head, Room } from './hq/types';
 
 // Hydra HQ 🛰️ — fleet overview (Slice 1). Polls /api/hq/fleet (a host-collector snapshot
@@ -102,6 +103,15 @@ export default function HydraHQ() {
       {rooms.map((room) => (
         <RoomSection key={room.id} room={room} heads={heads.filter((h) => h.room === room.id)} />
       ))}
+
+      {(fleet?.activity?.length ?? 0) > 0 && (
+        <section style={{ marginTop: 28 }}>
+          <div style={{ color: GREEN, fontWeight: 700, fontSize: 15, marginBottom: 8 }}>
+            Recent activity <span style={{ color: DIM, fontWeight: 400, fontSize: 12 }}>· last 72h</span>
+          </div>
+          <ActivityFeed items={fleet!.activity!} />
+        </section>
+      )}
     </div>
   );
 }
