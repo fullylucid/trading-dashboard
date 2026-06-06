@@ -29,6 +29,16 @@ _STRONG_LEAN = 0.6   # |crowd_lean| at/above this == one-sided crowd
 _DIR = {"buy": 1, "sell": -1}
 
 
+def _median(xs: List[float]) -> Optional[float]:
+    """Median — robust to one creator's moonshot target skewing a mean."""
+    s = sorted(xs)
+    n = len(s)
+    if not n:
+        return None
+    m = n // 2
+    return s[m] if n % 2 else (s[m - 1] + s[m]) / 2.0
+
+
 def _signal(mentions: int, crowd_lean: float, smart_agrees: Optional[bool],
             directional: int) -> str:
     """Human-readable read combining crowd one-sidedness with the smart-money tilt."""
@@ -146,8 +156,9 @@ def compute_ticker_intel(force: bool = False, today: Optional[dt.date] = None) -
                 smart_agrees = (_DIR[top["action"]] == crowd_dir)
 
         targets = rec["targets"]
-        avg_target = round(sum(targets) / len(targets), 2) if targets else None
-        upside = round(avg_target / price - 1.0, 4) if (avg_target and price) else None
+        med = _median(targets)
+        med_target = round(med, 2) if med is not None else None
+        upside = round(med_target / price - 1.0, 4) if (med_target and price) else None
 
         out_tickers.append({
             "ticker": tk, "mentions": mentions, "buy": buy, "sell": sell,
@@ -157,7 +168,7 @@ def compute_ticker_intel(force: bool = False, today: Optional[dt.date] = None) -
             "first_pub": rec["first_pub"], "last_pub": rec["last_pub"],
             "price": round(price, 2) if price is not None else None,
             "ret_since_first": ret_since,
-            "avg_price_target": avg_target, "upside": upside,
+            "price_target": med_target, "target_n": len(targets), "upside": upside,
             "smart_agrees": smart_agrees,
             "top_creator": top["channel"] if top else None,
             "signal": _signal(mentions, crowd_lean, smart_agrees, directional),

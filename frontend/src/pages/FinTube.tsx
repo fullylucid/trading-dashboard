@@ -29,7 +29,7 @@ type TkCall = { channel: string; action?: string; conviction?: string; horizon?:
 type TickerRow = {
   ticker: string; mentions: number; buy: number; sell: number; watch: number; hold: number;
   crowd_lean: number; net: string; first_pub?: string | null; last_pub?: string | null;
-  price?: number | null; ret_since_first?: number | null; avg_price_target?: number | null;
+  price?: number | null; ret_since_first?: number | null; price_target?: number | null; target_n?: number;
   upside?: number | null; smart_agrees?: boolean | null; top_creator?: string | null;
   signal: string; creators: TkCreator[]; calls: TkCall[];
 };
@@ -402,7 +402,7 @@ export default function FinTube() {
             <table style={{ borderCollapse: 'collapse', width: '100%' }}>
               <thead><tr>
                 <th style={th}>ticker</th><th style={th}>calls (B/S/W)</th><th style={th}>signal</th>
-                <th style={th}>price</th><th style={th}>since 1st</th><th style={th}>avg tgt</th><th style={th}>top creator</th>
+                <th style={th}>price</th><th style={th}>since 1st</th><th style={th}>median tgt</th><th style={th}>top creator</th>
               </tr></thead>
               <tbody>
                 {tks.map((t) => {
@@ -417,7 +417,7 @@ export default function FinTube() {
                         <td style={{ ...td, color: signalColor(t.signal), fontWeight: 700 }}>{t.signal}</td>
                         <td style={td}>{t.price != null ? `$${t.price}` : '—'}</td>
                         <td style={{ ...td, color: retColor(t.ret_since_first), fontWeight: 700 }}>{pct(t.ret_since_first)}</td>
-                        <td style={td}>{t.avg_price_target != null ? <>${t.avg_price_target}{t.upside != null && <span style={{ color: retColor(t.upside) }}> ({pct(t.upside, 0)})</span>}</> : '—'}</td>
+                        <td style={td}>{t.price_target != null ? <span title={`median of ${t.target_n} target(s)`}>${t.price_target}{t.upside != null && <span style={{ color: retColor(t.upside) }}> ({pct(t.upside, 0)})</span>}</span> : '—'}</td>
                         <td style={td}>{t.top_creator || '—'}{t.smart_agrees === false && <span style={{ color: '#ff9d3c' }} title="top creator fades the crowd"> ⚑</span>}</td>
                       </tr>
                       {open && (
