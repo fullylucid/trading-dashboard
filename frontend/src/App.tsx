@@ -160,6 +160,13 @@ function GlobalTicker() {
   );
 }
 
+// When served from the dedicated HQ subdomain (hq.shmaptech.com), the root lands on the
+// fleet command center instead of the trading home — every other route stays reachable, and
+// /hq still works on trade.shmaptech.com. Same-origin nginx serves the identical SPA under
+// both hostnames; the host is fixed for the session, so we read it once.
+const IS_HQ_HOST =
+  typeof window !== 'undefined' && window.location.hostname.startsWith('hq.');
+
 function App() {
   return (
     <BrowserRouter>
@@ -170,7 +177,7 @@ function App() {
             so no routed page slides under it. Single-sourced in ./layout. */}
         <main style={{ paddingTop: CHROME_TOP, paddingBottom: CHROME_BOTTOM }}>
           <Routes>
-            <Route path="/" element={<HomeDashboard />} />
+            <Route path="/" element={IS_HQ_HOST ? <HydraHQ /> : <HomeDashboard />} />
             <Route path="/hq" element={<HydraHQ />} />
             <Route path="/hq/room/:id" element={<RoomDetail />} />
             <Route path="/hq/head/:name" element={<HeadDetail />} />
