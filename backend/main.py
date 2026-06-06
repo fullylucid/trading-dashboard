@@ -340,6 +340,13 @@ except Exception as e:  # noqa: BLE001 — additive; never block startup
     logging.getLogger(__name__).warning("system router not registered: %s", e)
 
 try:
+    from hq_routes import hq_router
+    app.include_router(hq_router)
+    logger.info("Hydra HQ router registered at /api/hq/*")
+except Exception as e:  # noqa: BLE001 — additive; never block startup
+    logging.getLogger(__name__).warning("hq router not registered: %s", e)
+
+try:
     from fintube_routes import fintube_router
     app.include_router(fintube_router)
     logger.info("FinTube router registered at /api/fintube/*")

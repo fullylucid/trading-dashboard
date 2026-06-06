@@ -9,6 +9,7 @@ import ChartingScout from './pages/ChartingScout';
 import CrackADawn from './pages/CrackADawn';
 import OptionsEngine from './pages/OptionsEngine';
 import FinTube from './pages/FinTube';
+import HydraHQ from './pages/HydraHQ';
 import Markets from './pages/Markets';
 import SystemBanner from './pages/SystemMonitor';
 import TVWidget from './components/TVWidget';
@@ -17,6 +18,7 @@ import { CHROME_TOP, CHROME_BOTTOM } from './layout';
 
 const ROUTES: { to: string; label: string; end?: boolean }[] = [
   { to: '/', label: '📈 Dashboard', end: true },
+  { to: '/hq', label: '🛰️ Hydra HQ' },
   { to: '/crack-a-dawn', label: '🌅 Crack-a-Dawn' },
   { to: '/options', label: '📐 Options Engine' },
   { to: '/fintube', label: '📺 FinTube' },
@@ -166,6 +168,7 @@ function App() {
         <main style={{ paddingTop: CHROME_TOP, paddingBottom: CHROME_BOTTOM }}>
           <Routes>
             <Route path="/" element={<HomeDashboard />} />
+            <Route path="/hq" element={<HydraHQ />} />
             <Route path="/crack-a-dawn" element={<CrackADawn />} />
             <Route path="/options" element={<OptionsEngine />} />
             <Route path="/fintube" element={<FinTube />} />
