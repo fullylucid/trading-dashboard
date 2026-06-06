@@ -41,6 +41,7 @@ export type Fleet = {
   generated_at?: number;
   rooms?: Room[];
   heads?: Head[];
+  memory_index?: MemoryIndexEntry[];
 };
 
 export type RoomDetailResponse = {
@@ -48,4 +49,39 @@ export type RoomDetailResponse = {
   generated_at?: number;
   room?: Room;
   heads?: Head[];
+};
+
+export type MemoryIndexEntry = {
+  name: string;
+  title: string;
+  description: string;
+  type: string;
+  scope: string | null;
+  updated: string | null;
+  n_links: number;
+};
+
+export type MemoryIndexResponse = {
+  available: boolean;
+  generated_at?: number;
+  index?: MemoryIndexEntry[];
+};
+
+export type MemoryDoc = {
+  name: string;
+  title: string;
+  description: string;
+  type: string;
+  scope?: string | null;
+  updated?: string | null;
+  confidence?: string | null;
+  body: string;
+  links_out: { name: string; exists: boolean }[];
+  links_in: string[];
+};
+
+export type MemoryDocResponse = {
+  available: boolean;
+  generated_at?: number;
+  doc?: MemoryDoc;
 };

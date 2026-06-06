@@ -33,7 +33,14 @@ PROJECTS = os.path.join(HOME, ".claude", "projects")
 REDIS_CONTAINER = os.getenv("HQ_REDIS_CONTAINER", "tdbox-redis")
 REDIS_KEY = "hq:fleet"
 ROOMS_KEY = "hq:rooms"        # per-room detail (key docs) — kept out of hq:fleet to stay lean
+MEMORY_KEY = "hq:memory"      # the git-tracked memory knowledge base (index + scrubbed bodies)
 REDIS_TTL_S = 120  # snapshot is fresh for ~10s; TTL is a generous staleness backstop
+
+# The canonical, git-tracked fleet memory (Charlotte's curated knowledge base). The per-project
+# dirs (-home-user-<repo>/memory) are untracked scratch; this one is the [[link]]-graphed source.
+MEMORY_DIR = os.getenv("HQ_MEMORY_DIR", os.path.join(PROJECTS, "-home-user", "memory"))
+MEMORY_MAX_BYTES = 60_000
+_WIKILINK_RE = re.compile(r"\[\[([^\]\|]+?)(?:\|[^\]]+)?\]\]")
 
 # Per-room "key docs" to surface in the room view. First match per (key,label) wins, scanned
 # in the room's MAIN checkout. Repos differ (blueprint vs design; roadmap naming), so each
@@ -193,6 +200,58 @@ def parse_remote(url: str) -> Optional[str]:
     u = url.strip().removesuffix(".git")
     m = re.search(r"[:/]([^/:]+/[^/:]+)$", u)
     return m.group(1) if m else None
+
+
+def split_frontmatter(text: str) -> Tuple[str, str]:
+    """Split a markdown doc into (frontmatter_block, body). Frontmatter is a leading
+    ``---`` … ``---`` fence; returns ("", text) when there isn't one."""
+    if not text.startswith("---"):
+        return "", text
+    lines = text.split("\n")
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            return "\n".join(lines[1:i]), "\n".join(lines[i + 1:]).lstrip("\n")
+    return "", text
+
+
+def parse_frontmatter(text: str) -> Dict[str, Any]:
+    """Tiny YAML-subset parser for memory frontmatter — flat ``key: value`` plus a one-level
+    nested ``metadata:`` block. No yaml dependency; values are kept as strings (quotes stripped).
+    Good enough for our hand-written frontmatter; unknown shapes are ignored, never raised."""
+    fm, _ = split_frontmatter(text)
+    out: Dict[str, Any] = {}
+    meta: Dict[str, Any] = {}
+    in_meta = False
+    for raw in fm.split("\n"):
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indented = raw[0] in (" ", "\t")
+        if ":" not in raw:
+            continue
+        key, _, val = raw.partition(":")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key == "metadata" and not val:
+            in_meta = True
+            continue
+        if in_meta and indented:
+            meta[key] = val
+        else:
+            in_meta = False
+            out[key] = val
+    if meta:
+        out["metadata"] = meta
+    return out
+
+
+def extract_wikilinks(text: str) -> List[str]:
+    """Return the ordered, de-duplicated ``[[target]]`` names in a body (``[[a|alias]]`` → ``a``)."""
+    seen: List[str] = []
+    for m in _WIKILINK_RE.finditer(text or ""):
+        name = m.group(1).strip()
+        if name and name not in seen:
+            seen.append(name)
+    return seen
 
 
 # ---------------------------------------------------------------------------- #
@@ -362,6 +421,67 @@ def collect_room_docs(workdir: str) -> List[Dict[str, Any]]:
     return docs
 
 
+def collect_memory() -> Dict[str, Any]:
+    """Read the git-tracked memory dir into an index + per-doc bodies for the HQ memory browser.
+
+    For each ``memory/*.md`` (skipping the MEMORY.md/README.md meta files): parse frontmatter,
+    strip it from the body, secret-scrub + cap the body, and extract outbound ``[[wikilinks]]``.
+    Backlinks are computed by inverting the link graph (only over targets that exist). Returns
+    {"index": [...summary...], "docs": {name: {...full...}}}.
+    """
+    docs: Dict[str, Dict[str, Any]] = {}
+    try:
+        names = sorted(n for n in os.listdir(MEMORY_DIR) if n.endswith(".md"))
+    except OSError:
+        return {"index": [], "docs": {}}
+
+    for fname in names:
+        if fname in ("MEMORY.md", "README.md"):
+            continue
+        name = fname[:-3]  # strip .md — this is the [[wikilink]] target
+        try:
+            with open(os.path.join(MEMORY_DIR, fname), "r", encoding="utf-8", errors="replace") as f:
+                text = f.read(MEMORY_MAX_BYTES + 1)
+        except OSError:
+            continue
+        truncated = len(text) > MEMORY_MAX_BYTES
+        if truncated:
+            text = text[:MEMORY_MAX_BYTES]
+        fm = parse_frontmatter(text)
+        _, body = split_frontmatter(text)
+        meta = fm.get("metadata", {}) if isinstance(fm.get("metadata"), dict) else {}
+        docs[name] = {
+            "name": name,
+            "title": fm.get("name") or name,
+            "description": fm.get("description", ""),
+            "type": meta.get("type", "note"),
+            "scope": meta.get("scope"),
+            "updated": meta.get("updated") or meta.get("created"),
+            "confidence": meta.get("confidence"),
+            "links_out": extract_wikilinks(body),
+            "body": scrub_secrets(body) + ("\n\n…(truncated)" if truncated else ""),
+        }
+
+    # backlinks: invert links_out, but only over targets that actually exist
+    existing = set(docs)
+    for name, d in docs.items():
+        d["links_out"] = [l for l in d["links_out"]]  # keep raw (broken ones flagged client-side)
+        d["links_in"] = sorted(
+            other for other, od in docs.items()
+            if name in od["links_out"] and other != name
+        )
+
+    index = sorted(
+        ({
+            "name": d["name"], "title": d["title"], "description": d["description"],
+            "type": d["type"], "scope": d["scope"], "updated": d["updated"],
+            "n_links": len([l for l in d["links_out"] if l in existing]) + len(d["links_in"]),
+        } for d in docs.values()),
+        key=lambda x: (x["type"], x["name"]),
+    )
+    return {"index": index, "docs": docs}
+
+
 def _int(s: Any) -> Optional[int]:
     try:
         return int(str(s).strip())
@@ -450,12 +570,14 @@ def build_snapshot() -> Dict[str, Any]:
             pr["head"] = branch_to_head.get(pr.get("branch"))
             room["open_prs"].append(pr)
 
+    memory = collect_memory()
+
     fleet = {
         "generated_at": int(now),
         "rooms": sorted(rooms.values(), key=lambda r: r["name"].lower()),
         "heads": sorted(heads, key=lambda h: (h["room"], h["name"].lower())),
-        "activity": [],       # Slice 4
-        "memory_index": [],   # Slice 3
+        "activity": [],                       # Slice 4
+        "memory_index": memory["index"],      # lightweight index (full bodies in hq:memory)
     }
 
     # Per-room detail: key docs from each room's main checkout (served by /api/hq/room/{id}).
@@ -466,7 +588,8 @@ def build_snapshot() -> Dict[str, Any]:
             for rid, wds in room_workdirs.items()
         },
     }
-    return {"fleet": fleet, "rooms_detail": rooms_detail}
+    memory_payload = {"generated_at": int(now), **memory}
+    return {"fleet": fleet, "rooms_detail": rooms_detail, "memory": memory_payload}
 
 
 def push_key(key: str, payload: Dict[str, Any]) -> bool:
@@ -489,15 +612,17 @@ def push_key(key: str, payload: Dict[str, Any]) -> bool:
 
 def main() -> int:
     out = build_snapshot()
-    fleet, rooms_detail = out["fleet"], out["rooms_detail"]
+    fleet, rooms_detail, memory = out["fleet"], out["rooms_detail"], out["memory"]
     ok = push_key(REDIS_KEY, fleet)
     ok_rooms = push_key(ROOMS_KEY, rooms_detail)
+    ok_mem = push_key(MEMORY_KEY, memory)
     if os.getenv("HQ_DEBUG"):
         print(json.dumps(fleet, indent=2))
         ndocs = sum(len(r["docs"]) for r in rooms_detail["rooms"].values())
-        print(f"[hq-collector] fleet={ok} rooms={ok_rooms} heads={len(fleet['heads'])} "
-              f"rooms={len(fleet['rooms'])} docs={ndocs}")
-    return 0 if (ok and ok_rooms) else 1
+        print(f"[hq-collector] fleet={ok} rooms={ok_rooms} memory={ok_mem} "
+              f"heads={len(fleet['heads'])} rooms={len(fleet['rooms'])} docs={ndocs} "
+              f"mem={len(memory['index'])}")
+    return 0 if (ok and ok_rooms and ok_mem) else 1
 
 
 if __name__ == "__main__":
