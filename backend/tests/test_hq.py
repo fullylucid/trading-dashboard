@@ -69,6 +69,48 @@ def test_fleet_bad_json_returns_unavailable(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# /api/hq/room/{id}
+# --------------------------------------------------------------------------- #
+_FLEET = {
+    "generated_at": 1780000000,
+    "rooms": [
+        {"id": "cribdar", "name": "Cribdar", "repo": "fullylucid/cribdar", "heads": ["cribdar"], "open_prs": []},
+    ],
+    "heads": [
+        {"name": "cribdar", "room": "cribdar"},
+        {"name": "charts", "room": "trading-dashboard"},
+    ],
+}
+_ROOMS = {"rooms": {"cribdar": {"docs": [{"key": "readme", "label": "README", "path": "README.md", "markdown": "# Hi"}]}}}
+
+
+def test_room_merges_heads_and_docs(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:fleet": json.dumps(_FLEET), "hq:rooms": json.dumps(_ROOMS)}))
+    out = c.get("/api/hq/room/cribdar").json()
+    assert out["available"] is True
+    assert out["room"]["name"] == "Cribdar"
+    assert out["room"]["docs"][0]["label"] == "README"
+    assert [h["name"] for h in out["heads"]] == ["cribdar"]  # only this room's heads
+
+
+def test_room_unknown_returns_404(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:fleet": json.dumps(_FLEET)}))
+    assert c.get("/api/hq/room/nope").status_code == 404
+
+
+def test_room_no_docs_key_still_works(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:fleet": json.dumps(_FLEET)}))
+    out = c.get("/api/hq/room/cribdar").json()
+    assert out["available"] is True
+    assert out["room"]["docs"] == []
+
+
+def test_room_no_snapshot_unavailable(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:fleet": None}))
+    assert c.get("/api/hq/room/cribdar").json() == {"available": False}
+
+
+# --------------------------------------------------------------------------- #
 # collector pure helpers
 # --------------------------------------------------------------------------- #
 def _load_collector():

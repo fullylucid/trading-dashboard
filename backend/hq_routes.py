@@ -15,7 +15,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 try:
     import redis
@@ -27,6 +27,7 @@ logger = logging.getLogger("hq_routes")
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 FLEET_KEY = "hq:fleet"
+ROOMS_KEY = "hq:rooms"
 
 _redis_client: Optional["redis.Redis"] = None
 
@@ -45,6 +46,16 @@ def _r() -> Optional["redis.Redis"]:
     return _redis_client
 
 
+def _get_json(r, key: str) -> Optional[Any]:
+    raw = r.get(key) if r is not None else None
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @hq_router.get("/fleet")
 def fleet() -> Dict[str, Any]:
     """The whole-fleet snapshot: rooms, heads (status/current/branch/git), activity, memory.
@@ -53,15 +64,37 @@ def fleet() -> Dict[str, Any]:
     ``{"available": false}`` if the collector hasn't run yet / the key expired, so the UI can
     show a clean "collector offline" state instead of erroring.
     """
-    r = _r()
-    if r is None:
-        return {"available": False}
-    raw = r.get(FLEET_KEY)
-    if not raw:
-        return {"available": False}
-    try:
-        data = json.loads(raw)
-    except Exception:  # noqa: BLE001
+    data = _get_json(_r(), FLEET_KEY)
+    if data is None:
         return {"available": False}
     data["available"] = True
     return data
+
+
+@hq_router.get("/room/{room_id}")
+def room(room_id: str) -> Dict[str, Any]:
+    """One project room: its heads + open PRs (from the fleet snapshot) merged with its
+    rendered key docs (README/blueprint/roadmap/architecture, from ``hq:rooms``).
+
+    404 if the room isn't in the current snapshot; ``{"available": false}`` if the collector
+    hasn't run at all. Docs are already secret-scrubbed + size-capped host-side.
+    """
+    r = _r()
+    fleet_data = _get_json(r, FLEET_KEY)
+    if fleet_data is None:
+        return {"available": False}
+
+    match = next((rm for rm in fleet_data.get("rooms", []) if rm.get("id") == room_id), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail=f"unknown room: {room_id}")
+
+    rooms_detail = _get_json(r, ROOMS_KEY) or {}
+    docs = (rooms_detail.get("rooms", {}).get(room_id, {}) or {}).get("docs", [])
+
+    heads = [h for h in fleet_data.get("heads", []) if h.get("room") == room_id]
+    return {
+        "available": True,
+        "generated_at": fleet_data.get("generated_at"),
+        "room": {**match, "docs": docs},
+        "heads": heads,
+    }
