@@ -11,6 +11,7 @@ import OptionsEngine from './pages/OptionsEngine';
 import FinTube from './pages/FinTube';
 import HydraHQ from './pages/HydraHQ';
 import RoomDetail from './pages/hq/RoomDetail';
+import HeadDetail from './pages/hq/HeadDetail';
 import MemoryBrowser from './pages/hq/MemoryBrowser';
 import Markets from './pages/Markets';
 import SystemBanner from './pages/SystemMonitor';
@@ -172,6 +173,7 @@ function App() {
             <Route path="/" element={<HomeDashboard />} />
             <Route path="/hq" element={<HydraHQ />} />
             <Route path="/hq/room/:id" element={<RoomDetail />} />
+            <Route path="/hq/head/:name" element={<HeadDetail />} />
             <Route path="/hq/memory" element={<MemoryBrowser />} />
             <Route path="/hq/memory/:name" element={<MemoryBrowser />} />
             <Route path="/crack-a-dawn" element={<CrackADawn />} />

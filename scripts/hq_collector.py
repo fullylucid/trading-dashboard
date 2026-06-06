@@ -34,7 +34,14 @@ REDIS_CONTAINER = os.getenv("HQ_REDIS_CONTAINER", "tdbox-redis")
 REDIS_KEY = "hq:fleet"
 ROOMS_KEY = "hq:rooms"        # per-room detail (key docs) — kept out of hq:fleet to stay lean
 MEMORY_KEY = "hq:memory"      # the git-tracked memory knowledge base (index + scrubbed bodies)
+HEADS_KEY = "hq:heads"        # per-head detail (recent commits, fossil index, memory scope)
 REDIS_TTL_S = 120  # snapshot is fresh for ~10s; TTL is a generous staleness backstop
+
+# Per-head detail sizing. Fossils are large transcripts — we ship only an INDEX (names/mtime/
+# size, NEVER bodies; DESIGN §8). Live fossil full-text search needs a host request path we
+# don't have (collector is push-only) — a Phase-2 follow-up.
+HEAD_COMMITS = 12
+HEAD_FOSSILS_MAX = 40
 
 # The canonical, git-tracked fleet memory (Charlotte's curated knowledge base). The per-project
 # dirs (-home-user-<repo>/memory) are untracked scratch; this one is the [[link]]-graphed source.
@@ -555,6 +562,50 @@ def collect_memory() -> Dict[str, Any]:
     return {"index": index, "docs": docs}
 
 
+def head_recent_commits(workdir: str) -> List[Dict[str, Any]]:
+    """Recent commits on the head's current branch (HEAD), scrubbed. For the per-head detail
+    view's history panel — unlike the activity feed's ahead-of-main slice, this is plain history."""
+    out = _run([
+        "git", "-C", workdir, "log", f"-n{HEAD_COMMITS}", "--no-merges",
+        "--format=%H%x00%ct%x00%s",
+    ])
+    commits: List[Dict[str, Any]] = []
+    for line in out.splitlines():
+        parts = line.split("\x00")
+        if len(parts) != 3:
+            continue
+        sha, ct, subj = parts
+        commits.append({"sha": sha[:9], "ts": _int(ct), "text": redact(subj)})
+    return commits
+
+
+def head_fossils(head: str) -> Dict[str, Any]:
+    """Index the head's archived transcripts under ~/.hydra-archives/<head>/ — file names,
+    mtimes, sizes, and a session/subagent classification. NO bodies leave the host (DESIGN §8);
+    fossils hold raw transcripts with secrets, so we ship only this metadata index."""
+    root = os.path.join(ARCHIVES, head)
+    entries: List[Dict[str, Any]] = []
+    total = 0
+    for dirpath, _dirs, files in os.walk(root):
+        for fn in files:
+            if not fn.endswith(".jsonl"):
+                continue
+            total += 1
+            full = os.path.join(dirpath, fn)
+            try:
+                st = os.stat(full)
+            except OSError:
+                continue
+            entries.append({
+                "name": fn,
+                "ts": int(st.st_mtime),
+                "size": st.st_size,
+                "kind": "subagent" if "subagents" in dirpath else "session",
+            })
+    entries.sort(key=lambda e: e["ts"], reverse=True)
+    return {"count": total, "files": entries[:HEAD_FOSSILS_MAX]}
+
+
 def _int(s: Any) -> Optional[int]:
     try:
         return int(str(s).strip())
@@ -591,6 +642,7 @@ def build_snapshot() -> Dict[str, Any]:
     pr_cache: Dict[str, List[Dict[str, Any]]] = {}
     room_workdirs: Dict[str, List[str]] = {}
     activity: List[Dict[str, Any]] = []
+    heads_detail: Dict[str, Dict[str, Any]] = {}
     since_ts = now - ACTIVITY_WINDOW_S
 
     for name, workdir in registry:
@@ -616,6 +668,13 @@ def build_snapshot() -> Dict[str, Any]:
 
         # this head's in-progress commits (ahead of origin/main, within window)
         activity.extend(head_commit_events(workdir, name, room_id, since_ts))
+
+        # per-head detail (served by /api/hq/head/{name}); memory_scope filled in below
+        heads_detail[name] = {
+            "room": room_id,
+            "recent_commits": head_recent_commits(workdir),
+            "fossils": head_fossils(name),
+        }
 
         room = rooms.setdefault(room_id, {
             "id": room_id, "name": room_name, "repo": remote, "heads": [], "open_prs": [],
@@ -658,6 +717,16 @@ def build_snapshot() -> Dict[str, Any]:
 
     memory = collect_memory()
 
+    # memory scope per head: the memory docs scoped to the head's project (room id)
+    scope_by_room: Dict[str, List[Dict[str, Any]]] = {}
+    for e in memory["index"]:
+        if e.get("scope"):
+            scope_by_room.setdefault(e["scope"], []).append(
+                {"name": e["name"], "title": e["title"]}
+            )
+    for name, det in heads_detail.items():
+        det["memory_scope"] = scope_by_room.get(det.get("room"), [])
+
     fleet = {
         "generated_at": int(now),
         "rooms": sorted(rooms.values(), key=lambda r: r["name"].lower()),
@@ -675,7 +744,11 @@ def build_snapshot() -> Dict[str, Any]:
         },
     }
     memory_payload = {"generated_at": int(now), **memory}
-    return {"fleet": fleet, "rooms_detail": rooms_detail, "memory": memory_payload}
+    heads_payload = {"generated_at": int(now), "heads": heads_detail}
+    return {
+        "fleet": fleet, "rooms_detail": rooms_detail,
+        "memory": memory_payload, "heads_detail": heads_payload,
+    }
 
 
 def push_key(key: str, payload: Dict[str, Any]) -> bool:
@@ -699,16 +772,19 @@ def push_key(key: str, payload: Dict[str, Any]) -> bool:
 def main() -> int:
     out = build_snapshot()
     fleet, rooms_detail, memory = out["fleet"], out["rooms_detail"], out["memory"]
+    heads_detail = out["heads_detail"]
     ok = push_key(REDIS_KEY, fleet)
     ok_rooms = push_key(ROOMS_KEY, rooms_detail)
     ok_mem = push_key(MEMORY_KEY, memory)
+    ok_heads = push_key(HEADS_KEY, heads_detail)
     if os.getenv("HQ_DEBUG"):
         print(json.dumps(fleet, indent=2))
         ndocs = sum(len(r["docs"]) for r in rooms_detail["rooms"].values())
-        print(f"[hq-collector] fleet={ok} rooms={ok_rooms} memory={ok_mem} "
+        nfoss = sum(d["fossils"]["count"] for d in heads_detail["heads"].values())
+        print(f"[hq-collector] fleet={ok} rooms={ok_rooms} memory={ok_mem} heads={ok_heads} "
               f"heads={len(fleet['heads'])} rooms={len(fleet['rooms'])} docs={ndocs} "
-              f"mem={len(memory['index'])} activity={len(fleet['activity'])}")
-    return 0 if (ok and ok_rooms and ok_mem) else 1
+              f"mem={len(memory['index'])} activity={len(fleet['activity'])} fossils={nfoss}")
+    return 0 if (ok and ok_rooms and ok_mem and ok_heads) else 1
 
 
 if __name__ == "__main__":

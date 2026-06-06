@@ -29,6 +29,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 FLEET_KEY = "hq:fleet"
 ROOMS_KEY = "hq:rooms"
 MEMORY_KEY = "hq:memory"
+HEADS_KEY = "hq:heads"
 
 _redis_client: Optional["redis.Redis"] = None
 
@@ -98,6 +99,41 @@ def room(room_id: str) -> Dict[str, Any]:
         "generated_at": fleet_data.get("generated_at"),
         "room": {**match, "docs": docs},
         "heads": heads,
+    }
+
+
+@hq_router.get("/head/{name}")
+def head(name: str) -> Dict[str, Any]:
+    """One head's detail: its fleet card (status/current/git/branch/rc) merged with its recent
+    commits, fossil-archive index, and memory scope (from ``hq:heads``), plus the open PRs it
+    owns. 404 if the head isn't in the current snapshot.
+
+    Fossils ship as a metadata index only (names/sizes/mtimes) — never bodies (DESIGN §8).
+    """
+    r = _r()
+    fleet_data = _get_json(r, FLEET_KEY)
+    if fleet_data is None:
+        return {"available": False}
+
+    card = next((h for h in fleet_data.get("heads", []) if h.get("name") == name), None)
+    if card is None:
+        raise HTTPException(status_code=404, detail=f"unknown head: {name}")
+
+    detail = (_get_json(r, HEADS_KEY) or {}).get("heads", {}).get(name, {})
+    open_prs = [
+        pr for rm in fleet_data.get("rooms", []) for pr in rm.get("open_prs", [])
+        if pr.get("head") == name
+    ]
+    return {
+        "available": True,
+        "generated_at": fleet_data.get("generated_at"),
+        "head": {
+            **card,
+            "recent_commits": detail.get("recent_commits", []),
+            "fossils": detail.get("fossils", {"count": 0, "files": []}),
+            "memory_scope": detail.get("memory_scope", []),
+            "open_prs": open_prs,
+        },
     }
 
 
