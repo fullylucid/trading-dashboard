@@ -65,6 +65,22 @@ export type RoomDetailResponse = {
   heads?: Head[];
 };
 
+export type Commit = { sha: string; ts: number | null; text: string };
+export type Fossil = { name: string; ts: number; size: number; kind: 'session' | 'subagent' };
+
+export type HeadDetail = Head & {
+  recent_commits: Commit[];
+  fossils: { count: number; files: Fossil[] };
+  memory_scope: { name: string; title: string }[];
+  open_prs: PR[];
+};
+
+export type HeadDetailResponse = {
+  available: boolean;
+  generated_at?: number;
+  head?: HeadDetail;
+};
+
 export type MemoryIndexEntry = {
   name: string;
   title: string;

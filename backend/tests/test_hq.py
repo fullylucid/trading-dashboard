@@ -111,6 +111,56 @@ def test_room_no_snapshot_unavailable(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# /api/hq/head/{name}
+# --------------------------------------------------------------------------- #
+_FLEET_H = {
+    "generated_at": 1780000000,
+    "rooms": [
+        {"id": "trading-dashboard", "name": "TD", "repo": "fullylucid/trading-dashboard",
+         "heads": ["charts", "hq"],
+         "open_prs": [
+             {"number": 87, "title": "slice4", "branch": "feat/hq-activity", "head": "hq", "mergeable": True},
+             {"number": 81, "title": "other", "branch": "x", "head": "charts", "mergeable": True},
+         ]},
+    ],
+    "heads": [{"name": "hq", "room": "trading-dashboard", "status": "working", "git": {"ahead": 1}}],
+}
+_HEADS = {"heads": {"hq": {
+    "recent_commits": [{"sha": "abc123def", "ts": 1780000000, "text": "feat: x"}],
+    "fossils": {"count": 2, "files": [{"name": "s.jsonl", "ts": 1780000000, "size": 1234, "kind": "session"}]},
+    "memory_scope": [{"name": "hydra-hq", "title": "Hydra HQ"}],
+}}}
+
+
+def test_head_merges_detail_and_owned_prs(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:fleet": json.dumps(_FLEET_H), "hq:heads": json.dumps(_HEADS)}))
+    out = c.get("/api/hq/head/hq").json()
+    assert out["available"] is True
+    h = out["head"]
+    assert h["status"] == "working"                       # from fleet card
+    assert h["recent_commits"][0]["sha"] == "abc123def"   # from hq:heads
+    assert h["fossils"]["count"] == 2
+    assert h["memory_scope"][0]["name"] == "hydra-hq"
+    assert [pr["number"] for pr in h["open_prs"]] == [87]  # only PRs this head owns
+
+
+def test_head_unknown_404(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:fleet": json.dumps(_FLEET_H)}))
+    assert c.get("/api/hq/head/ghost").status_code == 404
+
+
+def test_head_no_detail_key_defaults(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:fleet": json.dumps(_FLEET_H)}))
+    h = c.get("/api/hq/head/hq").json()["head"]
+    assert h["recent_commits"] == [] and h["fossils"] == {"count": 0, "files": []}
+
+
+def test_head_no_snapshot_unavailable(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:fleet": None}))
+    assert c.get("/api/hq/head/hq").json() == {"available": False}
+
+
+# --------------------------------------------------------------------------- #
 # /api/hq/memory + /api/hq/memory/{name}
 # --------------------------------------------------------------------------- #
 _MEMORY = {

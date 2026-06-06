@@ -1,5 +1,6 @@
 // Shared visual vocabulary for the Hydra HQ 🛰️ views — colors, status meta, and the
 // HeadCard reused by both the fleet overview and the room-detail page.
+import { Link } from 'react-router-dom';
 import type { Head, Status } from './types';
 
 export const GREEN = '#00ff41';
@@ -73,7 +74,9 @@ export function HeadCard({ head }: { head: Head }) {
     <div style={{ ...card, display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <StatusDot status={head.status} />
-        <span style={{ color: GREEN, fontWeight: 700, fontSize: 14 }}>{head.name}</span>
+        <Link to={`/hq/head/${head.name}`} style={{ color: GREEN, fontWeight: 700, fontSize: 14, textDecoration: 'none' }}>
+          {head.name}
+        </Link>
         <span style={{ color: m.color, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
           {m.label}
         </span>
