@@ -10,6 +10,7 @@ import CrackADawn from './pages/CrackADawn';
 import OptionsEngine from './pages/OptionsEngine';
 import FinTube from './pages/FinTube';
 import HydraHQ from './pages/HydraHQ';
+import RoomDetail from './pages/hq/RoomDetail';
 import Markets from './pages/Markets';
 import SystemBanner from './pages/SystemMonitor';
 import TVWidget from './components/TVWidget';
@@ -169,6 +170,7 @@ function App() {
           <Routes>
             <Route path="/" element={<HomeDashboard />} />
             <Route path="/hq" element={<HydraHQ />} />
+            <Route path="/hq/room/:id" element={<RoomDetail />} />
             <Route path="/crack-a-dawn" element={<CrackADawn />} />
             <Route path="/options" element={<OptionsEngine />} />
             <Route path="/fintube" element={<FinTube />} />

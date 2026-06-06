@@ -32,7 +32,19 @@ ARCHIVES = os.path.join(HOME, ".hydra-archives")
 PROJECTS = os.path.join(HOME, ".claude", "projects")
 REDIS_CONTAINER = os.getenv("HQ_REDIS_CONTAINER", "tdbox-redis")
 REDIS_KEY = "hq:fleet"
+ROOMS_KEY = "hq:rooms"        # per-room detail (key docs) — kept out of hq:fleet to stay lean
 REDIS_TTL_S = 120  # snapshot is fresh for ~10s; TTL is a generous staleness backstop
+
+# Per-room "key docs" to surface in the room view. First match per (key,label) wins, scanned
+# in the room's MAIN checkout. Repos differ (blueprint vs design; roadmap naming), so each
+# category lists ordered candidates relative to the repo root.
+DOC_CANDIDATES = [
+    ("readme", "README", ["README.md", "readme.md"]),
+    ("blueprint", "Blueprint", ["docs/BLUEPRINT.md", "BLUEPRINT.md", "docs/DESIGN.md", "DESIGN.md"]),
+    ("roadmap", "Roadmap", ["docs/ROADMAP.md", "ROADMAP.md", "docs/roadmap.md"]),
+    ("architecture", "Architecture", ["docs/architecture.md", "ARCHITECTURE.md", "SYSTEM_ARCHITECTURE.md", "docs/ARCHITECTURE.md"]),
+]
+DOC_MAX_BYTES = 80_000  # cap any single doc we ship (very large READMEs get truncated)
 
 # A head is "working" only if its transcript moved within this window; otherwise it's idle
 # even while `claude` holds the pane. Tuned to the ~10s collector cadence + turn latency.
@@ -91,14 +103,24 @@ _SECRET_PATTERNS = [
 ]
 
 
-def redact(text: Optional[str]) -> str:
-    """Scrub token-shaped substrings and truncate. Defense-in-depth: the current-line is
-    already model-authored prose, but we never want a key that leaked into it to ship."""
+def scrub_secrets(text: Optional[str]) -> str:
+    """Replace token-shaped substrings with [REDACTED]; preserve structure/whitespace.
+    Used for doc bodies (which keep their markdown layout)."""
     if not text:
         return ""
-    s = " ".join(str(text).split())
+    s = str(text)
     for pat in _SECRET_PATTERNS:
         s = pat.sub("[REDACTED]", s)
+    return s
+
+
+def redact(text: Optional[str]) -> str:
+    """Scrub token-shaped substrings, collapse whitespace, and truncate. For one-line status
+    summaries (current task, commit subject). Defense-in-depth: these are model/author prose,
+    but we never want a key that leaked into them to ship."""
+    if not text:
+        return ""
+    s = " ".join(scrub_secrets(text).split())
     if len(s) > CURRENT_MAX_LEN:
         s = s[: CURRENT_MAX_LEN - 1].rstrip() + "…"
     return s
@@ -151,6 +173,17 @@ def pane_is_waiting(capture: Optional[str]) -> bool:
 def pane_is_rc_paired(capture: Optional[str]) -> bool:
     """Detect the 'Remote Control active' status line in a pane capture."""
     return bool(capture) and "remote control active" in capture.lower()
+
+
+def pick_room_workdir(workdirs: List[str]) -> Optional[str]:
+    """Choose the checkout to read a room's key docs from. Prefer a MAIN checkout (basename
+    has no '__', i.e. not a feature worktree on a possibly-stale branch); else the first."""
+    if not workdirs:
+        return None
+    for wd in workdirs:
+        if "__" not in os.path.basename(wd.rstrip("/")):
+            return wd
+    return workdirs[0]
 
 
 def parse_remote(url: str) -> Optional[str]:
@@ -300,6 +333,35 @@ def gh_open_prs(repo: str) -> List[Dict[str, Any]]:
     return out
 
 
+def collect_room_docs(workdir: str) -> List[Dict[str, Any]]:
+    """Scan a room's main checkout for its key docs (README/blueprint/roadmap/architecture).
+    Returns [{key,label,path,markdown}] for each category's first existing candidate. Docs are
+    git-tracked + trusted, but we still secret-scrub and cap size before they leave the host."""
+    docs: List[Dict[str, Any]] = []
+    for key, label, candidates in DOC_CANDIDATES:
+        for rel in candidates:
+            full = os.path.join(workdir, rel)
+            if not os.path.isfile(full):
+                continue
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    body = f.read(DOC_MAX_BYTES + 1)
+            except OSError:
+                break
+            truncated = len(body) > DOC_MAX_BYTES
+            if truncated:
+                body = body[:DOC_MAX_BYTES].rstrip() + "\n\n…(truncated)"
+            docs.append({
+                "key": key,
+                "label": label,
+                "path": rel,
+                "markdown": scrub_secrets(body),
+                "truncated": truncated,
+            })
+            break
+    return docs
+
+
 def _int(s: Any) -> Optional[int]:
     try:
         return int(str(s).strip())
@@ -330,9 +392,11 @@ def build_snapshot() -> Dict[str, Any]:
     heads: List[Dict[str, Any]] = []
     rooms: Dict[str, Dict[str, Any]] = {}
     pr_cache: Dict[str, List[Dict[str, Any]]] = {}
+    room_workdirs: Dict[str, List[str]] = {}
 
     for name, workdir in registry:
         room_id, room_name = room_for(workdir)
+        room_workdirs.setdefault(room_id, []).append(workdir)
         pane = panes.get(workdir.rstrip("/"))
         pane_cmd = pane["cmd"] if pane else None
         cap = capture_pane(pane["pane"]) if pane else None
@@ -386,7 +450,7 @@ def build_snapshot() -> Dict[str, Any]:
             pr["head"] = branch_to_head.get(pr.get("branch"))
             room["open_prs"].append(pr)
 
-    return {
+    fleet = {
         "generated_at": int(now),
         "rooms": sorted(rooms.values(), key=lambda r: r["name"].lower()),
         "heads": sorted(heads, key=lambda h: (h["room"], h["name"].lower())),
@@ -394,18 +458,28 @@ def build_snapshot() -> Dict[str, Any]:
         "memory_index": [],   # Slice 3
     }
 
+    # Per-room detail: key docs from each room's main checkout (served by /api/hq/room/{id}).
+    rooms_detail = {
+        "generated_at": int(now),
+        "rooms": {
+            rid: {"docs": collect_room_docs(pick_room_workdir(wds) or wds[0])}
+            for rid, wds in room_workdirs.items()
+        },
+    }
+    return {"fleet": fleet, "rooms_detail": rooms_detail}
 
-def push(snapshot: Dict[str, Any]) -> bool:
-    payload = json.dumps(snapshot, separators=(",", ":"))
+
+def push_key(key: str, payload: Dict[str, Any]) -> bool:
+    blob = json.dumps(payload, separators=(",", ":"))
     try:
         p = subprocess.run(
-            ["docker", "exec", "-i", REDIS_CONTAINER, "redis-cli", "-x", "SET", REDIS_KEY],
-            input=payload, capture_output=True, text=True, timeout=10,
+            ["docker", "exec", "-i", REDIS_CONTAINER, "redis-cli", "-x", "SET", key],
+            input=blob, capture_output=True, text=True, timeout=10,
         )
         if p.returncode != 0:
             return False
         subprocess.run(
-            ["docker", "exec", REDIS_CONTAINER, "redis-cli", "EXPIRE", REDIS_KEY, str(REDIS_TTL_S)],
+            ["docker", "exec", REDIS_CONTAINER, "redis-cli", "EXPIRE", key, str(REDIS_TTL_S)],
             capture_output=True, text=True, timeout=10,
         )
         return True
@@ -414,12 +488,16 @@ def push(snapshot: Dict[str, Any]) -> bool:
 
 
 def main() -> int:
-    snap = build_snapshot()
-    ok = push(snap)
+    out = build_snapshot()
+    fleet, rooms_detail = out["fleet"], out["rooms_detail"]
+    ok = push_key(REDIS_KEY, fleet)
+    ok_rooms = push_key(ROOMS_KEY, rooms_detail)
     if os.getenv("HQ_DEBUG"):
-        print(json.dumps(snap, indent=2))
-        print(f"[hq-collector] pushed={ok} heads={len(snap['heads'])} rooms={len(snap['rooms'])}")
-    return 0 if ok else 1
+        print(json.dumps(fleet, indent=2))
+        ndocs = sum(len(r["docs"]) for r in rooms_detail["rooms"].values())
+        print(f"[hq-collector] fleet={ok} rooms={ok_rooms} heads={len(fleet['heads'])} "
+              f"rooms={len(fleet['rooms'])} docs={ndocs}")
+    return 0 if (ok and ok_rooms) else 1
 
 
 if __name__ == "__main__":
