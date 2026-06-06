@@ -111,6 +111,99 @@ def test_room_no_snapshot_unavailable(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# /api/hq/memory + /api/hq/memory/{name}
+# --------------------------------------------------------------------------- #
+_MEMORY = {
+    "generated_at": 1780000000,
+    "index": [
+        {"name": "alpha", "title": "Alpha", "description": "a", "type": "project", "scope": None, "updated": "2026-06-01", "n_links": 1},
+        {"name": "beta", "title": "Beta", "description": "b", "type": "feedback", "scope": None, "updated": None, "n_links": 0},
+    ],
+    "docs": {
+        "alpha": {"name": "alpha", "title": "Alpha", "description": "a", "type": "project",
+                  "body": "links [[beta]] and [[ghost]]", "links_out": ["beta", "ghost"], "links_in": []},
+        "beta": {"name": "beta", "title": "Beta", "description": "b", "type": "feedback",
+                 "body": "the beta doc", "links_out": [], "links_in": ["alpha"]},
+    },
+}
+
+
+def test_memory_index(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:memory": json.dumps(_MEMORY)}))
+    out = c.get("/api/hq/memory").json()
+    assert out["available"] is True
+    assert [e["name"] for e in out["index"]] == ["alpha", "beta"]
+    assert "docs" not in out  # index endpoint stays lightweight
+
+
+def test_memory_doc_annotates_broken_links(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:memory": json.dumps(_MEMORY)}))
+    out = c.get("/api/hq/memory/alpha").json()
+    assert out["available"] is True
+    assert out["doc"]["links_in"] == []
+    assert {"name": "beta", "exists": True} in out["doc"]["links_out"]
+    assert {"name": "ghost", "exists": False} in out["doc"]["links_out"]  # broken link flagged
+
+
+def test_memory_doc_unknown_404(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:memory": json.dumps(_MEMORY)}))
+    assert c.get("/api/hq/memory/nope").status_code == 404
+
+
+def test_memory_no_snapshot_unavailable(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:memory": None}))
+    assert c.get("/api/hq/memory").json() == {"available": False}
+
+
+# --------------------------------------------------------------------------- #
+# collector memory helpers (pure)
+# --------------------------------------------------------------------------- #
+_FM_DOC = """---
+name: trading-dashboard-project
+description: "Trading dashboard — repo, stack"
+metadata:
+  type: project
+  scope: trading-dashboard
+  updated: 2026-05-30
+---
+
+Body line one. See [[trading-dashboard-operating-guardrails]] and [[hydra-heads]].
+Also [[hydra-heads]] again (dedup) and an aliased [[box-hosting-architecture|the box]].
+"""
+
+
+def test_split_frontmatter():
+    fm, body = hq.split_frontmatter(_FM_DOC)
+    assert "name: trading-dashboard-project" in fm
+    assert body.startswith("Body line one.")
+    # no frontmatter -> ("", text)
+    assert hq.split_frontmatter("no fence here") == ("", "no fence here")
+
+
+def test_parse_frontmatter():
+    fm = hq.parse_frontmatter(_FM_DOC)
+    assert fm["name"] == "trading-dashboard-project"
+    assert fm["description"] == "Trading dashboard — repo, stack"  # quotes stripped
+    assert fm["metadata"]["type"] == "project"
+    assert fm["metadata"]["scope"] == "trading-dashboard"
+    assert fm["metadata"]["updated"] == "2026-05-30"
+
+
+def test_extract_wikilinks_dedups_and_unaliases():
+    links = hq.extract_wikilinks(_FM_DOC)
+    assert links == [
+        "trading-dashboard-operating-guardrails",
+        "hydra-heads",
+        "box-hosting-architecture",  # alias [[a|b]] -> a, deduped
+    ]
+
+
+def test_extract_wikilinks_empty():
+    assert hq.extract_wikilinks("") == []
+    assert hq.extract_wikilinks("no links") == []
+
+
+# --------------------------------------------------------------------------- #
 # collector pure helpers
 # --------------------------------------------------------------------------- #
 def _load_collector():

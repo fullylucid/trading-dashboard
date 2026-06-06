@@ -11,45 +11,66 @@ import { GREEN, DIM, FAINT, BLUE } from './ui';
 
 const mono = "'SFMono-Regular', Consolas, monospace";
 
-// ---- inline: code / bold / italic / links -------------------------------------------------
-function renderInline(text: string, keyBase: string): ReactNode[] {
-  const out: ReactNode[] = [];
-  // tokenize on the inline constructs, in priority order
-  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(\[[^\]]+\]\([^)]+\))/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let i = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(<Fragment key={`${keyBase}-t${i}`}>{text.slice(last, m.index)}</Fragment>);
-    const tok = m[0];
-    if (tok.startsWith('`')) {
-      out.push(
-        <code key={`${keyBase}-c${i}`} style={{ background: 'rgba(0,255,65,0.1)', padding: '0 4px', borderRadius: 3, color: GREEN }}>
-          {tok.slice(1, -1)}
-        </code>,
-      );
-    } else if (tok.startsWith('**')) {
-      out.push(<strong key={`${keyBase}-b${i}`} style={{ color: GREEN }}>{tok.slice(2, -2)}</strong>);
-    } else if (tok.startsWith('*')) {
-      out.push(<em key={`${keyBase}-i${i}`}>{tok.slice(1, -1)}</em>);
-    } else {
-      const mm = /\[([^\]]+)\]\(([^)]+)\)/.exec(tok)!;
-      out.push(
-        <a key={`${keyBase}-a${i}`} href={mm[2]} target="_blank" rel="noreferrer" style={{ color: BLUE }}>
-          {mm[1]}
-        </a>,
-      );
-    }
-    last = m.index + tok.length;
-    i += 1;
-  }
-  if (last < text.length) out.push(<Fragment key={`${keyBase}-tEnd`}>{text.slice(last)}</Fragment>);
-  return out;
-}
+// Optional [[wikilink]] renderer. When provided, `[[name]]` / `[[name|label]]` become whatever
+// node the caller returns (the memory browser returns an in-app <Link>); otherwise they render
+// as plain dim text. This is what makes the [[link]] graph navigable inside HQ.
+export type WikiLinkRenderer = (name: string, label: string, key: string) => ReactNode;
 
 const HEADING_SIZES = [22, 19, 16, 14, 13, 12];
 
-export default function MarkdownView({ source }: { source: string }) {
+export default function MarkdownView({
+  source,
+  renderWikiLink,
+}: {
+  source: string;
+  renderWikiLink?: WikiLinkRenderer;
+}) {
+  // inline: wikilink / code / bold / italic / link — defined here so it closes over renderWikiLink
+  function renderInline(text: string, keyBase: string): ReactNode[] {
+    const out: ReactNode[] = [];
+    // wikilink first so [[x]] isn't mis-tokenized; then code/bold/italic/md-link
+    const re = /(\[\[[^\]]+\]\])|(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*]+\*)|(\[[^\]]+\]\([^)]+\))/g;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    let i = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) out.push(<Fragment key={`${keyBase}-t${i}`}>{text.slice(last, m.index)}</Fragment>);
+      const tok = m[0];
+      if (tok.startsWith('[[')) {
+        const inner = tok.slice(2, -2);
+        const [name, alias] = inner.split('|');
+        const label = (alias ?? name).trim();
+        const target = name.trim();
+        out.push(
+          renderWikiLink
+            ? <Fragment key={`${keyBase}-w${i}`}>{renderWikiLink(target, label, `${keyBase}-w${i}`)}</Fragment>
+            : <span key={`${keyBase}-w${i}`} style={{ color: DIM }}>[[{label}]]</span>,
+        );
+      } else if (tok.startsWith('`')) {
+        out.push(
+          <code key={`${keyBase}-c${i}`} style={{ background: 'rgba(0,255,65,0.1)', padding: '0 4px', borderRadius: 3, color: GREEN }}>
+            {tok.slice(1, -1)}
+          </code>,
+        );
+      } else if (tok.startsWith('**')) {
+        out.push(<strong key={`${keyBase}-b${i}`} style={{ color: GREEN }}>{tok.slice(2, -2)}</strong>);
+      } else if (tok.startsWith('*')) {
+        out.push(<em key={`${keyBase}-i${i}`}>{tok.slice(1, -1)}</em>);
+      } else {
+        const mm = /\[([^\]]+)\]\(([^)]+)\)/.exec(tok)!;
+        out.push(
+          <a key={`${keyBase}-a${i}`} href={mm[2]} target="_blank" rel="noreferrer" style={{ color: BLUE }}>
+            {mm[1]}
+          </a>,
+        );
+      }
+      last = m.index + tok.length;
+      i += 1;
+    }
+    if (last < text.length) out.push(<Fragment key={`${keyBase}-tEnd`}>{text.slice(last)}</Fragment>);
+    return out;
+  }
+
   const lines = source.replace(/\r\n/g, '\n').split('\n');
   const blocks: ReactNode[] = [];
   let i = 0;

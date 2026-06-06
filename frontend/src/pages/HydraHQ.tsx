@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
-import { GREEN, DIM, AMBER, RED, card, fmtAge, HeadCard, Pill } from './hq/ui';
+import { GREEN, DIM, AMBER, RED, BLUE, card, fmtAge, HeadCard, Pill } from './hq/ui';
 import type { Fleet, Head, Room } from './hq/types';
 
 // Hydra HQ 🛰️ — fleet overview (Slice 1). Polls /api/hq/fleet (a host-collector snapshot
@@ -76,6 +76,15 @@ export default function HydraHQ() {
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 16px 40px', fontFamily: 'monospace', color: GREEN }}>
       <PageHeader title="🛰️ Hydra HQ" subtitle={subtitle} />
+
+      <div style={{ textAlign: 'center', marginBottom: 16 }}>
+        <Link
+          to="/hq/memory"
+          style={{ color: BLUE, fontSize: 12, textDecoration: 'none', border: `1px solid ${BLUE}`, borderRadius: 4, padding: '4px 10px' }}
+        >
+          🧠 Memory{fleet?.memory_index?.length ? ` · ${fleet.memory_index.length}` : ''}
+        </Link>
+      </div>
 
       {err && fleet == null && (
         <div style={{ ...card, color: RED, borderColor: RED, textAlign: 'center' }}>

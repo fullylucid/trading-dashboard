@@ -28,6 +28,7 @@ logger = logging.getLogger("hq_routes")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 FLEET_KEY = "hq:fleet"
 ROOMS_KEY = "hq:rooms"
+MEMORY_KEY = "hq:memory"
 
 _redis_client: Optional["redis.Redis"] = None
 
@@ -98,3 +99,39 @@ def room(room_id: str) -> Dict[str, Any]:
         "room": {**match, "docs": docs},
         "heads": heads,
     }
+
+
+@hq_router.get("/memory")
+def memory_index() -> Dict[str, Any]:
+    """The memory knowledge-base index: one lightweight entry per ``memory/*.md`` (name, title,
+    description, type, scope, link count). Bodies are fetched per-doc via /memory/{name}.
+
+    Read-only passthrough of ``hq:memory`` (built + secret-scrubbed host-side from the
+    git-tracked memory dir). ``{"available": false}`` if the collector hasn't run.
+    """
+    data = _get_json(_r(), MEMORY_KEY)
+    if data is None:
+        return {"available": False}
+    return {
+        "available": True,
+        "generated_at": data.get("generated_at"),
+        "index": data.get("index", []),
+    }
+
+
+@hq_router.get("/memory/{name}")
+def memory_doc(name: str) -> Dict[str, Any]:
+    """One memory doc: its frontmatter + scrubbed body + outbound/inbound ``[[wikilinks]]``.
+
+    ``links_out`` is annotated with whether each target exists (so the UI can style broken
+    links). 404 if the name isn't in the knowledge base.
+    """
+    data = _get_json(_r(), MEMORY_KEY)
+    if data is None:
+        return {"available": False}
+    docs = data.get("docs", {})
+    doc = docs.get(name)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"unknown memory: {name}")
+    links_out = [{"name": l, "exists": l in docs} for l in doc.get("links_out", [])]
+    return {"available": True, "generated_at": data.get("generated_at"), "doc": {**doc, "links_out": links_out}}
