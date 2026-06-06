@@ -37,11 +37,14 @@ def _channel_category(channel_id: str) -> str:
 async def _ingest_one(meta: Dict[str, Any], category: str) -> Dict[str, Any]:
     """Fetch transcript + distill a single video, persist, return the doc."""
     vid = meta["video_id"]
-    transcript = await asyncio.to_thread(transcripts.fetch_transcript, meta["url"])
+    transcript = await asyncio.to_thread(transcripts.fetch_transcript, meta["url"], 90, True)
+    chars = len(transcript or "")
     doc: Dict[str, Any] = {
         "video_id": vid, "title": meta.get("title", ""), "channel": meta.get("channel", ""),
         "channel_id": meta.get("channel_id", ""), "published": meta.get("published", ""),
         "url": meta["url"], "category": category,
+        "transcript_chars": chars,
+        "transcript_quality": "none" if not chars else ("thin" if chars < 1500 else "ok"),
         "distilled_at": datetime.now(timezone.utc).isoformat(),
     }
     if not transcript:

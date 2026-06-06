@@ -21,7 +21,8 @@ _FINANCE = (
     '"macro_thesis":"<1 sentence, or empty>",'
     '"calls":[{"ticker":"<SYMBOL or null>","action":"buy|sell|hold|watch",'
     '"conviction":"low|medium|high","price_target":<number or null>,'
-    '"horizon":"<e.g. days|weeks|1-3yr>","thesis":"<short why>"}]}\n'
+    '"horizon":"<e.g. days|weeks|1-3yr>","thesis":"<short why>"}],'
+    '"moments":[{"t":<integer seconds>,"label":"<key moment, <=8 words>"}]}\n'
     "Only include calls actually argued in the video. If none, calls:[]. Use real tickers; "
     "never invent a target that wasn't stated (use null)."
 )
@@ -33,7 +34,8 @@ _GENERAL = (
     '"key_insights":["<the non-obvious takeaways, 3-6 bullets>"],'
     '"tools_mentioned":["<libraries/products/papers/techniques named>"],'
     '"claims":[{{"claim":"<a specific claim made>","stance":"asserted|speculative|cited"}}],'
-    '"recommendations":["<concrete advice/actions the creator gives>"]}}'
+    '"recommendations":["<concrete advice/actions the creator gives>"],'
+    '"moments":[{{"t":<integer seconds>,"label":"<key moment, <=8 words>"}}]}}'
 )
 
 # Discovery mode: the scout surfaced this video from an open YouTube search, so it has NOT
@@ -55,7 +57,8 @@ _DISCOVERY = (
     '"key_insights":["<3-5 concrete, non-obvious takeaways or steps>"],'
     '"tools_mentioned":["<libraries/repos/products/papers/techniques named>"],'
     '"relevance":<float 0.0-1.0, how well it fits Schyler\'s interests above>,'
-    '"worth_sharing":<true|false — true ONLY if genuinely novel/actionable for him>}}\n'
+    '"worth_sharing":<true|false — true ONLY if genuinely novel/actionable for him>,'
+    '"moments":[{{"t":<integer seconds>,"label":"<key moment, <=8 words>"}}]}}\n'
     "Score honestly: most search results are mediocre. Reserve relevance>0.8 for content "
     "that teaches a specific, actionable strategy/architecture/tool he'd plausibly use."
 )
@@ -70,7 +73,13 @@ def build_prompt(transcript: str, title: str, channel: str, category: str,
         head = _FINANCE
     else:
         head = _GENERAL.format(cat=category)
-    return (f"{head}\n\nVIDEO: {title}\nCHANNEL: {channel}\nCATEGORY: {category}\n\n"
+    moments_note = (
+        "\n\nThe transcript is interleaved with [mm:ss] markers. Use the nearest marker to set "
+        "each moment's `t` in WHOLE SECONDS (e.g. [12:30] -> 750). Pick 3-8 genuinely useful "
+        "moments (a key claim, a demo, a chart, a call); if the transcript has no markers or "
+        "nothing stands out, return moments:[]."
+    )
+    return (f"{head}{moments_note}\n\nVIDEO: {title}\nCHANNEL: {channel}\nCATEGORY: {category}\n\n"
             f"TRANSCRIPT:\n{t}")
 
 

@@ -17,11 +17,15 @@ type Distill = {
   category?: string; summary?: string; creator_view?: string; philosophy?: string; macro_thesis?: string;
   calls?: Call[]; key_insights?: string[]; tools_mentioned?: string[]; recommendations?: string[];
   claims?: { claim: string; stance: string }[];
+  moments?: { t: number; label: string }[];
 };
 type VideoDoc = {
   video_id: string; title: string; channel: string; channel_id: string; published: string;
   url: string; category: string; distill?: Distill | null; error?: string; distilled_at?: string;
+  transcript_quality?: string;
 };
+
+const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 type Pick = { ticker: string; dir: number; ret: number; alpha: number; pub: string; title: string; in_flight?: boolean; horizon_days?: number; window_end?: string };
 type LbRow = { channel: string; calls: number; scored: number; settled?: number; in_flight?: number; watch_calls?: number; avg_alpha: number | null; hit_rate: number | null; picks: Pick[] };
 type TkCreator = { channel: string; action?: string; conviction?: string; pub?: string; avg_alpha?: number | null; scored?: number };
@@ -171,6 +175,7 @@ function VideoCard({ v, visionOn, onChanged }: { v: VideoDoc; visionOn: boolean;
         {d?.creator_view && <span style={{ fontSize: 11, color: viewColor(d.creator_view), fontWeight: 700 }}>{d.creator_view}</span>}
       </div>
       {v.error && <div style={{ fontSize: 11, color: AMBER, marginTop: 6 }}>⚠ {v.error}</div>}
+      {!v.error && v.transcript_quality === 'thin' && <div style={{ fontSize: 10, color: AMBER, marginTop: 4 }}>⚠ thin transcript — distill may be shallow</div>}
       {d && (
         <>
           {d.summary && <div style={{ fontSize: 12, marginTop: 6, lineHeight: 1.45 }}>{d.summary}</div>}
@@ -185,6 +190,17 @@ function VideoCard({ v, visionOn, onChanged }: { v: VideoDoc; visionOn: boolean;
           {!!d.recommendations?.length && <div style={{ marginTop: 6 }}>
             <div style={{ fontSize: 11, color: DIM }}>Recommendations</div>
             <ul style={{ margin: '2px 0 0 16px', padding: 0 }}>{d.recommendations.map((k, i) => <li key={i} style={{ fontSize: 12, lineHeight: 1.4 }}>{k}</li>)}</ul>
+          </div>}
+          {!!d.moments?.length && <div style={{ marginTop: 6 }}>
+            <div style={{ fontSize: 11, color: DIM }}>Moments</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
+              {d.moments.map((m, i) => (
+                <a key={i} href={`${v.url}&t=${m.t}s`} target="_blank" rel="noreferrer"
+                   style={{ fontSize: 11, color: GREEN, textDecoration: 'none', border: `1px solid ${DIM}`, borderRadius: 10, padding: '1px 8px' }}>
+                  <span style={{ color: DIM }}>{fmtTime(m.t)}</span> {m.label}
+                </a>
+              ))}
+            </div>
           </div>}
         </>
       )}
