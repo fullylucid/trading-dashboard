@@ -43,12 +43,20 @@ REDIS_TTL_S = 120  # snapshot is fresh for ~10s; TTL is a generous staleness bac
 # this baked-in default applies when the file is absent. Each custom category claims heads by
 # `roles` and/or explicit `heads`; everything else falls back to its room.
 ROOMS_CONFIG_PATH = os.getenv("HQ_ROOMS_CONFIG", os.path.join(HOME, "hydra-hq", "rooms.config.json"))
+# External heads (B1): agents not visible to WSL tmux/registry (e.g. win-gaia on Windows) that
+# report liveness via a file-message bus heartbeat. The collector reads each heartbeat file and
+# its mtime; new external agents are added by CONFIG, not code.
+EXTERNAL_STALE_S = 45 * 60   # heartbeat older than this (gaia polls ~20-25min) -> dormant
 DEFAULT_ROOMS_CONFIG: Dict[str, Any] = {
     "categories": [
         {"id": "command", "label": "🛰️ Command", "roles": ["conductor", "hq"], "heads": []},
     ],
     "order": ["command"],     # category ids first, in this order; remaining rooms follow (alpha)
     "room_labels": {},        # optional per-room display-label overrides
+    "external_heads": [       # bus/heartbeat-reported heads (no tmux/git) — see collect_external_heads
+        {"name": "win-gaia", "heartbeat_path": "/mnt/c/cyborganic-bus/heartbeat-win.md",
+         "room": "cyborganic", "kind": "windows"},
+    ],
 }
 
 # Per-head detail sizing. Fossils are large transcripts — we ship only an INDEX (names/mtime/
@@ -453,6 +461,74 @@ def assign_categories(
     return cat_by_head, categories
 
 
+def parse_heartbeat(text: str) -> Dict[str, Any]:
+    """Parse a gaia-bus heartbeat line 'tick N · <status> · <date>' (see BUS.md). The status
+    can itself contain ' · ', so only the first (tick) and last (date) fields are split off."""
+    parts = [p.strip() for p in (text or "").strip().split(" · ")]
+    tick = None
+    if parts and parts[0].lower().startswith("tick"):
+        m = re.search(r"\d+", parts[0])
+        tick = int(m.group()) if m else None
+        parts = parts[1:]
+    date = parts.pop() if len(parts) >= 2 else None
+    status = " · ".join(parts).strip()
+    return {"tick": tick, "status": status, "date": date}
+
+
+def external_status(age_s: Optional[float], stale_after_s: int = EXTERNAL_STALE_S) -> str:
+    """Liveness for a heartbeat head: idle while fresh, dormant once the tick stops advancing
+    (BUS.md: 'if a heartbeat hasn't advanced in a while, assume its loop is paused → surface').
+    `None` age means no heartbeat file at all -> offline."""
+    if age_s is None:
+        return "offline"
+    return "idle" if age_s <= stale_after_s else "dormant"
+
+
+def collect_external_heads(config: Dict[str, Any], now: float) -> List[Dict[str, Any]]:
+    """Build head records for config-declared external agents from their bus heartbeat files.
+    No git/tmux/fossils — just status + tick + last-heartbeat, derived from the file's content
+    and mtime. Status text is secret-scrubbed + truncated like any status line."""
+    heads: List[Dict[str, Any]] = []
+    for ext in config.get("external_heads") or []:
+        name = ext.get("name")
+        path = ext.get("heartbeat_path")
+        if not name or not path:
+            continue
+        room_id = ext.get("room") or room_for(path)[0]
+        stale_after = ext.get("stale_after_s", EXTERNAL_STALE_S)
+        tick, current, last_iso, age = None, None, None, None
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                hb = parse_heartbeat(f.read(8000))
+            mtime = os.path.getmtime(path)
+            age = now - mtime
+            last_iso = _epoch_to_iso(mtime)
+            tick = hb["tick"]
+            current = redact(hb["status"]) or None
+        except OSError:
+            pass
+        status = external_status(age, stale_after)
+        heads.append({
+            "name": name,
+            "room": room_id,
+            "role": "head",
+            "workdir": None,
+            "branch": None,
+            "status": status,
+            "current": current,
+            "last_active": last_iso,
+            "last_active_age_s": round(age) if age is not None else None,
+            "source": "bus",
+            "kind": ext.get("kind", "external"),
+            "tick": tick,
+            "rc": {"paired": False, "name": name},
+            "git": {"ahead": 0, "uncommitted": 0, "last_commit": None},
+            "tmux": None,
+            "fossil_dir": None,
+        })
+    return heads
+
+
 def capture_pane(pane_id: str) -> str:
     return _run(["tmux", "capture-pane", "-p", "-t", pane_id], timeout=5.0)
 
@@ -763,6 +839,14 @@ def _iso_to_epoch(ts_iso: Optional[str]) -> Optional[float]:
         return None
 
 
+def _epoch_to_iso(epoch: float) -> Optional[str]:
+    try:
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(epoch, timezone.utc).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return None
+
+
 def _age(ts_iso: Optional[str], now: float) -> Optional[float]:
     epoch = _iso_to_epoch(ts_iso)
     return None if epoch is None else now - epoch
@@ -777,6 +861,7 @@ def build_snapshot() -> Dict[str, Any]:
     panes = tmux_panes()
     # self-healing roster: registry UNION live tmux discovery (see discover_heads)
     roster = discover_heads(read_registry(), panes)
+    config = load_rooms_config()
 
     heads: List[Dict[str, Any]] = []
     rooms: Dict[str, Dict[str, Any]] = {}
@@ -844,6 +929,20 @@ def build_snapshot() -> Dict[str, Any]:
             "fossil_dir": os.path.join(ARCHIVES, name),
         })
 
+    # external heads (B1): config-declared agents reporting via a bus heartbeat (e.g. win-gaia
+    # on Windows) — invisible to tmux/registry. No git/fossils; status from the heartbeat file.
+    for eh in collect_external_heads(config, now):
+        rid = eh["room"]
+        room = rooms.setdefault(rid, {
+            "id": rid, "name": room_for(rid)[1], "repo": None, "heads": [], "open_prs": [],
+        })
+        room["heads"].append(eh["name"])
+        heads.append(eh)
+        heads_detail[eh["name"]] = {
+            "room": rid, "recent_commits": [], "fossils": {"count": 0, "files": []},
+            "source": eh["source"], "kind": eh["kind"], "tick": eh.get("tick"),
+        }
+
     # attach open PRs to rooms (match PR branch -> head where possible) + emit PR activity
     branch_to_head = {h["branch"]: h["name"] for h in heads if h.get("branch")}
     seen_repos: set = set()
@@ -871,7 +970,7 @@ def build_snapshot() -> Dict[str, Any]:
 
     # category layer (A2): group heads above rooms per the hydra-hq rooms.config.json
     room_names = {r["id"]: r["name"] for r in rooms.values()}
-    cat_by_head, categories = assign_categories(heads, room_names, load_rooms_config())
+    cat_by_head, categories = assign_categories(heads, room_names, config)
     for h in heads:
         h["category"] = cat_by_head.get(h["name"], h["room"])
 

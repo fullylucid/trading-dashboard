@@ -88,18 +88,28 @@ export default function HeadDetail() {
               {head.current || 'no recent activity'}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              {head.source === 'bus' && (
+                <Pill color={BLUE}>{head.kind === 'windows' ? '⊞ Windows' : 'external'}</Pill>
+              )}
+              {head.tick != null && <Pill color={DIM}>tick {head.tick}</Pill>}
               {head.branch && <Pill color={BLUE}>⎇ {head.branch}</Pill>}
               {head.git.ahead > 0 && <Pill color={GREEN}>↑{head.git.ahead}</Pill>}
               {head.git.uncommitted > 0 && <Pill color={AMBER}>±{head.git.uncommitted} uncommitted</Pill>}
-              {head.rc.paired ? (
-                <a href="https://claude.ai/code" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
-                  <Pill color={BLUE}>🎮 Drive in RC</Pill>
-                </a>
-              ) : (
-                <Pill color={FAINT}>RC not paired</Pill>
-              )}
+              {head.source !== 'bus' &&
+                (head.rc.paired ? (
+                  <a href="https://claude.ai/code" target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+                    <Pill color={BLUE}>🎮 Drive in RC</Pill>
+                  </a>
+                ) : (
+                  <Pill color={FAINT}>RC not paired</Pill>
+                ))}
             </div>
-            <div style={{ fontSize: 10, color: FAINT }}>{head.workdir}</div>
+            {head.workdir && <div style={{ fontSize: 10, color: FAINT }}>{head.workdir}</div>}
+            {head.source === 'bus' && (
+              <div style={{ fontSize: 10, color: FAINT }}>
+                external head — status via gaia bus heartbeat (no git / fossils)
+              </div>
+            )}
           </div>
 
           {/* recent commits */}

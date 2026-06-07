@@ -22,6 +22,7 @@ export const STATUS_META: Record<Status, { color: string; label: string; pulse: 
   working: { color: GREEN, label: 'working', pulse: true },
   'waiting-input': { color: AMBER, label: 'waiting', pulse: true },
   idle: { color: DIM, label: 'idle', pulse: false },
+  dormant: { color: '#b07cff', label: 'dormant', pulse: false },
   offline: { color: FAINT, label: 'offline', pulse: false },
 };
 
@@ -80,6 +81,14 @@ export function HeadCard({ head }: { head: Head }) {
         <span style={{ color: m.color, fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 }}>
           {m.label}
         </span>
+        {head.source === 'bus' && (
+          <span
+            title="external head — status via bus heartbeat"
+            style={{ fontSize: 9, color: BLUE, border: `1px solid ${BLUE}`, borderRadius: 3, padding: '0 4px' }}
+          >
+            {head.kind === 'windows' ? '⊞ Windows' : 'external'}
+          </span>
+        )}
         <span style={{ marginLeft: 'auto', fontSize: 10, color: DIM }}>{fmtAge(head.last_active_age_s)}</span>
       </div>
 

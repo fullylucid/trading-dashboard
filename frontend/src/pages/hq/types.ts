@@ -1,6 +1,6 @@
 // Shared types for the Hydra HQ 🛰️ views (overview + room detail).
 
-export type Status = 'working' | 'idle' | 'waiting-input' | 'offline';
+export type Status = 'working' | 'idle' | 'waiting-input' | 'offline' | 'dormant';
 export type Role = 'conductor' | 'hq' | 'head';
 
 export type Head = {
@@ -8,6 +8,9 @@ export type Head = {
   room: string;
   role?: Role;
   category?: string;
+  source?: 'bus';        // external/heartbeat head (no tmux/git)
+  kind?: string;         // e.g. 'windows' — badge hint for external heads
+  tick?: number | null;  // bus heartbeat tick
   workdir: string;
   branch: string | null;
   status: Status;
