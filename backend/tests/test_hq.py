@@ -438,6 +438,55 @@ def test_discover_heads_falls_back_to_basename_when_no_window_name():
     assert hq.discover_heads([], panes) == [("foo", "/home/user/wt/foo")]
 
 
+# --------------------------------------------------------------------------- #
+# assign_categories — the Command category layer (A2)
+# --------------------------------------------------------------------------- #
+_CAT_HEADS = [
+    {"name": "charlotte", "room": "user", "role": "conductor"},
+    {"name": "hq", "room": "trading-dashboard", "role": "hq"},
+    {"name": "charts", "room": "trading-dashboard", "role": "head"},
+    {"name": "cribdar", "room": "cribdar", "role": "head"},
+]
+_ROOM_NAMES = {"user": "User", "trading-dashboard": "Trading Dashboard", "cribdar": "Cribdar"}
+_CMD_CONFIG = {
+    "categories": [{"id": "command", "label": "🛰️ Command", "roles": ["conductor", "hq"], "heads": []}],
+    "order": ["command"],
+    "room_labels": {},
+}
+
+
+def test_assign_categories_command_by_role():
+    cat_by_head, cats = hq.assign_categories(_CAT_HEADS, _ROOM_NAMES, _CMD_CONFIG)
+    assert cat_by_head["charlotte"] == "command" and cat_by_head["hq"] == "command"
+    assert cat_by_head["charts"] == "trading-dashboard"   # role 'head' stays in its room
+    cmd = next(c for c in cats if c["id"] == "command")
+    assert cmd["kind"] == "custom" and sorted(cmd["heads"]) == ["charlotte", "hq"]
+    # command first (from order), then rooms alpha; the now-empty 'user' room is gone
+    assert [c["id"] for c in cats] == ["command", "cribdar", "trading-dashboard"]
+    td = next(c for c in cats if c["id"] == "trading-dashboard")
+    assert td["kind"] == "room" and td["room"] == "trading-dashboard" and td["heads"] == ["charts"]
+
+
+def test_assign_categories_empty_config_collapses_to_rooms():
+    cat_by_head, cats = hq.assign_categories(_CAT_HEADS, _ROOM_NAMES, {})
+    # every head stays in its room; categories == the rooms (alpha)
+    assert cat_by_head == {"charlotte": "user", "hq": "trading-dashboard", "charts": "trading-dashboard", "cribdar": "cribdar"}
+    assert [c["id"] for c in cats] == ["cribdar", "trading-dashboard", "user"]
+    assert all(c["kind"] == "room" for c in cats)
+
+
+def test_assign_categories_explicit_head_claim_and_label_override():
+    cfg = {
+        "categories": [{"id": "command", "label": "Cmd", "roles": [], "heads": ["hq"]}],
+        "order": ["command"],
+        "room_labels": {"trading-dashboard": "TD Product"},
+    }
+    cat_by_head, cats = hq.assign_categories(_CAT_HEADS, _ROOM_NAMES, cfg)
+    assert cat_by_head["hq"] == "command" and cat_by_head["charlotte"] == "user"  # only hq claimed
+    td = next(c for c in cats if c["id"] == "trading-dashboard")
+    assert td["label"] == "TD Product"  # room_labels override applied
+
+
 @pytest.mark.parametrize("name,workdir,expected", [
     ("charlotte", "/home/user", "conductor"),               # conductor: home dir + name
     ("anything", hq.HOME, "conductor"),                      # conductor: home dir alone

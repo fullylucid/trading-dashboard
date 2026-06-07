@@ -3,26 +3,32 @@ import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import { GREEN, DIM, AMBER, RED, BLUE, card, fmtAge, HeadCard, Pill } from './hq/ui';
 import ActivityFeed from './hq/ActivityFeed';
-import type { Fleet, Head, Room } from './hq/types';
+import type { Category, Fleet, Head, Room } from './hq/types';
 
-// Hydra HQ 🛰️ — fleet overview (Slice 1). Polls /api/hq/fleet (a host-collector snapshot
-// served from Redis) and renders one card per head, grouped by project room. Room headers
-// link to the per-room detail view (Slice 2). See ~/hydra-hq/DESIGN.md.
+// Hydra HQ 🛰️ — fleet overview. Polls /api/hq/fleet (a host-collector snapshot served from
+// Redis) and renders one card per head, grouped by CATEGORY (the layer above per-repo rooms;
+// roadmap A2). The Command category (conductor + hq head) sorts first; project categories are
+// their rooms and link to the per-room detail view. See ~/hydra-hq/DESIGN.md.
 
-function RoomSection({ room, heads }: { room: Room; heads: Head[] }) {
+function CategorySection({ cat, room, heads }: { cat: Category; room?: Room; heads: Head[] }) {
   const working = heads.filter((h) => h.status === 'working').length;
+  const titleStyle: React.CSSProperties = { color: GREEN, fontWeight: 700, fontSize: 15, textDecoration: 'none' };
   return (
     <section style={{ marginBottom: 22 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
-        <Link to={`/hq/room/${room.id}`} style={{ color: GREEN, fontWeight: 700, fontSize: 15, textDecoration: 'none' }}>
-          {room.name} <span style={{ fontSize: 11, opacity: 0.7 }}>↗</span>
-        </Link>
-        {room.repo && <span style={{ fontSize: 11, color: DIM }}>{room.repo}</span>}
+        {cat.kind === 'room' && room ? (
+          <Link to={`/hq/room/${room.id}`} style={titleStyle}>
+            {cat.label} <span style={{ fontSize: 11, opacity: 0.7 }}>↗</span>
+          </Link>
+        ) : (
+          <span style={titleStyle}>{cat.label}</span>
+        )}
+        {room?.repo && <span style={{ fontSize: 11, color: DIM }}>{room.repo}</span>}
         <span style={{ fontSize: 11, color: DIM }}>
           {heads.length} head{heads.length === 1 ? '' : 's'}
           {working > 0 ? ` · ${working} working` : ''}
         </span>
-        {room.open_prs.length > 0 && (
+        {room && room.open_prs.length > 0 && (
           <Pill color={AMBER}>{room.open_prs.length} open PR{room.open_prs.length === 1 ? '' : 's'}</Pill>
         )}
       </div>
@@ -33,6 +39,13 @@ function RoomSection({ room, heads }: { room: Room; heads: Head[] }) {
       </div>
     </section>
   );
+}
+
+// Group heads by category when the collector provides one; otherwise fall back to the rooms
+// (older snapshots), so the overview keeps working across a collector/frontend version skew.
+function categoriesOf(fleet: Fleet | null): Category[] {
+  if (fleet?.categories?.length) return fleet.categories;
+  return (fleet?.rooms ?? []).map((r) => ({ id: r.id, label: r.name, kind: 'room', room: r.id, heads: r.heads }));
 }
 
 export default function HydraHQ() {
@@ -63,8 +76,11 @@ export default function HydraHQ() {
 
   const rooms = fleet?.rooms ?? [];
   const heads = fleet?.heads ?? [];
+  const categories = categoriesOf(fleet);
+  const roomById = new Map(rooms.map((r) => [r.id, r]));
   const collectorOffline = fleet != null && fleet.available === false;
   const totalWorking = heads.filter((h) => h.status === 'working').length;
+  const headsOf = (cat: Category) => heads.filter((h) => (h.category ?? h.room) === cat.id);
 
   const subtitle =
     fleet == null && !err
@@ -100,8 +116,8 @@ export default function HydraHQ() {
         </div>
       )}
 
-      {rooms.map((room) => (
-        <RoomSection key={room.id} room={room} heads={heads.filter((h) => h.room === room.id)} />
+      {categories.map((cat) => (
+        <CategorySection key={cat.id} cat={cat} room={cat.room ? roomById.get(cat.room) : undefined} heads={headsOf(cat)} />
       ))}
 
       {(fleet?.activity?.length ?? 0) > 0 && (
