@@ -389,3 +389,63 @@ def test_pane_is_rc_paired():
 ])
 def test_parse_remote(url, expected):
     assert hq.parse_remote(url) == expected
+
+
+# --------------------------------------------------------------------------- #
+# discover_heads — self-healing roster (registry UNION live tmux)
+# --------------------------------------------------------------------------- #
+def _pane(session, cmd, name):
+    return {"session": session, "cmd": cmd, "name": name, "window": 0, "pane": "%0"}
+
+
+def test_discover_heads_registry_only():
+    reg = [("charts", "/home/user/wt/td__charts")]
+    assert hq.discover_heads(reg, {}) == reg
+
+
+def test_discover_heads_unions_live_tmux():
+    reg = [("charts", "/home/user/wt/td__charts")]
+    panes = {
+        "/home/user/wt/cyb__data-gaia": _pane("hydra", "claude", "data-gaia"),  # add
+        "/home/user/wt/cyb__review-gaia": _pane("hydra", "claude", "review-gaia"),  # add
+    }
+    out = hq.discover_heads(reg, panes)
+    names = {n for n, _ in out}
+    assert names == {"charts", "data-gaia", "review-gaia"}
+    # discovered head's name is the tmux window name, workdir is the pane path
+    assert ("data-gaia", "/home/user/wt/cyb__data-gaia") in out
+
+
+def test_discover_heads_dedups_by_workdir_registry_name_wins():
+    reg = [("nydra3", "/home/user/trading-dashboard")]
+    panes = {"/home/user/trading-dashboard": _pane("hydra", "claude", "td-window")}
+    out = hq.discover_heads(reg, panes)
+    assert out == [("nydra3", "/home/user/trading-dashboard")]  # registry name kept, no dup
+
+
+def test_discover_heads_skips_non_claude_and_other_sessions():
+    panes = {
+        "/a": _pane("hydra", "sh", "idle-shell"),       # not claude
+        "/b": _pane("other", "claude", "other-sess"),    # not the hydra session
+        "/c": _pane("hydra", "claude", "real-head"),     # kept
+    }
+    out = hq.discover_heads([], panes)
+    assert out == [("real-head", "/c")]
+
+
+def test_discover_heads_falls_back_to_basename_when_no_window_name():
+    panes = {"/home/user/wt/foo": _pane("hydra", "claude", "")}
+    assert hq.discover_heads([], panes) == [("foo", "/home/user/wt/foo")]
+
+
+@pytest.mark.parametrize("name,workdir,expected", [
+    ("charlotte", "/home/user", "conductor"),               # conductor: home dir + name
+    ("anything", hq.HOME, "conductor"),                      # conductor: home dir alone
+    ("hq", "/home/user/wt/trading-dashboard__hq", "hq"),     # hq head: name + __hq worktree
+    ("renamed", "/home/user/wt/trading-dashboard__hq", "hq"),  # hq: __hq workdir even if renamed
+    ("charts", "/home/user/wt/trading-dashboard__charts", "head"),
+    ("cribdar", "/home/user/cribdar", "head"),
+    ("nydra3", "/home/user/trading-dashboard", "head"),      # NOT conductor (subdir, not HOME)
+])
+def test_role_for(name, workdir, expected):
+    assert hq.role_for(name, workdir) == expected
