@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger("hq_stream")
 
@@ -29,6 +29,14 @@ STREAM_DIR = os.getenv("HQ_STREAM_DIR", "/mnt/c/cyborganic-bus/stream")
 LIVE_JPG = os.path.join(STREAM_DIR, "live.jpg")
 CONTROL_JSON = os.path.join(STREAM_DIR, "control.json")
 OFFLINE_JPG = os.path.join(os.path.dirname(__file__), "assets", "stream_offline.jpg")
+
+# App run/stop control (B3, per CONTROL.md). app-control.json carries a STATE ENUM ONLY (never a
+# command) — the Windows launcher is command-locked and ignores everything but `desired`.
+APP_CONTROL_JSON = os.path.join(STREAM_DIR, "app-control.json")
+APP_STATUS_JSON = os.path.join(STREAM_DIR, "app-status.json")
+LIVE_JSON = os.path.join(STREAM_DIR, "live.json")   # {tick, ts, w, h} written by the app
+CONTROLLER_STALE_S = 15.0   # app-status.json updated_at older than this -> launcher offline
+FPS_WINDOW_S = 8.0          # window over which measured fps is averaged from live.json ticks
 
 # stream params handed to the app via control.json (STREAM.md)
 FPS = int(os.getenv("HQ_STREAM_FPS", "12"))
@@ -72,6 +80,104 @@ def _load_offline() -> bytes:
 
 
 _OFFLINE_BYTES = _load_offline()
+
+
+# ---------------------------------------------------------------------------- app run/stop (B3)
+# the only two desired states HQ may request — anything else is rejected before it reaches disk
+_ACTION_TO_DESIRED = {"run": "running", "stop": "stopped"}
+
+
+def app_control_payload(desired: str, now: float) -> dict:
+    """The HQ→launcher control file. STATE ENUM ONLY (CONTROL.md security rule): never a command,
+    path, or args. `requested_by` is informational."""
+    return {"desired": desired, "requested_at": int(now), "requested_by": "hq"}
+
+
+def app_status_view(data: Optional[dict], now: float) -> dict:
+    """Normalize app-status.json (launcher→HQ) for the UI. `controller_offline` is true when the
+    launcher heartbeat (`updated_at`) hasn't advanced in ~15s, or the file is missing/garbage —
+    the persistent Windows task isn't running, so Run/Stop are meaningless until it's back."""
+    if not isinstance(data, dict):
+        return {"controller_offline": True, "state": "offline", "pid": None,
+                "since": None, "updated_at": None, "detail": ""}
+    updated_at = data.get("updated_at")
+    stale = not isinstance(updated_at, (int, float)) or (now - updated_at) > CONTROLLER_STALE_S
+    return {
+        "controller_offline": bool(stale),
+        "state": data.get("state", "unknown"),
+        "pid": data.get("pid"),
+        "since": data.get("since"),
+        "updated_at": updated_at,
+        "detail": data.get("detail", ""),
+    }
+
+
+def write_app_control(action: str, now: float) -> dict:
+    """Atomically write app-control.json for a validated action. Returns the written payload.
+    Raises ValueError for an unknown action (the route turns that into a 400)."""
+    desired = _ACTION_TO_DESIRED.get(action)
+    if desired is None:
+        raise ValueError(f"unknown action: {action!r}")
+    payload = app_control_payload(desired, now)
+    os.makedirs(STREAM_DIR, exist_ok=True)
+    tmp = APP_CONTROL_JSON + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+    os.replace(tmp, APP_CONTROL_JSON)  # atomic
+    return payload
+
+
+def read_app_status(now: float) -> dict:
+    """Read + normalize app-status.json. Never raises — a missing/garbage file reads as offline."""
+    try:
+        with open(APP_STATUS_JSON, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = None
+    return app_status_view(data, now)
+
+
+def read_live_meta() -> dict:
+    """The app's optional live.json sidecar {tick, ts, w, h} (frame counter + dimensions)."""
+    try:
+        with open(LIVE_JSON, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        return {"tick": d.get("tick"), "ts": d.get("ts"), "w": d.get("w"), "h": d.get("h")}
+    except (OSError, ValueError):
+        return {}
+
+
+def measure_fps(samples: list) -> Optional[float]:
+    """Measured fps = Δtick / Δts across a window of (ts, tick) frame samples. None until there
+    are ≥2 samples spanning a meaningful interval — the caller falls back to the target fps."""
+    if len(samples) < 2:
+        return None
+    (ts0, tk0), (ts1, tk1) = samples[0], samples[-1]
+    dt, dtick = ts1 - ts0, tk1 - tk0
+    if dt <= 0.3 or dtick <= 0:
+        return None
+    return round(dtick / dt, 1)
+
+
+_FPS_SAMPLES: list = []
+
+
+def app_status_full(now: float) -> dict:
+    """app-status.json + the live.json sidecar + a measured fps, for the HQ info line (B3).
+    Keeps a short rolling window of frame (ts, tick) samples to average the real frame rate."""
+    status = read_app_status(now)
+    live = read_live_meta()
+    ts, tick = live.get("ts"), live.get("tick")
+    if isinstance(ts, (int, float)) and isinstance(tick, (int, float)):
+        if not _FPS_SAMPLES or _FPS_SAMPLES[-1] != (ts, tick):
+            _FPS_SAMPLES.append((ts, tick))
+        while len(_FPS_SAMPLES) >= 2 and _FPS_SAMPLES[-1][0] - _FPS_SAMPLES[0][0] > FPS_WINDOW_S:
+            _FPS_SAMPLES.pop(0)
+    measured = measure_fps(_FPS_SAMPLES)
+    status["live"] = live
+    status["fps"] = measured if measured is not None else FPS   # fall back to target fps
+    status["fps_measured"] = measured is not None
+    return status
 
 
 # ---------------------------------------------------------------------------- demand control

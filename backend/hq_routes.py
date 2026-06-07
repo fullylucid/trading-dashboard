@@ -138,6 +138,40 @@ def head(name: str) -> Dict[str, Any]:
     }
 
 
+@hq_router.post("/room/{room_id}/app")
+async def room_app_control(room_id: str, request: Request) -> Dict[str, Any]:
+    """Run/stop the room's app from HQ (B3, per CONTROL.md). Body: ``{"action": "run"|"stop"}``.
+    Writes a STATE ENUM (never a command) to app-control.json; the command-locked Windows
+    launcher reconciles actual→desired. Behind Access SSO (owner-only)."""
+    if room_id != "cyborganic":
+        raise HTTPException(status_code=404, detail=f"no app control for room: {room_id}")
+    import time
+
+    import hq_stream
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    action = (body or {}).get("action")
+    try:
+        payload = hq_stream.write_app_control(action, time.time())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="action must be 'run' or 'stop'")
+    return {"ok": True, "control": payload}
+
+
+@hq_router.get("/room/{room_id}/app")
+def room_app_status(room_id: str) -> Dict[str, Any]:
+    """The app's actual state for HQ (B3). Reads app-status.json (written by the launcher);
+    reports ``controller_offline`` when its heartbeat is stale / the launcher isn't running."""
+    if room_id != "cyborganic":
+        raise HTTPException(status_code=404, detail=f"no app control for room: {room_id}")
+    import time
+
+    import hq_stream
+    return {"available": True, **hq_stream.app_status_full(time.time())}
+
+
 @hq_router.get("/room/{room_id}/stream")
 async def room_stream(room_id: str, request: Request) -> StreamingResponse:
     """Live MJPEG view of a room's app (B2, per STREAM.md). On-demand: connecting drives the
