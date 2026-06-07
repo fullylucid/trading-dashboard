@@ -487,6 +487,41 @@ def test_assign_categories_explicit_head_claim_and_label_override():
     assert td["label"] == "TD Product"  # room_labels override applied
 
 
+# --------------------------------------------------------------------------- #
+# external/bus heads (B1) — heartbeat parse + liveness
+# --------------------------------------------------------------------------- #
+def test_parse_heartbeat_basic():
+    hb = hq.parse_heartbeat("tick 78 · 0022 DONE: render reads positions · 2026-06-06")
+    assert hb["tick"] == 78
+    assert hb["status"] == "0022 DONE: render reads positions"
+    assert hb["date"] == "2026-06-06"
+
+
+def test_parse_heartbeat_status_with_inner_separator():
+    # the status itself may contain ' · ' — only tick (first) and date (last) split off
+    hb = hq.parse_heartbeat("tick 3 · A · B · C · 2026-06-06")
+    assert hb["tick"] == 3
+    assert hb["status"] == "A · B · C"
+    assert hb["date"] == "2026-06-06"
+
+
+def test_parse_heartbeat_malformed():
+    hb = hq.parse_heartbeat("just some text")
+    assert hb["tick"] is None and hb["date"] is None
+    assert hq.parse_heartbeat("")["status"] == ""
+
+
+@pytest.mark.parametrize("age,expected", [
+    (None, "offline"),       # no heartbeat file
+    (0, "idle"),             # just beat
+    (600, "idle"),           # 10 min — fresh
+    (2700, "idle"),          # exactly at the 45-min threshold
+    (3000, "dormant"),       # past threshold -> loop paused
+])
+def test_external_status(age, expected):
+    assert hq.external_status(age) == expected
+
+
 @pytest.mark.parametrize("name,workdir,expected", [
     ("charlotte", "/home/user", "conductor"),               # conductor: home dir + name
     ("anything", hq.HOME, "conductor"),                      # conductor: home dir alone
