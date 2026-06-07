@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import MarkdownView from './MarkdownView';
+import StreamPanel from './StreamPanel';
 import { GREEN, DIM, FAINT, AMBER, RED, BLUE, card, HeadCard, Pill } from './ui';
 import type { RoomDetailResponse } from './types';
 
@@ -72,6 +73,9 @@ export default function RoomDetail() {
 
       {room && (
         <>
+          {/* live app view (cyborganic look-dev stream) */}
+          {room.id === 'cyborganic' && <StreamPanel roomId={room.id} />}
+
           {/* heads */}
           <SectionTitle>
             Heads <span style={{ color: DIM, fontWeight: 400, fontSize: 12 }}>({heads.length})</span>

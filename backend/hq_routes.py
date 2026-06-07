@@ -15,7 +15,8 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 try:
     import redis
@@ -135,6 +136,25 @@ def head(name: str) -> Dict[str, Any]:
             "open_prs": open_prs,
         },
     }
+
+
+@hq_router.get("/room/{room_id}/stream")
+async def room_stream(room_id: str, request: Request) -> StreamingResponse:
+    """Live MJPEG view of a room's app (B2, per STREAM.md). On-demand: connecting drives the
+    viewer count up (the collector-independent stream controller writes control.json so the
+    app starts rendering); disconnecting releases it. Only cyborganic has a stream wired today.
+
+    Frames stay on the shared disk; this Access-gated endpoint is their only exit.
+    """
+    if room_id != "cyborganic":
+        raise HTTPException(status_code=404, detail=f"no live stream for room: {room_id}")
+    import hq_stream
+
+    return StreamingResponse(
+        hq_stream.mjpeg_generator(request),
+        media_type=f"multipart/x-mixed-replace; boundary={hq_stream.BOUNDARY}",
+        headers={"Cache-Control": "no-cache, no-store", "Pragma": "no-cache"},
+    )
 
 
 @hq_router.get("/memory")
