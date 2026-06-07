@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
-import { GREEN, DIM, AMBER, RED, BLUE, card, fmtAge, HeadCard, Pill } from './hq/ui';
+import { GREEN, DIM, AMBER, RED, BLUE, FAINT, card, fmtAge, HeadCard, Pill } from './hq/ui';
 import ActivityFeed from './hq/ActivityFeed';
+import DeckView from './hq/DeckView';
 import type { Category, Fleet, Head, Room } from './hq/types';
+
+type ViewMode = 'overview' | 'deck';
+const VIEW_KEY = 'hq.view';
 
 // Hydra HQ 🛰️ — fleet overview. Polls /api/hq/fleet (a host-collector snapshot served from
 // Redis) and renders one card per head, grouped by CATEGORY (the layer above per-repo rooms;
@@ -48,9 +52,40 @@ function categoriesOf(fleet: Fleet | null): Category[] {
   return (fleet?.rooms ?? []).map((r) => ({ id: r.id, label: r.name, kind: 'room', room: r.id, heads: r.heads }));
 }
 
+function ViewToggle({ view, onChange }: { view: ViewMode; onChange: (v: ViewMode) => void }) {
+  const opt = (v: ViewMode, label: string): React.CSSProperties => ({
+    background: view === v ? 'rgba(0,255,65,0.15)' : 'transparent',
+    color: GREEN,
+    border: 'none',
+    borderRight: v === 'overview' ? `1px solid ${FAINT}` : 'none',
+    fontFamily: 'monospace',
+    fontSize: 12,
+    fontWeight: view === v ? 700 : 400,
+    padding: '4px 12px',
+    cursor: 'pointer',
+  });
+  return (
+    <div style={{ display: 'inline-flex', border: `1px solid ${FAINT}`, borderRadius: 4, overflow: 'hidden' }}>
+      <button type="button" style={opt('overview', 'Overview')} onClick={() => onChange('overview')}>▦ Overview</button>
+      <button type="button" style={opt('deck', 'Deck')} onClick={() => onChange('deck')}>🃏 Deck</button>
+    </div>
+  );
+}
+
 export default function HydraHQ() {
   const [fleet, setFleet] = useState<Fleet | null>(null);
   const [err, setErr] = useState(false);
+  const [view, setView] = useState<ViewMode>(() =>
+    (typeof localStorage !== 'undefined' && localStorage.getItem(VIEW_KEY)) === 'deck' ? 'deck' : 'overview',
+  );
+  const changeView = (v: ViewMode) => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* ignore (private mode) */
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -94,7 +129,8 @@ export default function HydraHQ() {
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 16px 40px', fontFamily: 'monospace', color: GREEN }}>
       <PageHeader title="🛰️ Hydra HQ" subtitle={subtitle} />
 
-      <div style={{ textAlign: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+        <ViewToggle view={view} onChange={changeView} />
         <Link
           to="/hq/memory"
           style={{ color: BLUE, fontSize: 12, textDecoration: 'none', border: `1px solid ${BLUE}`, borderRadius: 4, padding: '4px 10px' }}
@@ -116,17 +152,23 @@ export default function HydraHQ() {
         </div>
       )}
 
-      {categories.map((cat) => (
-        <CategorySection key={cat.id} cat={cat} room={cat.room ? roomById.get(cat.room) : undefined} heads={headsOf(cat)} />
-      ))}
+      {!collectorOffline && view === 'deck' && categories.length > 0 ? (
+        <DeckView categories={categories} roomById={roomById} heads={heads} />
+      ) : (
+        <>
+          {categories.map((cat) => (
+            <CategorySection key={cat.id} cat={cat} room={cat.room ? roomById.get(cat.room) : undefined} heads={headsOf(cat)} />
+          ))}
 
-      {(fleet?.activity?.length ?? 0) > 0 && (
-        <section style={{ marginTop: 28 }}>
-          <div style={{ color: GREEN, fontWeight: 700, fontSize: 15, marginBottom: 8 }}>
-            Recent activity <span style={{ color: DIM, fontWeight: 400, fontSize: 12 }}>· last 72h</span>
-          </div>
-          <ActivityFeed items={fleet!.activity!} />
-        </section>
+          {(fleet?.activity?.length ?? 0) > 0 && (
+            <section style={{ marginTop: 28 }}>
+              <div style={{ color: GREEN, fontWeight: 700, fontSize: 15, marginBottom: 8 }}>
+                Recent activity <span style={{ color: DIM, fontWeight: 400, fontSize: 12 }}>· last 72h</span>
+              </div>
+              <ActivityFeed items={fleet!.activity!} />
+            </section>
+          )}
+        </>
       )}
     </div>
   );
