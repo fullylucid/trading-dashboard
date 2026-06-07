@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { GREEN, DIM, FAINT, AMBER, RED, card } from './ui';
+import { GREEN, DIM, FAINT, AMBER, RED, BLUE, card } from './ui';
 
 // Hydra HQ 🛰️ — cyborganic live-view + run/stop control (B2 stream + B3 app control).
 // The <img> is the MJPEG view (per STREAM.md): while mounted, the backend counts a viewer and
@@ -58,6 +58,9 @@ export default function StreamPanel({ roomId }: { roomId: string }) {
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [errored, setErrored] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Feed defaults OFF on open: don't connect the MJPEG <img> (and so don't drive encode demand)
+  // until the operator opts in — the app/GPU stays idle just from opening the room.
+  const [feedOn, setFeedOn] = useState(false);
   const pollRef = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -128,12 +131,16 @@ export default function StreamPanel({ roomId }: { roomId: string }) {
         </span>
         {status?.detail ? <span style={{ fontSize: 10, color: RED }}>{status.detail}</span> : null}
         <span style={{ fontSize: 10, color: DIM }}>renders on demand — idles when unwatched</span>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+          <button type="button" onClick={() => { setErrored(false); setFeedOn((v) => !v); }} style={btn(true, BLUE)}>
+            {feedOn ? '❚❚ Stop feed' : '▶ Watch feed'}
+          </button>
+          <span style={{ color: FAINT }}>·</span>
           <button type="button" disabled={!canRun || busy} onClick={() => command('run')} style={btn(canRun, GREEN)}>
-            ▶ Run
+            ▶ Run app
           </button>
           <button type="button" disabled={!canStop || busy} onClick={() => command('stop')} style={btn(canStop, RED)}>
-            ❚❚ Stop
+            ❚❚ Stop app
           </button>
         </div>
       </div>
@@ -141,7 +148,7 @@ export default function StreamPanel({ roomId }: { roomId: string }) {
       <div style={{ fontSize: 10, color: DIM, marginBottom: 8, fontFamily: 'monospace' }}>{infoLine(state, status)}</div>
 
       <div style={{ ...card, padding: 0, overflow: 'hidden', position: 'relative', aspectRatio: '16 / 9', background: '#050805' }}>
-        {!errored ? (
+        {feedOn && !errored ? (
           <img
             src={`${base}/stream`}
             alt="cyborganic live render"
@@ -149,9 +156,16 @@ export default function StreamPanel({ roomId }: { roomId: string }) {
             style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
           />
         ) : (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: DIM, fontSize: 12 }}>
-            stream unavailable — backend offline
-          </div>
+          <button
+            type="button"
+            onClick={() => { setErrored(false); setFeedOn(true); }}
+            style={{
+              position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+              gap: 8, background: 'transparent', border: 'none', cursor: 'pointer', color: DIM, fontSize: 13, fontFamily: 'monospace',
+            }}
+          >
+            {errored ? 'stream unavailable — backend offline · click to retry' : '▶ Watch feed — off by default'}
+          </button>
         )}
       </div>
     </section>
