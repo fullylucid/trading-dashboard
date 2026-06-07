@@ -37,6 +37,20 @@ MEMORY_KEY = "hq:memory"      # the git-tracked memory knowledge base (index + s
 HEADS_KEY = "hq:heads"        # per-head detail (recent commits, fossil index, memory scope)
 REDIS_TTL_S = 120  # snapshot is fresh for ~10s; TTL is a generous staleness backstop
 
+# Category layer (roadmap A2): a grouping ABOVE the per-repo rooms, so the conductor + hq head
+# get their own "Command" group instead of being mis-filed under the trading-dashboard product
+# room. Customizable via rooms.config.json in the HYDRA-HQ repo (HQ owns its own org chart);
+# this baked-in default applies when the file is absent. Each custom category claims heads by
+# `roles` and/or explicit `heads`; everything else falls back to its room.
+ROOMS_CONFIG_PATH = os.getenv("HQ_ROOMS_CONFIG", os.path.join(HOME, "hydra-hq", "rooms.config.json"))
+DEFAULT_ROOMS_CONFIG: Dict[str, Any] = {
+    "categories": [
+        {"id": "command", "label": "🛰️ Command", "roles": ["conductor", "hq"], "heads": []},
+    ],
+    "order": ["command"],     # category ids first, in this order; remaining rooms follow (alpha)
+    "room_labels": {},        # optional per-room display-label overrides
+}
+
 # Per-head detail sizing. Fossils are large transcripts — we ship only an INDEX (names/mtime/
 # size, NEVER bodies; DESIGN §8). Live fossil full-text search needs a host request path we
 # don't have (collector is push-only) — a Phase-2 follow-up.
@@ -369,6 +383,74 @@ def discover_heads(
         seen.add(key)
         heads.append((p.get("name") or os.path.basename(key), workdir))
     return heads
+
+
+def load_rooms_config() -> Dict[str, Any]:
+    """Load the category config from the hydra-hq repo, falling back to the baked-in default.
+    A present file is shallow-merged over the default (its keys win), so a partial file still
+    gets sane defaults. Never raises — a broken/missing file just yields the default."""
+    cfg = dict(DEFAULT_ROOMS_CONFIG)
+    try:
+        with open(ROOMS_CONFIG_PATH, "r", encoding="utf-8") as f:
+            user = json.load(f)
+        if isinstance(user, dict):
+            cfg.update({k: v for k, v in user.items() if v is not None})
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+
+def assign_categories(
+    heads: List[Dict[str, Any]], room_names: Dict[str, str], config: Dict[str, Any]
+) -> Tuple[Dict[str, str], List[Dict[str, Any]]]:
+    """Group heads into ordered categories ABOVE the per-repo rooms (roadmap A2). Pure.
+
+    A head joins the first custom category that lists its name in ``heads`` or its role in
+    ``roles``; otherwise it stays in its room (a room-category). Returns
+    ``(category_by_head, ordered_categories)`` where each category is
+    ``{id, label, kind: 'custom'|'room', room?, heads: [names]}``. With no custom categories
+    this collapses to exactly the rooms, so behaviour is unchanged when the config is empty.
+    """
+    customs = config.get("categories") or []
+    cat_by_head: Dict[str, str] = {}
+    members: Dict[str, List[str]] = {}
+    labels: Dict[str, str] = {}
+    kinds: Dict[str, str] = {}
+
+    def claims(cat: Dict[str, Any], head: Dict[str, Any]) -> bool:
+        return head["name"] in (cat.get("heads") or []) or head.get("role") in (cat.get("roles") or [])
+
+    for head in heads:
+        cid = head.get("room")
+        for cat in customs:
+            if claims(cat, head):
+                cid = cat["id"]
+                labels[cid] = cat.get("label", cid)
+                kinds[cid] = "custom"
+                break
+        cat_by_head[head["name"]] = cid
+        members.setdefault(cid, []).append(head["name"])
+
+    # room-categories get their room display name (or a config label override)
+    room_labels = config.get("room_labels") or {}
+    for cid in members:
+        if cid not in kinds:
+            kinds[cid] = "room"
+            labels[cid] = room_labels.get(cid) or room_names.get(cid, cid)
+
+    # order: configured ids first (in order), then remaining rooms alpha by label
+    order = config.get("order") or []
+    ordered_ids = [cid for cid in order if cid in members]
+    rest = sorted((cid for cid in members if cid not in ordered_ids), key=lambda c: labels[c].lower())
+    categories = [
+        {
+            "id": cid, "label": labels[cid], "kind": kinds[cid],
+            **({"room": cid} if kinds[cid] == "room" else {}),
+            "heads": members[cid],
+        }
+        for cid in ordered_ids + rest
+    ]
+    return cat_by_head, categories
 
 
 def capture_pane(pane_id: str) -> str:
@@ -787,9 +869,16 @@ def build_snapshot() -> Dict[str, Any]:
     for name, det in heads_detail.items():
         det["memory_scope"] = scope_by_room.get(det.get("room"), [])
 
+    # category layer (A2): group heads above rooms per the hydra-hq rooms.config.json
+    room_names = {r["id"]: r["name"] for r in rooms.values()}
+    cat_by_head, categories = assign_categories(heads, room_names, load_rooms_config())
+    for h in heads:
+        h["category"] = cat_by_head.get(h["name"], h["room"])
+
     fleet = {
         "generated_at": int(now),
         "rooms": sorted(rooms.values(), key=lambda r: r["name"].lower()),
+        "categories": categories,
         "heads": sorted(heads, key=lambda h: (h["room"], h["name"].lower())),
         "activity": finalize_activity(activity),
         "memory_index": memory["index"],      # lightweight index (full bodies in hq:memory)

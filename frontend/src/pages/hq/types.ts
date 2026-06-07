@@ -1,10 +1,13 @@
 // Shared types for the Hydra HQ 🛰️ views (overview + room detail).
 
 export type Status = 'working' | 'idle' | 'waiting-input' | 'offline';
+export type Role = 'conductor' | 'hq' | 'head';
 
 export type Head = {
   name: string;
   room: string;
+  role?: Role;
+  category?: string;
   workdir: string;
   branch: string | null;
   status: Status;
@@ -49,10 +52,19 @@ export type ActivityItem = {
   url?: string | null;
 };
 
+export type Category = {
+  id: string;
+  label: string;
+  kind: 'room' | 'custom';
+  room?: string;
+  heads: string[];
+};
+
 export type Fleet = {
   available: boolean;
   generated_at?: number;
   rooms?: Room[];
+  categories?: Category[];
   heads?: Head[];
   activity?: ActivityItem[];
   memory_index?: MemoryIndexEntry[];
