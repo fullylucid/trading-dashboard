@@ -436,3 +436,16 @@ def test_discover_heads_skips_non_claude_and_other_sessions():
 def test_discover_heads_falls_back_to_basename_when_no_window_name():
     panes = {"/home/user/wt/foo": _pane("hydra", "claude", "")}
     assert hq.discover_heads([], panes) == [("foo", "/home/user/wt/foo")]
+
+
+@pytest.mark.parametrize("name,workdir,expected", [
+    ("charlotte", "/home/user", "conductor"),               # conductor: home dir + name
+    ("anything", hq.HOME, "conductor"),                      # conductor: home dir alone
+    ("hq", "/home/user/wt/trading-dashboard__hq", "hq"),     # hq head: name + __hq worktree
+    ("renamed", "/home/user/wt/trading-dashboard__hq", "hq"),  # hq: __hq workdir even if renamed
+    ("charts", "/home/user/wt/trading-dashboard__charts", "head"),
+    ("cribdar", "/home/user/cribdar", "head"),
+    ("nydra3", "/home/user/trading-dashboard", "head"),      # NOT conductor (subdir, not HOME)
+])
+def test_role_for(name, workdir, expected):
+    assert hq.role_for(name, workdir) == expected

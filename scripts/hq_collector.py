@@ -101,6 +101,24 @@ def room_for(workdir: str) -> Tuple[str, str]:
     return room_id, name
 
 
+def role_for(name: str, workdir: str) -> str:
+    """Classify a head as conductor | hq | head — a derivable signal for the Command-category
+    layer (roadmap A2), so the conductor (charlotte) and the hq head can be grouped out of the
+    trading-dashboard *product* room without hardcoding the org chart here.
+
+    - conductor: runs from the home dir (not a repo worktree), i.e. Charlotte. ``charlotte``
+      name is a fallback signal.
+    - hq: the hq head — name ``hq`` or a ``*__hq`` worktree.
+    - head: everything else (a normal project head).
+    """
+    wd = workdir.rstrip("/")
+    if wd == HOME or name == "charlotte":
+        return "conductor"
+    if name == "hq" or os.path.basename(wd).split("__")[-1] == "hq":
+        return "hq"
+    return "head"
+
+
 def transcript_dir_name(workdir: str) -> str:
     """Map a workdir to its ~/.claude/projects/<slug> directory name.
 
@@ -727,6 +745,7 @@ def build_snapshot() -> Dict[str, Any]:
         heads.append({
             "name": name,
             "room": room_id,
+            "role": role_for(name, workdir),   # conductor | hq | head — for the Command category (A2)
             "workdir": workdir,
             "branch": git["branch"],
             "status": status,
