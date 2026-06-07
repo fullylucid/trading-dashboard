@@ -298,19 +298,59 @@ def read_registry() -> List[Tuple[str, str]]:
 
 
 def tmux_panes() -> Dict[str, Dict[str, Any]]:
-    """Map workdir -> {window, pane, cmd}. Keyed by pane_current_path (canonical)."""
+    """Map workdir -> {window, name, session, pane, cmd}. Keyed by pane_current_path
+    (canonical). On a workdir collision (e.g. a shell window + the head's claude window in
+    the same dir), a pane running `claude` wins — that's the head's live pane."""
     out = _run(
         ["tmux", "list-panes", "-a", "-F",
-         "#{pane_current_path}\t#{window_index}\t#{pane_id}\t#{pane_current_command}"]
+         "#{pane_current_path}\t#{window_index}\t#{window_name}\t#{session_name}\t#{pane_id}\t#{pane_current_command}"]
     )
     panes: Dict[str, Dict[str, Any]] = {}
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) != 4:
+        if len(parts) != 6:
             continue
-        path, win, pid, cmd = parts
-        panes[path.rstrip("/")] = {"window": _int(win), "pane": pid, "cmd": cmd}
+        path, win, wname, session, pid, cmd = parts
+        key = path.rstrip("/")
+        prev = panes.get(key)
+        # keep a claude pane over a non-claude one for the same dir
+        if prev is not None and "claude" in (prev.get("cmd") or "") and "claude" not in cmd:
+            continue
+        panes[key] = {"window": _int(win), "name": wname, "session": session, "pane": pid, "cmd": cmd}
     return panes
+
+
+def discover_heads(
+    registry: List[Tuple[str, str]], panes: Dict[str, Dict[str, Any]]
+) -> List[Tuple[str, str]]:
+    """The fleet roster = the registry UNIONed with live tmux discovery, so HQ reflects
+    reality instead of a stale ~/.hydra-archives/.registry (which drifts when heads spawn
+    without registering). Every pane in the 'hydra' session running `claude` is treated as a
+    head (name = window name, workdir = pane path, room derived from the workdir). De-duped by
+    workdir; the registry entry wins the name when both have the same dir, and registered heads
+    not currently in tmux are still kept (supplement, not replacement).
+
+    Cross-OS gap (out of scope): heads running on the Windows side (e.g. win-gaia) aren't in
+    WSL tmux OR the registry, so neither source sees them — that needs a Windows-side reporter
+    or a static external-roster file the collector merges. Tracked as a follow-up.
+    """
+    heads: List[Tuple[str, str]] = []
+    seen: set = set()
+    for name, workdir in registry:
+        key = workdir.rstrip("/")
+        if key in seen:
+            continue
+        seen.add(key)
+        heads.append((name, workdir))
+    for workdir, p in panes.items():
+        if p.get("session") != "hydra" or "claude" not in (p.get("cmd") or ""):
+            continue
+        key = workdir.rstrip("/")
+        if key in seen:
+            continue
+        seen.add(key)
+        heads.append((p.get("name") or os.path.basename(key), workdir))
+    return heads
 
 
 def capture_pane(pane_id: str) -> str:
@@ -635,7 +675,8 @@ def _age(ts_iso: Optional[str], now: float) -> Optional[float]:
 def build_snapshot() -> Dict[str, Any]:
     now = time.time()
     panes = tmux_panes()
-    registry = read_registry()
+    # self-healing roster: registry UNION live tmux discovery (see discover_heads)
+    roster = discover_heads(read_registry(), panes)
 
     heads: List[Dict[str, Any]] = []
     rooms: Dict[str, Dict[str, Any]] = {}
@@ -645,7 +686,7 @@ def build_snapshot() -> Dict[str, Any]:
     heads_detail: Dict[str, Dict[str, Any]] = {}
     since_ts = now - ACTIVITY_WINDOW_S
 
-    for name, workdir in registry:
+    for name, workdir in roster:
         room_id, room_name = room_for(workdir)
         room_workdirs.setdefault(room_id, []).append(workdir)
         pane = panes.get(workdir.rstrip("/"))
