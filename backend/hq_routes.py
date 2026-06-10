@@ -32,6 +32,8 @@ ROOMS_KEY = "hq:rooms"
 MEMORY_KEY = "hq:memory"
 HEADS_KEY = "hq:heads"
 COMMANDS_KEY = "hq:commands"
+ROADMAP_KEY = "hq:roadmap"
+AUTOPILOT_PREFIX = "hq:autopilot:"   # per-room milestone-autopilot intent the engine consumes
 
 _redis_client: Optional["redis.Redis"] = None
 
@@ -284,6 +286,58 @@ async def head_input(name: str, request: Request) -> Dict[str, Any]:
     logger.info("hq console input by=%s head=%s pane=%s len=%d id=%s", by, name, pane, len(text), jid)
     r.rpush(hq_console.INPUT_QUEUE, json.dumps(job))
     return {"ok": True, "id": jid, "head": name, "pane": pane}
+
+
+@hq_router.get("/room/{room_id}/roadmap")
+def room_roadmap(room_id: str) -> Dict[str, Any]:
+    """The room's living roadmap (CONSOLE roadmap card): the nested checklist fused with PR state,
+    plus the currently-set autopilot milestone. Read-only passthrough of ``hq:roadmap``."""
+    r = _r()
+    data = _get_json(r, ROADMAP_KEY)
+    if data is None:
+        return {"available": False}
+    rm = (data.get("rooms") or {}).get(room_id)
+    if rm is None:
+        return {"available": True, "roadmap": None}   # no roadmap file in this room yet
+    ap = _get_json(r, AUTOPILOT_PREFIX + room_id) or {}
+    return {"available": True, "generated_at": data.get("generated_at"),
+            "roadmap": {**rm, "active_milestone": ap.get("milestone")}}
+
+
+@hq_router.post("/room/{room_id}/autopilot")
+async def room_autopilot(room_id: str, request: Request) -> Dict[str, Any]:
+    """Set / clear the milestone-bounded autopilot target for a room (the autopilot cockpit).
+    Body: ``{"milestone": "R12"}`` to arm, ``{"milestone": null}`` to disarm. This only writes an
+    INTENT to Redis (``hq:autopilot:<room>``) that the orchestration engine reads — HQ never runs
+    the loop. Audited; behind Access SSO (owner-only)."""
+    import time
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    milestone = (body or {}).get("milestone")
+    r = _r()
+    if r is None:
+        raise HTTPException(status_code=503, detail="queue unavailable")
+    by = request.headers.get("Cf-Access-Authenticated-User-Email") or "local"
+    key = AUTOPILOT_PREFIX + room_id
+    if milestone:
+        intent = {"room": room_id, "milestone": str(milestone)[:120], "requested_at": int(time.time()), "requested_by": by}
+        try:
+            r.set(key, json.dumps(intent))
+            r.rpush("hq:autopilot:audit", json.dumps(intent))
+            r.ltrim("hq:autopilot:audit", -200, -1)
+        except Exception:  # noqa: BLE001
+            pass
+        logger.info("hq autopilot armed by=%s room=%s milestone=%s", by, room_id, intent["milestone"])
+        return {"ok": True, "active_milestone": intent["milestone"]}
+    try:
+        r.delete(key)
+    except Exception:  # noqa: BLE001
+        pass
+    logger.info("hq autopilot disarmed by=%s room=%s", by, room_id)
+    return {"ok": True, "active_milestone": None}
 
 
 @hq_router.get("/commands")

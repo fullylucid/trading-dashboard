@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import HeadConsole from './HeadConsole';
+import RoadmapCard from './RoadmapCard';
 import { GREEN, DIM, FAINT, BLUE, AMBER, card, StatusDot } from './ui';
 import { CHROME_TOP, CHROME_BOTTOM } from '../../layout';
 import type { Category, Fleet, Head } from './types';
@@ -81,6 +82,7 @@ export default function ConsoleDeck() {
   return (
     <div style={{ maxWidth: 980, margin: '0 auto', padding: '0 10px', fontFamily: 'monospace', color: GREEN }}>
       <style>{`.hq-console-track{scrollbar-width:none;-ms-overflow-style:none}.hq-console-track::-webkit-scrollbar{display:none}`}</style>
+      {selected && <RoadmapCard roomId={selected} label={categories.find((c) => c.id === selected)?.label} />}
 
       {/* top bar: project dropdown + back */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 2px', flexWrap: 'wrap' }}>

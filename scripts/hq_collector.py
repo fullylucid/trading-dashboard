@@ -36,7 +36,20 @@ ROOMS_KEY = "hq:rooms"        # per-room detail (key docs) — kept out of hq:fl
 MEMORY_KEY = "hq:memory"      # the git-tracked memory knowledge base (index + scrubbed bodies)
 HEADS_KEY = "hq:heads"        # per-head detail (recent commits, fossil index, memory scope)
 COMMANDS_KEY = "hq:commands"  # slash-command catalog for the console autocomplete
+ROADMAP_KEY = "hq:roadmap"    # per-room living roadmap (nested checklist ∪ PR state)
 REDIS_TTL_S = 120  # snapshot is fresh for ~10s; TTL is a generous staleness backstop
+
+# Living-roadmap source files per room (main checkout). Override per room in rooms.config.json
+# via "roadmaps": {room_id: relpath}. Convention: nested markdown checklist (headings = epics,
+# indented `- [ ]`/`- [x]` = tasks/subtasks) + `@owner` tags + `{milestone:NAME}` markers.
+ROADMAP_CANDIDATES = ["ROADMAP.md", "CHECKLIST.md", ".hq/roadmap.md", "docs/ROADMAP.md"]
+_OWNER_RE = re.compile(r"@([A-Za-z0-9][\w-]*)")
+_MILESTONE_RE = re.compile(r"\{milestone:\s*([^}]+)\}", re.IGNORECASE)
+_PRNUM_RE = re.compile(r"#(\d{1,6})\b")
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
+_ITEM_RE = re.compile(r"^(\s*)[-*+]\s+(?:\[([ xX])\]\s+)?(.*)$")
+_STOPWORDS = {"the", "a", "an", "and", "or", "to", "for", "of", "in", "on", "with", "via", "add",
+              "fix", "feat", "use", "from", "into", "that", "this", "its"}
 
 # Slash-command catalog (console autocomplete). Three sources: curated built-ins, user-invocable
 # skills (~/.claude/skills/*/SKILL.md frontmatter), and custom commands (.claude/commands/*.md).
@@ -917,6 +930,147 @@ def collect_commands() -> Dict[str, Any]:
         "builtin": len(BUILTIN_COMMANDS), "skill": len(skills), "custom": len(custom)}}
 
 
+# ---------------------------------------------------------------------------- living roadmap
+def _extract_tags(text: str) -> Tuple[str, Optional[str], Optional[str], Optional[int]]:
+    """Pull @owner, {milestone:NAME}, and a #PR ref out of an item's text; return the cleaned
+    text plus (owner, milestone, pr_ref)."""
+    owner = None
+    mo = _OWNER_RE.search(text)
+    if mo:
+        owner = mo.group(1)
+    ms = _MILESTONE_RE.search(text)
+    milestone = ms.group(1).strip() if ms else None
+    pr = _PRNUM_RE.search(text)
+    pr_ref = int(pr.group(1)) if pr else None
+    clean = _MILESTONE_RE.sub("", text)
+    clean = _OWNER_RE.sub("", clean)
+    clean = re.sub(r"\s{2,}", " ", clean).strip(" -·•\t")
+    return clean, owner, milestone, pr_ref
+
+
+def parse_roadmap(text: str) -> List[Dict[str, Any]]:
+    """Parse a nested markdown checklist into a tree. Markdown headings (``##``..) are epic/group
+    nodes; ``- [ ]``/``- [x]`` (and plain bullets) nest by heading + indentation. Each node carries
+    owner / milestone / checked + children. Pure."""
+    root: Dict[str, Any] = {"depth": -1, "children": []}
+    stack: List[Dict[str, Any]] = [root]
+
+    def attach(node: Dict[str, Any], depth: int) -> None:
+        while stack and stack[-1]["depth"] >= depth:
+            stack.pop()
+        stack[-1]["children"].append(node)
+        node["depth"] = depth
+        stack.append(node)
+
+    for raw in text.split("\n"):
+        # a line that is ONLY a {milestone:NAME} marker -> a divider node (epic-level)
+        if _MILESTONE_RE.search(raw) and not _HEADING_RE.match(raw) and not _ITEM_RE.match(raw):
+            if not _MILESTONE_RE.sub("", raw).strip():
+                attach({"text": "", "checked": None, "owner": None,
+                        "milestone": _MILESTONE_RE.search(raw).group(1).strip(), "children": []}, depth=2)
+                continue
+        h = _HEADING_RE.match(raw)
+        if h:
+            clean, owner, milestone, _ = _extract_tags(h.group(2))
+            if not clean and not milestone:
+                continue
+            attach({"text": clean, "checked": None, "owner": owner, "milestone": milestone,
+                    "children": []}, depth=len(h.group(1)))
+            continue
+        m = _ITEM_RE.match(raw)
+        if m:
+            indent = len(m.group(1).replace("\t", "  "))
+            checked = None if m.group(2) is None else m.group(2).lower() == "x"
+            clean, owner, milestone, pr_ref = _extract_tags(m.group(3))
+            if not clean and not milestone:
+                continue
+            attach({"text": clean, "checked": checked, "owner": owner, "milestone": milestone,
+                    "pr_ref": pr_ref, "children": []}, depth=100 + indent // 2)
+    return root["children"]
+
+
+def _words(s: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9]+", s.lower()) if len(w) >= 4 and w not in _STOPWORDS}
+
+
+def match_pr(text: str, pr_ref: Optional[int], prs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Cross-reference a checklist item to a PR — by explicit ``#num`` first, else a conservative
+    word-overlap on the title. Returns {number,url,state,title} or None."""
+    by_num = {p.get("number"): p for p in prs}
+    if pr_ref and pr_ref in by_num:
+        p = by_num[pr_ref]
+        return {"number": p["number"], "url": p.get("url"), "state": p.get("state"), "title": p.get("title")}
+    iw = _words(text)
+    if len(iw) < 2:
+        return None
+    best, best_score = None, 0.0
+    for p in prs:
+        tw = _words(p.get("title", ""))
+        if not tw:
+            continue
+        score = len(iw & tw) / len(iw)
+        if score > best_score:
+            best, best_score = p, score
+    if best and best_score >= 0.6:
+        return {"number": best["number"], "url": best.get("url"), "state": best.get("state"), "title": best.get("title")}
+    return None
+
+
+def fuse_roadmap(nodes: List[Dict[str, Any]], prs: List[Dict[str, Any]]) -> Tuple[int, int]:
+    """Annotate each leaf checklist item with status (done | in_progress | planned) + its matched
+    PR, in place. A ``[x]`` item or one matching a MERGED PR is done; an OPEN PR -> in_progress.
+    Returns (done, total) leaf counts for the progress meter."""
+    done = total = 0
+    for node in nodes:
+        kids = node.get("children", [])
+        if node.get("checked") is not None:  # a real task (has a checkbox)
+            total += 1
+            pr = match_pr(node["text"], node.get("pr_ref"), prs)
+            node["pr"] = pr
+            merged = bool(pr and pr.get("state") == "MERGED")
+            if node["checked"] or merged:
+                node["status"] = "done"
+                node["checked"] = True
+                done += 1
+            elif pr and pr.get("state") == "OPEN":
+                node["status"] = "in_progress"
+            else:
+                node["status"] = "planned"
+        node.pop("pr_ref", None)
+        cd, ct = fuse_roadmap(kids, prs)
+        done += cd
+        total += ct
+        if node.get("checked") is None:  # group node — derive a rollup status from descendants
+            node["status"] = "group"
+    return done, total
+
+
+def collect_roadmap(workdir: str, prs: List[Dict[str, Any]], rel: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Read + parse a room's roadmap file (config override or first candidate that exists), fuse
+    with its PRs. Returns {source, nodes, progress, milestones} or None when no file is found."""
+    candidates = [rel] if rel else ROADMAP_CANDIDATES
+    path = next((os.path.join(workdir, c) for c in candidates if c and os.path.isfile(os.path.join(workdir, c))), None)
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read(120_000)
+    except OSError:
+        return None
+    nodes = parse_roadmap(scrub_secrets(text))
+    done, total = fuse_roadmap(nodes, prs)
+    milestones: List[str] = []
+
+    def walk(ns: List[Dict[str, Any]]) -> None:
+        for n in ns:
+            if n.get("milestone"):
+                milestones.append(n["milestone"])
+            walk(n.get("children", []))
+    walk(nodes)
+    return {"source": os.path.relpath(path, workdir), "nodes": nodes,
+            "progress": {"done": done, "total": total}, "milestones": milestones}
+
+
 def _int(s: Any) -> Optional[int]:
     try:
         return int(str(s).strip())
@@ -1089,9 +1243,22 @@ def build_snapshot() -> Dict[str, Any]:
     memory_payload = {"generated_at": int(now), **memory}
     heads_payload = {"generated_at": int(now), "heads": heads_detail}
     commands_payload = {"generated_at": int(now), **collect_commands()}
+
+    # Living roadmap per room: nested checklist (epics→tasks) fused with the room's PR state.
+    roadmap_cfg = config.get("roadmaps") or {}
+    room_repo = {r["id"]: r.get("repo") for r in rooms.values()}
+    roadmaps: Dict[str, Any] = {}
+    for rid, wds in room_workdirs.items():
+        rm = collect_roadmap(pick_room_workdir(wds) or wds[0],
+                             pr_cache.get(room_repo.get(rid) or "", []), roadmap_cfg.get(rid))
+        if rm:
+            rm["repo"] = room_repo.get(rid)
+            roadmaps[rid] = rm
+    roadmap_payload = {"generated_at": int(now), "rooms": roadmaps}
+
     return {
-        "fleet": fleet, "rooms_detail": rooms_detail,
-        "memory": memory_payload, "heads_detail": heads_payload, "commands": commands_payload,
+        "fleet": fleet, "rooms_detail": rooms_detail, "memory": memory_payload,
+        "heads_detail": heads_payload, "commands": commands_payload, "roadmap": roadmap_payload,
     }
 
 
@@ -1122,15 +1289,17 @@ def main() -> int:
     ok_mem = push_key(MEMORY_KEY, memory)
     ok_heads = push_key(HEADS_KEY, heads_detail)
     ok_cmds = push_key(COMMANDS_KEY, out["commands"])
+    ok_road = push_key(ROADMAP_KEY, out["roadmap"])
     if os.getenv("HQ_DEBUG"):
         print(json.dumps(fleet, indent=2))
         ndocs = sum(len(r["docs"]) for r in rooms_detail["rooms"].values())
         nfoss = sum(d["fossils"]["count"] for d in heads_detail["heads"].values())
+        rm = out["roadmap"]["rooms"]
         print(f"[hq-collector] fleet={ok} rooms={ok_rooms} memory={ok_mem} heads={ok_heads} "
-              f"commands={ok_cmds} heads={len(fleet['heads'])} rooms={len(fleet['rooms'])} docs={ndocs} "
-              f"mem={len(memory['index'])} activity={len(fleet['activity'])} fossils={nfoss} "
-              f"cmds={len(out['commands']['commands'])}")
-    return 0 if (ok and ok_rooms and ok_mem and ok_heads and ok_cmds) else 1
+              f"commands={ok_cmds} roadmap={ok_road} heads={len(fleet['heads'])} rooms={len(fleet['rooms'])} "
+              f"docs={ndocs} mem={len(memory['index'])} activity={len(fleet['activity'])} fossils={nfoss} "
+              f"cmds={len(out['commands']['commands'])} roadmaps={ {k: v['progress'] for k, v in rm.items()} }")
+    return 0 if (ok and ok_rooms and ok_mem and ok_heads and ok_cmds and ok_road) else 1
 
 
 if __name__ == "__main__":
