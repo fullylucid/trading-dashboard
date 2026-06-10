@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { GREEN, DIM, FAINT, AMBER, RED, card } from './ui';
+import { DIM, AMBER, card } from './ui';
 import { C } from './render/tokens';
+import Composer from './Composer';
 import RichMarkdown, { CodeBlock, DiffBlock, looksLikeDiff } from './render/RichMarkdown';
 import type { ConsoleBlock, ConsoleTurn, TranscriptResponse } from './types';
 
@@ -14,23 +15,11 @@ const POLL_MS = 2000;
 export default function HeadConsole({ name, active = true }: { name: string; active?: boolean }) {
   const [turns, setTurns] = useState<ConsoleTurn[]>([]);
   const [unavailable, setUnavailable] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
-  const [sending, setSending] = useState(false);
-  const [sendErr, setSendErr] = useState<string | null>(null);
   const cursor = useRef<number>(0);
   const file = useRef<string | null>(null);
   const seen = useRef<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const atBottom = useRef<boolean>(true);
-  const taRef = useRef<HTMLTextAreaElement | null>(null);
-
-  // composer auto-grows to fit the message, up to ~8 lines, then scrolls internally
-  useEffect(() => {
-    const el = taRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 184)}px`;
-  }, [draft]);
 
   useEffect(() => {
     if (!active) return; // off-screen deck consoles don't poll
@@ -82,27 +71,6 @@ export default function HeadConsole({ name, active = true }: { name: string; act
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   };
 
-  const send = async () => {
-    const text = draft.trim();
-    if (!text || sending) return;
-    setSending(true); setSendErr(null);
-    try {
-      const r = await fetch(`/api/hq/head/${encodeURIComponent(name)}/input`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
-      });
-      if (r.ok) { setDraft(''); atBottom.current = true; }
-      else { const d = await r.json().catch(() => ({})); setSendErr(d.detail || `send failed (${r.status})`); }
-    } catch {
-      setSendErr("can't reach the console backend");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-  };
-
   if (unavailable) {
     return <div style={{ ...card, color: AMBER, borderColor: AMBER, textAlign: 'center', margin: 4 }}>{unavailable}</div>;
   }
@@ -119,34 +87,7 @@ export default function HeadConsole({ name, active = true }: { name: string; act
       </div>
 
       <div style={{ marginTop: 10, flex: '0 0 auto' }}>
-        {sendErr && <div style={{ color: RED, fontSize: 11, marginBottom: 6 }}>{sendErr}</div>}
-        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-          <textarea
-            ref={taRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder={`message ${name}…  (Enter to send · Shift+Enter for newline)`}
-            rows={1}
-            style={{
-              flex: 1, resize: 'none', background: '#000', color: C.ink, border: `1px solid ${FAINT}`,
-              borderRadius: 8, padding: '9px 11px', fontFamily: C.sans, fontSize: 14, lineHeight: 1.5,
-              outline: 'none', minHeight: 40, maxHeight: 184, overflowY: 'auto',
-            }}
-          />
-          <button
-            type="button" onClick={send} disabled={sending || !draft.trim()}
-            style={{
-              background: '#000', color: draft.trim() ? GREEN : FAINT,
-              border: `1px solid ${draft.trim() ? GREEN : FAINT}`, borderRadius: 6,
-              fontFamily: 'monospace', fontSize: 13, padding: '8px 16px',
-              cursor: sending || !draft.trim() ? 'not-allowed' : 'pointer', opacity: sending ? 0.6 : 1,
-            }}
-          >
-            {sending ? '…' : 'Send'}
-          </button>
-        </div>
-        <div style={{ fontSize: 9, color: FAINT, marginTop: 4 }}>⚠ drives {name}'s live session — sends to its tmux pane</div>
+        <Composer name={name} onSent={() => { atBottom.current = true; }} />
       </div>
     </div>
   );

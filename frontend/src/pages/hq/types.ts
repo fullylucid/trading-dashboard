@@ -119,6 +119,9 @@ export type TranscriptResponse = {
   turns?: ConsoleTurn[];
 };
 
+export type SlashCommand = { name: string; desc: string; source: 'builtin' | 'skill' | 'custom' };
+export type CommandsResponse = { available: boolean; commands: SlashCommand[]; counts?: Record<string, number> };
+
 export type MemoryIndexEntry = {
   name: string;
   title: string;
