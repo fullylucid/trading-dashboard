@@ -22,6 +22,15 @@ export default function HeadConsole({ name, active = true }: { name: string; act
   const seen = useRef<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const atBottom = useRef<boolean>(true);
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // composer auto-grows to fit the message, up to ~8 lines, then scrolls internally
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 184)}px`;
+  }, [draft]);
 
   useEffect(() => {
     if (!active) return; // off-screen deck consoles don't poll
@@ -113,15 +122,16 @@ export default function HeadConsole({ name, active = true }: { name: string; act
         {sendErr && <div style={{ color: RED, fontSize: 11, marginBottom: 6 }}>{sendErr}</div>}
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
           <textarea
+            ref={taRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder={`message ${name}…  (Enter to send · Shift+Enter for newline)`}
-            rows={2}
+            rows={1}
             style={{
-              flex: 1, resize: 'none', background: '#000', color: GREEN, border: `1px solid ${FAINT}`,
-              borderRadius: 6, padding: '8px 10px', fontFamily: 'monospace', fontSize: 13, lineHeight: 1.4,
-              outline: 'none', minHeight: 40,
+              flex: 1, resize: 'none', background: '#000', color: C.ink, border: `1px solid ${FAINT}`,
+              borderRadius: 8, padding: '9px 11px', fontFamily: C.sans, fontSize: 14, lineHeight: 1.5,
+              outline: 'none', minHeight: 40, maxHeight: 184, overflowY: 'auto',
             }}
           />
           <button
