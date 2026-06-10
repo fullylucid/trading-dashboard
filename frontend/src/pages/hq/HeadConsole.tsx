@@ -3,7 +3,7 @@ import { DIM, AMBER, card } from './ui';
 import { C } from './render/tokens';
 import Composer from './Composer';
 import RichMarkdown, { CodeBlock, DiffBlock, looksLikeDiff } from './render/RichMarkdown';
-import type { ConsoleBlock, ConsoleTurn, TranscriptResponse } from './types';
+import type { ConsoleBlock, ConsoleTurn, MenuPrompt, TranscriptResponse } from './types';
 
 // HeadConsole — one head's full console: the live-tailed conversation (Slice 1) + the composer
 // (Slice 2). Fills its parent (height:100%), so it works both as a standalone page (ConsoleView)
@@ -19,6 +19,7 @@ export default function HeadConsole({ name, active = true }: { name: string; act
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
   const [headStatus, setHeadStatus] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState<MenuPrompt | null>(null);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const cursor = useRef<number>(0);
   const file = useRef<string | null>(null);
@@ -53,6 +54,7 @@ export default function HeadConsole({ name, active = true }: { name: string; act
         if (!d.available) { setUnavailable(d.reason || 'no transcript'); return; }
         setUnavailable(null);
         setHeadStatus(d.status ?? null);
+        setPrompt(d.prompt ?? null);
         if (d.rotated) { setTurns([]); seen.current = new Set(); }
         file.current = d.file ?? null;
         cursor.current = d.cursor ?? 0;
@@ -129,6 +131,14 @@ export default function HeadConsole({ name, active = true }: { name: string; act
         {pending.map((p) => <PendingBubble key={p.id} msg={p} busy={busy} queuedCount={queuedCount} onImage={setLightbox} />)}
       </div>
 
+      {prompt && (
+        <MenuCard
+          key={`${prompt.kind}:${prompt.question}:${prompt.options.map((o) => o.index).join(',')}`}
+          name={name}
+          prompt={prompt}
+        />
+      )}
+
       <div style={{ marginTop: 10, flex: '0 0 auto' }}>
         <Composer name={name} onSent={(m) => { setPending((p) => [...p, { ...m, status: 'sending' }]); atBottom.current = true; }} />
       </div>
@@ -201,6 +211,72 @@ function PendingBubble({ msg, busy, queuedCount, onImage }: { msg: Pending; busy
         <span title={view} style={{ position: 'absolute', right: 8, bottom: -7, fontSize: 9, fontFamily: C.mono, color: badge.color, background: C.bg, padding: '0 4px', borderRadius: 4 }}>{badge.ch}</span>
       </div>
       {queued && <span style={{ fontSize: 9, color: C.faint, fontFamily: C.mono, paddingRight: 4 }}>will run when the agent finishes its turn</span>}
+    </div>
+  );
+}
+
+// F6 — the head is blocked on a menu (a permission prompt or an AskUserQuestion). Render its
+// question + options as tappable buttons; a tap send-keys the answer to the head's pane. The
+// card auto-dismisses on the next poll once the head leaves waiting-input (prompt -> null).
+function MenuCard({ name, prompt }: { name: string; prompt: MenuPrompt }) {
+  const [chosen, setChosen] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const permission = prompt.kind === 'permission';
+  const accent = permission ? C.amber : C.blue;
+
+  const answer = async (index: number) => {
+    if (chosen !== null) return; // one answer per menu; buttons lock after the first tap
+    setChosen(index); setErr(null);
+    try {
+      const r = await fetch(`/api/hq/head/${encodeURIComponent(name)}/answer`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ index }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        setErr((d as { detail?: string }).detail || `error ${r.status}`); setChosen(null);
+      }
+    } catch {
+      setErr('network error'); setChosen(null);
+    }
+  };
+
+  return (
+    <div style={{
+      marginTop: 10, flex: '0 0 auto', border: `1px solid ${accent}`, borderLeftWidth: 3,
+      borderRadius: 12, background: C.panel, padding: '10px 12px',
+      boxShadow: `0 0 0 1px ${C.bg}, 0 4px 18px rgba(0,0,0,.35)`,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontFamily: C.mono, fontSize: 9, letterSpacing: '.12em', textTransform: 'uppercase', color: accent, border: `1px solid ${accent}`, borderRadius: 4, padding: '1px 5px' }}>
+          {permission ? '⚠ permission' : '❔ choose'}
+        </span>
+        <span style={{ fontFamily: C.sans, fontSize: 13, fontWeight: 600, color: C.ink, lineHeight: 1.35 }}>{prompt.question}</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {prompt.options.map((o) => {
+          const low = o.label.toLowerCase();
+          const tint = permission ? (low.startsWith('yes') ? C.green : low.startsWith('no') ? C.red : C.greenDim) : C.greenDim;
+          const picked = chosen === o.index;
+          const dim = chosen !== null && !picked;
+          return (
+            <button key={o.index} onClick={() => answer(o.index)} disabled={chosen !== null} title={o.label}
+              style={{
+                display: 'flex', alignItems: 'baseline', gap: 9, width: '100%', textAlign: 'left',
+                fontFamily: C.mono, fontSize: 12.5, textTransform: 'none', letterSpacing: 0,
+                background: picked ? 'rgba(34,255,106,.10)' : C.raised,
+                border: `1px solid ${picked ? C.green : tint}`, borderRadius: 9, padding: '9px 11px',
+                color: dim ? C.faint : C.ink, opacity: dim ? 0.5 : 1,
+                cursor: chosen !== null ? 'default' : 'pointer',
+              }}>
+              <span style={{ color: accent, fontWeight: 700, flex: '0 0 auto' }}>{o.index}</span>
+              <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
+              {picked && <span style={{ marginLeft: 'auto', color: C.green, flex: '0 0 auto' }}>● sending</span>}
+            </button>
+          );
+        })}
+      </div>
+      {err && <div style={{ marginTop: 7, fontFamily: C.mono, fontSize: 10, color: C.red }}>✗ {err}</div>}
     </div>
   );
 }

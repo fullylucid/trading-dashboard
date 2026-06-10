@@ -276,6 +276,70 @@ def pane_is_rc_paired(capture: Optional[str]) -> bool:
     return bool(capture) and "remote control active" in capture.lower()
 
 
+# A menu option line in the Claude Code TUI: an optional ❯ cursor, ≤3 leading spaces, then
+# "N. label". Descriptions wrap at ~5 spaces with NO leading number, so they don't match —
+# that's how we keep option lines and skip their blurbs. (Permission renders "2.Yes"; menus
+# render "2. label" — the space after the dot is optional.)
+_OPT_RE = re.compile(r"^[ \t]{0,3}❯?[ \t]?(\d{1,2})\.[ \t]?(\S.*)$")
+_MENU_SIG = ("enter to select", "arrow keys to navigate", "tab/arrow")
+
+
+def parse_prompt(capture: Optional[str]) -> Optional[Dict[str, Any]]:
+    """When a head is blocked on a menu, lift the question + its options off the pane so the
+    console can render tappable buttons (F6). Two shapes, distinguished by their footer:
+
+    - ``permission`` — "Do you want to proceed?" + numbered Yes/No. Answered number+Enter.
+    - ``question``   — an AskUserQuestion menu ("Enter to select · Tab/Arrow keys to navigate").
+      Answered by arrow-nav + Enter (cursor starts at option 1, as the TUI renders it).
+
+    This is the ONE place pane-derived prose leaves the host — and only because the menu IS
+    what the operator is being asked to answer. Every field is secret-scrubbed via ``redact``
+    (defense-in-depth: a command echoed into an option shouldn't ship a leaked token)."""
+    if not capture:
+        return None
+    low = capture.lower()
+    is_permission = "do you want to proceed" in low
+    is_menu = any(s in low for s in _MENU_SIG)
+    if not (is_permission or is_menu):
+        return None
+
+    lines = capture.split("\n")
+    options: List[Dict[str, Any]] = []
+    first_opt = None
+    for i, ln in enumerate(lines):
+        m = _OPT_RE.match(ln)
+        if not m:
+            continue
+        idx = int(m.group(1))
+        if any(o["index"] == idx for o in options):  # ignore wrapped/duplicate echoes
+            continue
+        # permission option labels often trail "  : <command echo>" — drop that noise
+        label = m.group(2).split("  :", 1)[0].strip()
+        options.append({"index": idx, "label": redact(label)})
+        if first_opt is None:
+            first_opt = i
+    # must be a real 1..N menu (guards against a stray "3. foo" in scrollback)
+    if len(options) < 2 or options[0]["index"] != 1:
+        return None
+
+    question = ""
+    for j in range(first_opt - 1, -1, -1):
+        t = lines[j].strip()
+        if not t or set(t) <= set("─-—=•· "):  # blank / box-rule / dots
+            continue
+        if "✔" in t or t.startswith("←") or t.endswith("→"):  # multiselect tab bar
+            continue
+        question = redact(t)
+        break
+
+    return {
+        "kind": "permission" if is_permission else "question",
+        "nav": "number" if is_permission else "arrow",
+        "question": question or ("Do you want to proceed?" if is_permission else ""),
+        "options": options,
+    }
+
+
 def pick_room_workdir(workdirs: List[str]) -> Optional[str]:
     """Choose the checkout to read a room's key docs from. Prefer a MAIN checkout (basename
     has no '__', i.e. not a feature worktree on a possibly-stale branch); else the first."""
@@ -1133,6 +1197,7 @@ def build_snapshot() -> Dict[str, Any]:
             current, last_ts, stop = last_assistant(transcript)
         age = _age(last_ts, now)
         status = derive_status(pane_cmd, age, stop, pane_is_waiting(cap))
+        prompt = parse_prompt(cap) if status == "waiting-input" else None
 
         git = git_info(workdir)
         remote = git.pop("remote", None)
@@ -1166,6 +1231,7 @@ def build_snapshot() -> Dict[str, Any]:
             "branch": git["branch"],
             "status": status,
             "current": current,
+            "prompt": prompt,   # F6: the menu a waiting head is blocked on (else None)
             "last_active": last_ts,
             "last_active_age_s": round(age) if age is not None else None,
             "rc": {"paired": pane_is_rc_paired(cap), "name": name},
