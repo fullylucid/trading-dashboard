@@ -392,6 +392,56 @@ def test_parse_remote(url, expected):
 
 
 # --------------------------------------------------------------------------- #
+# slash-command catalog (console autocomplete)
+# --------------------------------------------------------------------------- #
+def test_commands_route_passthrough(monkeypatch):
+    cat = {"commands": [{"name": "compact", "desc": "x", "source": "builtin"}], "counts": {"builtin": 1}}
+    c = _client(monkeypatch, _FakeRedis({"hq:commands": json.dumps(cat)}))
+    out = c.get("/api/hq/commands").json()
+    assert out["available"] is True and out["commands"][0]["name"] == "compact"
+
+
+def test_commands_route_unavailable(monkeypatch):
+    c = _client(monkeypatch, _FakeRedis({"hq:commands": None}))
+    assert c.get("/api/hq/commands").json() == {"available": False, "commands": []}
+
+
+def test_collect_commands_builtins_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(hq, "SKILLS_DIR", str(tmp_path / "noskills"))
+    monkeypatch.setattr(hq, "COMMANDS_DIRS", [str(tmp_path / "nocmds")])
+    out = hq.collect_commands()
+    names = [c["name"] for c in out["commands"]]
+    assert "compact" in names and "help" in names
+    assert all(c["source"] == "builtin" for c in out["commands"])
+    assert out["counts"]["builtin"] == len(hq.BUILTIN_COMMANDS)
+
+
+def test_collect_commands_reads_skill_frontmatter(tmp_path, monkeypatch):
+    sk = tmp_path / "skills" / "my-skill"
+    sk.mkdir(parents=True)
+    (sk / "SKILL.md").write_text("---\nname: my-skill\ndescription: Does a thing\n---\nbody")
+    monkeypatch.setattr(hq, "SKILLS_DIR", str(tmp_path / "skills"))
+    monkeypatch.setattr(hq, "COMMANDS_DIRS", [])
+    out = hq.collect_commands()
+    entry = next(c for c in out["commands"] if c["source"] == "skill")
+    assert entry["name"] == "my-skill" and "thing" in entry["desc"]
+    assert out["counts"]["skill"] == 1
+
+
+def test_collect_commands_custom_dir(tmp_path, monkeypatch):
+    cdir = tmp_path / "commands"
+    cdir.mkdir()
+    (cdir / "deploy.md").write_text("---\ndescription: ship it\n---\nrun the deploy")
+    (cdir / "noframe.md").write_text("just the first prose line\nmore")
+    monkeypatch.setattr(hq, "SKILLS_DIR", str(tmp_path / "noskills"))
+    monkeypatch.setattr(hq, "COMMANDS_DIRS", [str(cdir)])
+    out = hq.collect_commands()
+    custom = {c["name"]: c["desc"] for c in out["commands"] if c["source"] == "custom"}
+    assert custom["deploy"] == "ship it"                      # frontmatter description
+    assert custom["noframe"] == "just the first prose line"   # fallback to first prose line
+
+
+# --------------------------------------------------------------------------- #
 # discover_heads — self-healing roster (registry UNION live tmux)
 # --------------------------------------------------------------------------- #
 def _pane(session, cmd, name):

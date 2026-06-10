@@ -31,6 +31,7 @@ FLEET_KEY = "hq:fleet"
 ROOMS_KEY = "hq:rooms"
 MEMORY_KEY = "hq:memory"
 HEADS_KEY = "hq:heads"
+COMMANDS_KEY = "hq:commands"
 
 _redis_client: Optional["redis.Redis"] = None
 
@@ -283,6 +284,17 @@ async def head_input(name: str, request: Request) -> Dict[str, Any]:
     logger.info("hq console input by=%s head=%s pane=%s len=%d id=%s", by, name, pane, len(text), jid)
     r.rpush(hq_console.INPUT_QUEUE, json.dumps(job))
     return {"ok": True, "id": jid, "head": name, "pane": pane}
+
+
+@hq_router.get("/commands")
+def commands() -> Dict[str, Any]:
+    """Slash-command catalog for the console composer autocomplete (built-ins + skills + custom).
+    Read-only passthrough of ``hq:commands`` (enumerated host-side by the collector)."""
+    data = _get_json(_r(), COMMANDS_KEY)
+    if data is None:
+        return {"available": False, "commands": []}
+    data["available"] = True
+    return data
 
 
 @hq_router.get("/input/audit")

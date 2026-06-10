@@ -35,7 +35,35 @@ REDIS_KEY = "hq:fleet"
 ROOMS_KEY = "hq:rooms"        # per-room detail (key docs) — kept out of hq:fleet to stay lean
 MEMORY_KEY = "hq:memory"      # the git-tracked memory knowledge base (index + scrubbed bodies)
 HEADS_KEY = "hq:heads"        # per-head detail (recent commits, fossil index, memory scope)
+COMMANDS_KEY = "hq:commands"  # slash-command catalog for the console autocomplete
 REDIS_TTL_S = 120  # snapshot is fresh for ~10s; TTL is a generous staleness backstop
+
+# Slash-command catalog (console autocomplete). Three sources: curated built-ins, user-invocable
+# skills (~/.claude/skills/*/SKILL.md frontmatter), and custom commands (.claude/commands/*.md).
+# The collector enumerates + publishes to Redis (hq:commands) so the container needn't mount more
+# of ~/.claude. Names are stored WITHOUT the leading slash; the UI adds it.
+SKILLS_DIR = os.getenv("HQ_SKILLS_DIR", os.path.join(HOME, ".claude", "skills"))
+COMMANDS_DIRS = [
+    os.path.join(HOME, ".claude", "commands"),                 # user-global custom commands
+    os.path.join(HOME, "trading-dashboard", ".claude", "commands"),  # project custom commands
+]
+BUILTIN_COMMANDS = [
+    ("help", "Show help and the list of commands"),
+    ("clear", "Clear the conversation history"),
+    ("compact", "Summarize + compact the conversation to free up context"),
+    ("model", "Switch the active model"),
+    ("effort", "Set reasoning effort (low / medium / high / max)"),
+    ("cost", "Show token usage + cost for this session"),
+    ("memory", "View / edit CLAUDE.md memory"),
+    ("agents", "Manage subagents"),
+    ("resume", "Resume a previous conversation"),
+    ("remote-control", "Connect Remote Control to drive this session"),
+    ("review", "Review a pull request"),
+    ("init", "Initialize a CLAUDE.md for the codebase"),
+    ("vim", "Toggle vim editing mode in the composer"),
+    ("config", "Open Claude Code settings"),
+    ("color", "Change the theme"),
+]
 
 # Category layer (roadmap A2): a grouping ABOVE the per-repo rooms, so the conductor + hq head
 # get their own "Command" group instead of being mis-filed under the trading-dashboard product
@@ -822,6 +850,73 @@ def head_fossils(head: str) -> Dict[str, Any]:
     return {"count": total, "files": entries[:HEAD_FOSSILS_MAX]}
 
 
+def _first_prose_line(body: str) -> str:
+    for ln in body.splitlines():
+        s = ln.strip()
+        if s and not s.startswith("#") and not s.startswith("---"):
+            return s
+    return ""
+
+
+def collect_commands() -> Dict[str, Any]:
+    """Enumerate the slash-command catalog: curated built-ins + user-invocable skills + custom
+    commands. Each entry is {name, desc, source}; name has no leading slash. Only the frontmatter
+    (first ~1KB) of each SKILL.md is read, so 149 skills stay cheap to scan."""
+    cmds: List[Dict[str, Any]] = []
+
+    for name, desc in BUILTIN_COMMANDS:
+        cmds.append({"name": name, "desc": desc, "source": "builtin"})
+
+    # skills — name + description from SKILL.md frontmatter
+    skills: List[Dict[str, Any]] = []
+    try:
+        for entry in sorted(os.listdir(SKILLS_DIR)):
+            sp = os.path.join(SKILLS_DIR, entry, "SKILL.md")
+            if not os.path.isfile(sp):
+                continue
+            try:
+                with open(sp, "r", encoding="utf-8", errors="replace") as f:
+                    head = f.read(2048)
+            except OSError:
+                continue
+            fm = parse_frontmatter(head)
+            sname = (fm.get("name") or entry).strip()
+            sdesc = redact(fm.get("description", "")) or ""
+            if sname:
+                skills.append({"name": sname, "desc": sdesc, "source": "skill"})
+    except OSError:
+        pass
+    skills.sort(key=lambda c: c["name"].lower())
+    cmds.extend(skills)
+
+    # custom commands — <dir>/*.md -> /<filename>
+    custom: List[Dict[str, Any]] = []
+    seen_custom = set()
+    for d in COMMANDS_DIRS:
+        try:
+            names = sorted(n for n in os.listdir(d) if n.endswith(".md"))
+        except OSError:
+            continue
+        for fn in names:
+            cname = fn[:-3]
+            if cname in seen_custom:
+                continue
+            seen_custom.add(cname)
+            try:
+                with open(os.path.join(d, fn), "r", encoding="utf-8", errors="replace") as f:
+                    text = f.read(2048)
+            except OSError:
+                continue
+            fm = parse_frontmatter(text)
+            _, body = split_frontmatter(text)
+            cdesc = redact(fm.get("description") or _first_prose_line(body))
+            custom.append({"name": cname, "desc": cdesc, "source": "custom"})
+    cmds.extend(custom)
+
+    return {"commands": cmds, "counts": {
+        "builtin": len(BUILTIN_COMMANDS), "skill": len(skills), "custom": len(custom)}}
+
+
 def _int(s: Any) -> Optional[int]:
     try:
         return int(str(s).strip())
@@ -993,9 +1088,10 @@ def build_snapshot() -> Dict[str, Any]:
     }
     memory_payload = {"generated_at": int(now), **memory}
     heads_payload = {"generated_at": int(now), "heads": heads_detail}
+    commands_payload = {"generated_at": int(now), **collect_commands()}
     return {
         "fleet": fleet, "rooms_detail": rooms_detail,
-        "memory": memory_payload, "heads_detail": heads_payload,
+        "memory": memory_payload, "heads_detail": heads_payload, "commands": commands_payload,
     }
 
 
@@ -1025,14 +1121,16 @@ def main() -> int:
     ok_rooms = push_key(ROOMS_KEY, rooms_detail)
     ok_mem = push_key(MEMORY_KEY, memory)
     ok_heads = push_key(HEADS_KEY, heads_detail)
+    ok_cmds = push_key(COMMANDS_KEY, out["commands"])
     if os.getenv("HQ_DEBUG"):
         print(json.dumps(fleet, indent=2))
         ndocs = sum(len(r["docs"]) for r in rooms_detail["rooms"].values())
         nfoss = sum(d["fossils"]["count"] for d in heads_detail["heads"].values())
         print(f"[hq-collector] fleet={ok} rooms={ok_rooms} memory={ok_mem} heads={ok_heads} "
-              f"heads={len(fleet['heads'])} rooms={len(fleet['rooms'])} docs={ndocs} "
-              f"mem={len(memory['index'])} activity={len(fleet['activity'])} fossils={nfoss}")
-    return 0 if (ok and ok_rooms and ok_mem and ok_heads) else 1
+              f"commands={ok_cmds} heads={len(fleet['heads'])} rooms={len(fleet['rooms'])} docs={ndocs} "
+              f"mem={len(memory['index'])} activity={len(fleet['activity'])} fossils={nfoss} "
+              f"cmds={len(out['commands']['commands'])}")
+    return 0 if (ok and ok_rooms and ok_mem and ok_heads and ok_cmds) else 1
 
 
 if __name__ == "__main__":
