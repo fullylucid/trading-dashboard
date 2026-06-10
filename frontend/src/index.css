@@ -14,6 +14,32 @@
   src: url('/fonts/medievalsharp.woff2') format('woff2');
 }
 
+/* Curated console-theming roster (T2) — all self-hosted woff2 (OFL, Google Fonts latin subset)
+   so the theme menu's font choices render cross-device incl. iOS, no CDN dependency. Single 400
+   weight each; the browser synthesises bold (matches the MedievalSharp pattern). Loaded on-demand
+   (font-display:swap) — only MedievalSharp, the `you` default, is preloaded in index.html. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/inter.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'EB Garamond';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ebgaramond.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'VT323';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/vt323.woff2') format('woff2');
+}
+
 :root {
   --bg-base: #0a0e0a;
   --bg-panel: #0f1410;

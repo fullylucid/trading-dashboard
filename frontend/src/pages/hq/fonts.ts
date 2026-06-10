@@ -9,9 +9,11 @@ export type FontDef = { id: string; label: string; stack: string; kind: 'sans' |
 
 export const FONTS: FontDef[] = [
   { id: 'system', label: 'System', stack: C.sans, kind: 'system' },
+  { id: 'inter', label: 'Inter', stack: "'Inter', -apple-system, sans-serif", kind: 'sans' },
   { id: 'mono', label: 'JetBrains Mono', stack: C.mono, kind: 'mono' },
+  { id: 'vt323', label: 'VT323', stack: "'VT323', 'JetBrains Mono', monospace", kind: 'mono' },
+  { id: 'ebgaramond', label: 'EB Garamond', stack: "'EB Garamond', Georgia, serif", kind: 'serif' },
   { id: 'medievalsharp', label: 'MedievalSharp', stack: "'MedievalSharp', fantasy", kind: 'display' },
-  // T2 adds: inter (sans), ebgaramond (serif), vt323 (terminal) — self-hosted woff2.
 ];
 
 const _byId = new Map(FONTS.map((f) => [f.id, f]));
