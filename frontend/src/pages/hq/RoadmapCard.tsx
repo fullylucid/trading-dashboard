@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { C } from './render/tokens';
 import { useIsMobile } from '../../hooks/useMediaQuery';
 import type { Roadmap, RoadmapNode, RoadmapResponse } from './types';
@@ -67,6 +67,29 @@ export default function RoadmapCard({ roomId, label }: { roomId: string; label?:
 
   const setOpenPersist = (v: boolean) => { setOpen(v); try { localStorage.setItem(OPEN_KEY, v ? '1' : '0'); } catch { /* */ } };
 
+  // Bulletproof close so the card can NEVER trap (Schyler hit a flaky ✕ on mobile). Three guards:
+  // (1) handle pointerup AND click — a slightly-imperfect tap on mobile often never becomes a
+  // `click`, but pointerup always fires; (2) stopPropagation so nothing else swallows it; (3) a
+  // just-closed timestamp so the iOS "ghost click" can't immediately re-open via the edge handle.
+  const justClosedAt = useRef(0);
+  const closeCard = (e?: React.SyntheticEvent) => {
+    e?.stopPropagation();
+    justClosedAt.current = Date.now();
+    setOpenPersist(false);
+  };
+  const openCard = () => {
+    if (Date.now() - justClosedAt.current < 400) return;  // swallow a ghost-click reopen
+    setOpenPersist(true);
+  };
+
+  // Esc always collapses (desktop), on top of the ✕ and tap-outside.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeCard(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
+
   const owners = useMemo(() => { const s = new Set<string>(); if (rm) collectOwners(rm.nodes, s); return [...s].sort(); }, [rm]);
   const progress = rm?.progress ?? { done: 0, total: 0 };
   const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
@@ -85,13 +108,13 @@ export default function RoadmapCard({ roomId, label }: { roomId: string; label?:
   if (!open) {
     return (
       <button
-        type="button" onClick={() => setOpenPersist(true)} aria-label="open roadmap"
+        type="button" onClick={openCard} aria-label="open roadmap"
         style={{
           position: 'fixed', right: 0, top: '38%', zIndex: 1500, transform: 'translateY(-50%)',
           background: C.panel, color: C.green, border: `1px solid ${C.line2}`, borderRight: 'none',
           borderRadius: '10px 0 0 10px', padding: '10px 7px', cursor: 'pointer', fontFamily: C.mono,
           writingMode: 'vertical-rl', fontSize: 11, boxShadow: '-6px 0 20px rgba(0,0,0,.4)',
-          display: 'flex', alignItems: 'center', gap: 8,
+          display: 'flex', alignItems: 'center', gap: 8, touchAction: 'manipulation',
         }}
       >
         <span style={{ transform: 'rotate(180deg)' }}>🗺 roadmap</span>
@@ -104,11 +127,13 @@ export default function RoadmapCard({ roomId, label }: { roomId: string; label?:
   // ---- expanded panel ----
   return (
     <>
-      {/* tap-anywhere-outside to collapse — a reliable escape so the card can never trap */}
-      <div onClick={() => setOpenPersist(false)}
-        style={{ position: 'fixed', inset: 0, zIndex: 1499, background: 'rgba(0,0,0,.35)' }} />
+      {/* tap-anywhere-outside to collapse — a reliable escape so the card can never trap.
+          z ABOVE the global nav (fixed, z2000): that full-width top bar otherwise overlays the
+          panel header and SWALLOWS the ✕ tap on mobile — the actual cause of the flaky close. */}
+      <div onPointerUp={closeCard} onClick={closeCard}
+        style={{ position: 'fixed', inset: 0, zIndex: 2098, background: 'rgba(0,0,0,.35)', touchAction: 'manipulation' }} />
       <div style={{
-        position: 'fixed', right: 0, top: 0, bottom: 0, zIndex: 1500,
+        position: 'fixed', right: 0, top: 0, bottom: 0, zIndex: 2099,
         width: isMobile ? 'min(88vw, 360px)' : 360, maxWidth: '100vw', background: C.panel,
         borderLeft: `1px solid ${C.line2}`, boxShadow: '-12px 0 40px rgba(0,0,0,.5)',
         display: 'flex', flexDirection: 'column', fontFamily: C.sans,
@@ -117,9 +142,10 @@ export default function RoadmapCard({ roomId, label }: { roomId: string; label?:
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontFamily: C.mono, fontWeight: 700, fontSize: 13, color: C.green }}>🗺 {label || roomId}</span>
           <span style={{ marginLeft: 'auto', fontFamily: C.mono, fontSize: 12, color: C.ink }}>{progress.done}/{progress.total}</span>
-          <button type="button" onClick={() => setOpenPersist(false)} aria-label="minimize roadmap"
+          <button type="button" onPointerUp={closeCard} onClick={closeCard} aria-label="close roadmap"
             style={{ background: C.raised, border: `1px solid ${C.line}`, color: C.ink, cursor: 'pointer',
-              fontSize: 16, lineHeight: 1, width: 32, height: 32, borderRadius: 8, flex: '0 0 auto' }}>✕</button>
+              fontSize: 17, lineHeight: 1, width: 38, height: 38, borderRadius: 8, flex: '0 0 auto',
+              touchAction: 'manipulation', position: 'relative', zIndex: 1 }}>✕</button>
         </div>
         <div style={{ height: 5, background: C.raised, borderRadius: 3, marginTop: 8, overflow: 'hidden' }}>
           <div style={{ width: `${pct}%`, height: '100%', background: C.green, boxShadow: `0 0 8px ${C.green}` }} />
