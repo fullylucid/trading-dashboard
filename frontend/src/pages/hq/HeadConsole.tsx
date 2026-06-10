@@ -11,6 +11,9 @@ import type { ConsoleBlock, ConsoleTurn, MenuPrompt, TranscriptResponse } from '
 // so only the on-screen console in the deck live-tails.
 
 const POLL_MS = 2000;
+// queued is only valid WHILE the head is busy; once it goes idle and stays idle this long, any
+// still-'delivered' message is resolved (it's been consumed/run) so ⧖ queued can never hang.
+const IDLE_GRACE_MS = 4000;
 
 type Pending = { id: string; text: string; status: 'sending' | 'delivered' | 'failed' };
 
@@ -83,6 +86,20 @@ export default function HeadConsole({ name, active = true }: { name: string; act
     );
     setPending((prev) => prev.filter((p) => !userTexts.has(p.text.trim())));
   }, [turns]);
+
+  // backstop so ⧖ queued can NEVER hang: if the head is idle (not working/waiting) and stays
+  // idle through a short grace, resolve any still-'delivered' message. The text-reconcile above
+  // clears a message when its transcript user-turn lands — but a menu answer is consumed by the
+  // menu and never becomes a turn, so without this it would sit purple-queued forever.
+  useEffect(() => {
+    const idle = headStatus !== 'working' && headStatus !== 'waiting-input';
+    if (!idle || !pending.some((p) => p.status === 'delivered')) return;
+    const t = setTimeout(
+      () => setPending((prev) => prev.filter((p) => p.status !== 'delivered')),
+      IDLE_GRACE_MS,
+    );
+    return () => clearTimeout(t);
+  }, [headStatus, pending]);
 
   // poll delivery status of in-flight messages (the relay writes the per-job result)
   useEffect(() => {
