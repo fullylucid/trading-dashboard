@@ -132,6 +132,12 @@ export default function HydraHQ() {
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
         <ViewToggle view={view} onChange={changeView} />
         <Link
+          to="/hq/console"
+          style={{ color: BLUE, fontSize: 12, textDecoration: 'none', border: `1px solid ${BLUE}`, borderRadius: 4, padding: '4px 10px' }}
+        >
+          💬 Console
+        </Link>
+        <Link
           to="/hq/memory"
           style={{ color: BLUE, fontSize: 12, textDecoration: 'none', border: `1px solid ${BLUE}`, borderRadius: 4, padding: '4px 10px' }}
         >
