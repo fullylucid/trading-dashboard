@@ -22,10 +22,10 @@ export const C = {
   userBg: 'linear-gradient(180deg,rgba(92,200,255,.12),rgba(92,200,255,.06))',
   userLine: 'rgba(92,200,255,.32)',
   userInk: '#dcf0ff',
-  // Schyler's OWN outgoing-message text: cerulean Luminari. Luminari is a macOS-only system
-  // font — it renders on macOS, falls back to the generic `fantasy` family elsewhere (iOS).
+  // Schyler's OWN outgoing-message text: cerulean MedievalSharp (self-hosted woff2, OFL — see
+  // index.css @font-face). Renders cross-device incl. iOS; `fantasy` as a last-resort fallback.
   cerulean: '#007BA7',           // tune-able
-  userFont: "'Luminari', fantasy",
+  userFont: "'MedievalSharp', fantasy",
   // syntax-highlight palette
   synKey: '#ff8fd0',
   synStr: '#9be39b',

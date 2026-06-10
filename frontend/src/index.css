@@ -3,6 +3,17 @@
 /* Import JetBrains Mono font */
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
 
+/* MedievalSharp (OFL, Google Fonts) — SELF-HOSTED so it works offline / no CDN dependency on
+   the box. Used for the operator's own console messages (with cerulean). Renders cross-device
+   incl. iOS, replacing the macOS-only Luminari fallback. */
+@font-face {
+  font-family: 'MedievalSharp';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/medievalsharp.woff2') format('woff2');
+}
+
 :root {
   --bg-base: #0a0e0a;
   --bg-panel: #0f1410;
