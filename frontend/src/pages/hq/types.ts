@@ -110,10 +110,19 @@ export type ConsoleTurn = {
   blocks: ConsoleBlock[];
 };
 
+// F6: a menu a waiting head is blocked on — surfaced as tappable buttons in the console.
+export type MenuPrompt = {
+  kind: 'permission' | 'question';
+  nav: 'number' | 'arrow';
+  question: string;
+  options: { index: number; label: string }[];
+};
+
 export type TranscriptResponse = {
   available: boolean;
   reason?: string;
   status?: Status | null;   // head busy-state — the console derives the "queued" message state
+  prompt?: MenuPrompt | null;   // F6: the menu this head is waiting on (or null)
   file?: string | null;
   rotated?: boolean;
   cursor?: number;

@@ -381,6 +381,54 @@ def test_pane_is_rc_paired():
     assert not hq.pane_is_rc_paired("just a prompt")
 
 
+# F6 — parse_prompt lifts the menu a waiting head is blocked on off the pane capture.
+_PERMISSION_PANE = (
+    "   Commit and push FB-09\n"
+    " Do you want to proceed?\n"
+    " ❯ 1. Yes\n"
+    "  2.Yes, and don’t ask  : git commit -q -m 'ground FB-09: territory\n"
+    "    again for           occupancy + sex-structured harassment *\n"
+    "   3. No\n"
+    " Esc to cancel · Tab to amend · ctrl+e to explain"
+)
+_MENU_PANE = (
+    "  This is a proposal, not a build.\n"
+    "────────────────\n"
+    "←  ☐ First build  ✔ Submit  →\n"
+    "Which thread do I pull first?\n"
+    "❯ 1. Keystones first (K1+K2)\n"
+    "     Build the Ticker Dossier + Living Watchlist bus.\n"
+    "  2. Regime→Options first (#1)\n"
+    "     Skip ahead to the smallest real-edge win.\n"
+    "  3. You pick / discuss\n"
+    "Enter to select · Tab/Arrow keys to navigate · Esc to cancel"
+)
+
+
+def test_parse_prompt_permission():
+    p = hq.parse_prompt(_PERMISSION_PANE)
+    assert p["kind"] == "permission" and p["nav"] == "number"
+    assert p["question"] == "Do you want to proceed?"
+    assert [(o["index"], o["label"]) for o in p["options"]] == [
+        (1, "Yes"), (2, "Yes, and don’t ask"), (3, "No"),  # command echo after "  :" dropped
+    ]
+
+
+def test_parse_prompt_askuserquestion():
+    p = hq.parse_prompt(_MENU_PANE)
+    assert p["kind"] == "question" and p["nav"] == "arrow"
+    assert p["question"] == "Which thread do I pull first?"   # tab bar + box-rule skipped
+    assert [o["label"] for o in p["options"]] == [
+        "Keystones first (K1+K2)", "Regime→Options first (#1)", "You pick / discuss",
+    ]
+
+
+def test_parse_prompt_rejects_non_menu():
+    assert hq.parse_prompt("working… esc to interrupt") is None   # no menu footer
+    assert hq.parse_prompt("Enter to select\n  3. orphan option") is None  # no option #1
+    assert hq.parse_prompt(None) is None
+
+
 @pytest.mark.parametrize("url,expected", [
     ("git@github.com:fullylucid/trading-dashboard.git", "fullylucid/trading-dashboard"),
     ("https://github.com/fullylucid/cribdar.git", "fullylucid/cribdar"),

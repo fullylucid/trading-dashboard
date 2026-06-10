@@ -205,6 +205,40 @@ def input_job(head: str, pane: str, text: str, by: str, now: float, jid: str) ->
     return {"id": jid, "head": head, "pane": pane, "text": text, "by": by, "ts": int(now)}
 
 
+# tmux key tokens the relay is allowed to send for a menu answer. Tightly bounded: digits for
+# a permission prompt + arrow/Enter navigation for an AskUserQuestion menu. Nothing else — the
+# relay re-checks this allowlist so a malformed bus job can never inject arbitrary keystrokes.
+ANSWER_KEYS = frozenset({"Up", "Down", "Enter"} | {str(d) for d in range(10)})
+
+
+def answer_keys(nav: str, index: int) -> List[str]:
+    """The keystroke sequence that selects option ``index`` (1-based) of a head's menu (F6).
+
+    - ``number`` (permission prompt) — press the digit, then Enter.
+    - ``arrow``  (AskUserQuestion menu) — the TUI renders the cursor on option 1, so step
+      down ``index-1`` times and Enter. (The operator drives via the web console, never the
+      TUI, so the cursor hasn't moved off the top.)
+
+    Raises ValueError on a bad index/nav so the route rejects it before anything is enqueued."""
+    if not isinstance(index, int) or index < 1 or index > 20:
+        raise ValueError(f"option index out of range: {index!r}")
+    if nav == "number":
+        if index > 9:
+            raise ValueError("permission prompts have at most 9 options")
+        return [str(index), "Enter"]
+    if nav == "arrow":
+        return ["Down"] * (index - 1) + ["Enter"]
+    raise ValueError(f"unknown nav mode: {nav!r}")
+
+
+def answer_job(
+    head: str, pane: str, keys: List[str], by: str, now: float, jid: str
+) -> Dict[str, Any]:
+    """A menu-answer job for the relay: a ``keys`` sequence instead of literal ``text``. The
+    relay validates each key against its own allowlist before sending."""
+    return {"id": jid, "head": head, "pane": pane, "keys": list(keys), "by": by, "ts": int(now)}
+
+
 def is_image(filename: str) -> bool:
     return os.path.splitext(filename)[1].lower() in _IMAGE_EXTS
 

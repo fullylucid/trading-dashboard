@@ -219,20 +219,22 @@ def head_transcript(
     card = _head_card(name)
     workdir = (card or {}).get("workdir")
     status = (card or {}).get("status")   # working/idle/waiting-input -> the console derives "queued"
+    prompt = (card or {}).get("prompt")   # F6: the menu this head is blocked on (or None)
     if not workdir:
         # unknown head, or an external/bus head with no local transcript
         return {"available": False, "reason": "no transcript for this head"}
 
     path = hq_console.newest_transcript(workdir)
     if not path:
-        return {"available": True, "status": status, "file": None, "cursor": 0, "turns": []}
+        return {"available": True, "status": status, "prompt": prompt,
+                "file": None, "cursor": 0, "turns": []}
 
     current = os.path.basename(path)
     # incremental tail only if the client is still on the current file; else send a fresh page
     same_file = file is not None and file == current
     use_after = after if (same_file and after is not None and after >= 0) else None
     turns, cursor = hq_console.read_turns(path, limit=limit, after=use_after)
-    return {"available": True, "status": status, "file": current,
+    return {"available": True, "status": status, "prompt": prompt, "file": current,
             "rotated": file is not None and not same_file, "cursor": cursor, "turns": turns}
 
 
@@ -296,6 +298,63 @@ async def head_input(name: str, request: Request) -> Dict[str, Any]:
     logger.info("hq console input by=%s head=%s pane=%s len=%d id=%s", by, name, pane, len(text), jid)
     r.rpush(hq_console.INPUT_QUEUE, json.dumps(job))
     return {"ok": True, "id": jid, "head": name, "pane": pane, "text": text}
+
+
+@hq_router.post("/head/{name}/answer")
+async def head_answer(name: str, request: Request) -> Dict[str, Any]:
+    """Answer the menu a head is blocked on (F6). Body: ``{"index": N}`` — the 1-based option.
+
+    Same trust model as ``/input``: most-sensitive surface, Access-gated + audited. The backend
+    never touches tmux — it validates the index against the head's CURRENT collector-published
+    menu (``card.prompt``), builds a bounded key sequence (digits / arrows / Enter — see
+    ``hq_console.answer_keys``), audits it, and enqueues a job the host relay executes.
+    """
+    import time
+    import uuid
+
+    import hq_console
+
+    card = _head_card(name)
+    pane = ((card or {}).get("tmux") or {}).get("pane")
+    if not hq_console.valid_pane(pane):
+        raise HTTPException(status_code=409, detail=f"head '{name}' is not drivable (no tmux pane)")
+    prompt = (card or {}).get("prompt")
+    if not prompt or not prompt.get("options"):
+        raise HTTPException(status_code=409, detail=f"head '{name}' is not waiting on a menu")
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    index = (body or {}).get("index")
+    options = prompt.get("options") or []
+    if not isinstance(index, int) or not any(o.get("index") == index for o in options):
+        raise HTTPException(status_code=400, detail="index must be one of the menu's options")
+
+    try:
+        keys = hq_console.answer_keys(prompt.get("nav"), index)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    by = request.headers.get("Cf-Access-Authenticated-User-Email") or "local"
+    jid = uuid.uuid4().hex[:12]
+    job = hq_console.answer_job(name, pane, keys, by, time.time(), jid)
+
+    r = _r()
+    if r is None:
+        raise HTTPException(status_code=503, detail="queue unavailable")
+    chosen = next((o.get("label") for o in options if o.get("index") == index), "")
+    note = f"[menu:{prompt.get('kind')}] #{index} {chosen}".strip()
+    audit = {"id": jid, "ts": job["ts"], "by": by, "head": name, "pane": pane, "text": note}
+    try:
+        r.rpush(hq_console.INPUT_AUDIT, json.dumps(audit))
+        r.ltrim(hq_console.INPUT_AUDIT, -hq_console.INPUT_AUDIT_MAX, -1)
+    except Exception:  # noqa: BLE001
+        pass
+    logger.info("hq console answer by=%s head=%s pane=%s index=%d keys=%s id=%s",
+                by, name, pane, index, keys, jid)
+    r.rpush(hq_console.INPUT_QUEUE, json.dumps(job))
+    return {"ok": True, "id": jid, "head": name, "index": index, "label": chosen}
 
 
 @hq_router.post("/head/{name}/upload")

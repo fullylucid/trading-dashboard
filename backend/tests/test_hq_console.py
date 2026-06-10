@@ -101,6 +101,34 @@ def test_input_job_shape():
                  "by": "me@x.com", "ts": 1780000000}
 
 
+# F6 — menu-answer key sequences + job shape
+@pytest.mark.parametrize("nav,index,keys", [
+    ("number", 1, ["1", "Enter"]),
+    ("number", 3, ["3", "Enter"]),
+    ("arrow", 1, ["Enter"]),               # cursor already on option 1
+    ("arrow", 4, ["Down", "Down", "Down", "Enter"]),
+])
+def test_answer_keys(nav, index, keys):
+    assert hq_console.answer_keys(nav, index) == keys
+
+
+@pytest.mark.parametrize("nav,index", [("number", 0), ("arrow", 99), ("zap", 1), ("number", 10)])
+def test_answer_keys_rejects_bad(nav, index):
+    with pytest.raises(ValueError):
+        hq_console.answer_keys(nav, index)
+
+
+def test_answer_keys_are_all_allowed_by_relay():
+    produced = set(hq_console.answer_keys("number", 9)) | set(hq_console.answer_keys("arrow", 20))
+    assert produced <= relay.ALLOWED_KEYS == hq_console.ANSWER_KEYS  # backend + relay agree
+
+
+def test_answer_job_shape():
+    j = hq_console.answer_job("charts", "%4", ["Down", "Enter"], "me@x.com", 1780000000.7, "abc123")
+    assert j == {"id": "abc123", "head": "charts", "pane": "%4", "keys": ["Down", "Enter"],
+                 "by": "me@x.com", "ts": 1780000000}
+
+
 # --------------------------------------------------------------------------- host relay guards
 def _load_relay():
     path = Path(__file__).resolve().parents[2] / "scripts" / "hq_input_relay.py"
@@ -136,6 +164,25 @@ def test_relay_handle_rejects_dead_or_bad_pane(monkeypatch):
     relay.handle({"id": "j4", "pane": "%4", "text": ""}, live)       # empty -> dropped + failed
     assert sent == [("%4", "ok")]
     assert results == [("j1", True), ("j2", False), ("j3", False), ("j4", False)]
+
+
+def test_relay_handle_menu_answer_keys(monkeypatch):
+    seqs, results = [], []
+    monkeypatch.setattr(relay, "send_keys_seq", lambda pane, keys: seqs.append((pane, keys)) or True)
+    monkeypatch.setattr(relay, "write_result", lambda jid, ok: results.append((jid, ok)))
+    relay.handle({"id": "k1", "pane": "%4", "keys": ["Down", "Enter"]}, {"%4"})
+    relay.handle({"id": "k2", "pane": "%9", "keys": ["Enter"]}, {"%4"})   # not live -> failed, no send
+    assert seqs == [("%4", ["Down", "Enter"])]
+    assert results == [("k1", True), ("k2", False)]
+
+
+def test_relay_send_keys_seq_allowlist(monkeypatch):
+    calls = []
+    monkeypatch.setattr(relay.subprocess, "run", lambda *a, **k: calls.append(a) or None)
+    assert relay.send_keys_seq("%4", ["Down", "Enter"]) is True
+    assert relay.send_keys_seq("%4", ["rm -rf /"]) is False   # not an allowed key -> no subprocess
+    assert relay.send_keys_seq("%4", []) is False
+    assert len(calls) == 1   # only the valid sequence reached tmux
 
 
 # --------------------------------------------------------------------------- upload (F4)

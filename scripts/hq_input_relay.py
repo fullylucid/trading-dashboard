@@ -36,6 +36,10 @@ RESULT_TTL_S = 300
 TMUX_SESSION = os.getenv("HQ_TMUX_SESSION", "hydra")
 BLPOP_TIMEOUT = 5
 _PANE_RE = re.compile(r"^%\d+$")
+# tmux key tokens a menu-answer job (F6) may carry — digits for a permission prompt, arrows +
+# Enter for an AskUserQuestion menu. Anything else is rejected: the relay never sends a key it
+# can't name here, so a malformed bus job can't inject arbitrary keystrokes.
+ALLOWED_KEYS = frozenset({"Up", "Down", "Enter"} | {str(d) for d in range(10)})
 
 
 # ---------------------------------------------------------------------------- pure helpers
@@ -78,6 +82,21 @@ def send_to_pane(pane: str, text: str) -> bool:
         return False
 
 
+def send_keys_seq(pane: str, keys: list) -> bool:
+    """Send a bounded sequence of named keys (F6 menu answer) — e.g. ['Down','Down','Enter'] or
+    ['2','Enter']. Each key must be in ALLOWED_KEYS; one rejected key fails the whole job. Keys
+    go as tmux key-NAMES (no -l), so 'Down' navigates and 'Enter' selects."""
+    if not keys or not all(k in ALLOWED_KEYS for k in keys):
+        print(f"[hq-input-relay] reject keys {keys!r}", file=sys.stderr)
+        return False
+    try:
+        subprocess.run(["tmux", "send-keys", "-t", pane, "--", *keys], check=True, timeout=8)
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as e:
+        print(f"[hq-input-relay] keys send failed pane={pane}: {e}", file=sys.stderr)
+        return False
+
+
 def blpop_job() -> Optional[Dict[str, Any]]:
     """Block up to BLPOP_TIMEOUT for a job via the container's redis-cli (mirrors the collector's
     docker-exec pattern; no host redis client / published port assumed)."""
@@ -110,7 +129,7 @@ def write_result(jid: Optional[str], ok: bool) -> None:
 
 
 def handle(job: Dict[str, Any], live: set) -> None:
-    pane, text, jid = job.get("pane"), job.get("text"), job.get("id")
+    pane, text, keys, jid = job.get("pane"), job.get("text"), job.get("keys"), job.get("id")
     if not valid_pane(pane):
         print(f"[hq-input-relay] reject bad pane: {pane!r}", file=sys.stderr)
         write_result(jid, False)
@@ -118,6 +137,12 @@ def handle(job: Dict[str, Any], live: set) -> None:
     if pane not in live:
         print(f"[hq-input-relay] pane {pane} not in '{TMUX_SESSION}' session — dropping", file=sys.stderr)
         write_result(jid, False)
+        return
+    if keys is not None:  # F6 menu answer — a key sequence, not literal text
+        ok = send_keys_seq(pane, keys if isinstance(keys, list) else [])
+        write_result(jid, ok)
+        print(f"[hq-input-relay] {'answered' if ok else 'FAILED'} head={job.get('head')} "
+              f"pane={pane} by={job.get('by')} id={jid} keys={keys}")
         return
     if not isinstance(text, str) or not text:
         print("[hq-input-relay] reject empty text", file=sys.stderr)
