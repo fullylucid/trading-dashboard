@@ -1310,14 +1310,22 @@ def build_snapshot() -> Dict[str, Any]:
     # category layer (A2): group heads above rooms per the hydra-hq rooms.config.json
     room_names = {r["id"]: r["name"] for r in rooms.values()}
     cat_by_head, categories = assign_categories(heads, room_names, config)
+    # Orchestration leads (ORCHESTRATION.md): a per-room lead head — marked role='lead' and
+    # sorted first in its room — so HQ surfaces who's driving each project. Single source of
+    # truth with the auto-dispatch engine (hq_orchestrator.py): both read the SAME
+    # rooms.config.json `orchestration.leads` ({room_id: head_name}). Empty => unchanged.
+    leads = (config.get("orchestration") or {}).get("leads") or {}
     for h in heads:
         h["category"] = cat_by_head.get(h["name"], h["room"])
+        h["is_lead"] = leads.get(h["room"]) == h["name"]
+        if h["is_lead"]:
+            h["role"] = "lead"
 
     fleet = {
         "generated_at": int(now),
         "rooms": sorted(rooms.values(), key=lambda r: r["name"].lower()),
         "categories": categories,
-        "heads": sorted(heads, key=lambda h: (h["room"], h["name"].lower())),
+        "heads": sorted(heads, key=lambda h: (h["room"], not h.get("is_lead"), h["name"].lower())),
         "activity": finalize_activity(activity),
         "memory_index": memory["index"],      # lightweight index (full bodies in hq:memory)
     }
