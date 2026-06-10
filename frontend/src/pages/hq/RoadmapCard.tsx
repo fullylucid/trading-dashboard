@@ -37,21 +37,24 @@ const STATUS_ICON: Record<string, { ch: string; color: string }> = {
 
 export default function RoadmapCard({ roomId, label }: { roomId: string; label?: string }) {
   const isMobile = useIsMobile();
+  // Always start MINIMIZED (just the edge handle) — never auto-take-over the screen. Only an
+  // explicit prior expand (localStorage '1') reopens it. Avoids any isMobile init-race trap.
   const [open, setOpen] = useState<boolean>(() => {
-    const v = typeof localStorage !== 'undefined' ? localStorage.getItem(OPEN_KEY) : null;
-    return v == null ? !isMobile : v === '1';
+    try { return localStorage.getItem(OPEN_KEY) === '1'; } catch { return false; }
   });
   const [rm, setRm] = useState<Roadmap | null>(null);
+  const [loaded, setLoaded] = useState(false);   // distinct from rm: a null roadmap is "loaded, empty"
   const [groups, setGroups] = useState<Set<string>>(new Set());
   const [leaves, setLeaves] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
+    setLoaded(false);
     const load = () => fetch(`/api/hq/room/${encodeURIComponent(roomId)}/roadmap`)
       .then((r) => r.json() as Promise<RoadmapResponse>)
-      .then((d) => { if (alive) setRm(d.roadmap); })
-      .catch(() => {});
+      .then((d) => { if (alive) { setRm(d.roadmap); setLoaded(true); } })
+      .catch(() => { if (alive) setLoaded(true); });
     load();
     const id = setInterval(load, 10000);
     return () => { alive = false; clearInterval(id); };
@@ -100,18 +103,23 @@ export default function RoadmapCard({ roomId, label }: { roomId: string; label?:
 
   // ---- expanded panel ----
   return (
-    <div style={{
-      position: 'fixed', right: 0, top: 0, bottom: 0, zIndex: 1500,
-      width: isMobile ? '92vw' : 360, maxWidth: '100vw', background: C.panel,
-      borderLeft: `1px solid ${C.line2}`, boxShadow: '-12px 0 40px rgba(0,0,0,.5)',
-      display: 'flex', flexDirection: 'column', fontFamily: C.sans,
-    }}>
+    <>
+      {/* tap-anywhere-outside to collapse — a reliable escape so the card can never trap */}
+      <div onClick={() => setOpenPersist(false)}
+        style={{ position: 'fixed', inset: 0, zIndex: 1499, background: 'rgba(0,0,0,.35)' }} />
+      <div style={{
+        position: 'fixed', right: 0, top: 0, bottom: 0, zIndex: 1500,
+        width: isMobile ? 'min(88vw, 360px)' : 360, maxWidth: '100vw', background: C.panel,
+        borderLeft: `1px solid ${C.line2}`, boxShadow: '-12px 0 40px rgba(0,0,0,.5)',
+        display: 'flex', flexDirection: 'column', fontFamily: C.sans,
+      }}>
       <div style={{ padding: '12px 14px 10px', borderBottom: `1px solid ${C.line}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontFamily: C.mono, fontWeight: 700, fontSize: 13, color: C.green }}>🗺 {label || roomId}</span>
           <span style={{ marginLeft: 'auto', fontFamily: C.mono, fontSize: 12, color: C.ink }}>{progress.done}/{progress.total}</span>
-          <button type="button" onClick={() => setOpenPersist(false)} aria-label="minimize"
-            style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 16 }}>✕</button>
+          <button type="button" onClick={() => setOpenPersist(false)} aria-label="minimize roadmap"
+            style={{ background: C.raised, border: `1px solid ${C.line}`, color: C.ink, cursor: 'pointer',
+              fontSize: 16, lineHeight: 1, width: 32, height: 32, borderRadius: 8, flex: '0 0 auto' }}>✕</button>
         </div>
         <div style={{ height: 5, background: C.raised, borderRadius: 3, marginTop: 8, overflow: 'hidden' }}>
           <div style={{ width: `${pct}%`, height: '100%', background: C.green, boxShadow: `0 0 8px ${C.green}` }} />
@@ -128,11 +136,12 @@ export default function RoadmapCard({ roomId, label }: { roomId: string; label?:
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '8px 10px 24px' }}>
-        {!rm ? (
+        {!loaded ? (
           <div style={{ color: C.muted, fontSize: 12, textAlign: 'center', marginTop: 20 }}>loading…</div>
-        ) : rm.nodes.length === 0 ? (
-          <div style={{ color: C.muted, fontSize: 12, textAlign: 'center', marginTop: 20 }}>
-            no roadmap file in this project yet — add a checklist (ROADMAP.md / CHECKLIST.md)
+        ) : !rm || rm.nodes.length === 0 ? (
+          <div style={{ color: C.muted, fontSize: 12.5, textAlign: 'center', marginTop: 24, lineHeight: 1.6, padding: '0 12px' }}>
+            No roadmap yet.<br />
+            <span style={{ color: C.faint }}>Add a <code style={{ fontFamily: C.mono, color: C.greenDim }}>- [ ]</code> checklist to the project's <code style={{ fontFamily: C.mono, color: C.greenDim }}>ROADMAP.md</code> — it appears here live, with PRs auto-checking items.</span>
           </div>
         ) : (
           rm.nodes.map((n, i) => (
@@ -143,7 +152,8 @@ export default function RoadmapCard({ roomId, label }: { roomId: string; label?:
         )}
         {rm?.source && <div style={{ marginTop: 14, fontSize: 9, color: C.faint, fontFamily: C.mono, textAlign: 'center' }}>{rm.source} · live</div>}
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
