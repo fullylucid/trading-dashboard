@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import HeadConsole from './HeadConsole';
 import RoadmapCard from './RoadmapCard';
 import { GREEN, DIM, FAINT, BLUE, AMBER, card, StatusDot } from './ui';
-import { CHROME_TOP, CHROME_BOTTOM } from '../../layout';
+import { CHROME_TOP } from '../../layout';
 import type { Category, Fleet, Head } from './types';
 
 // HQ Console — fleet navigation (CONSOLE.md Slice 3). A project dropdown (the A2 categories:
@@ -77,7 +77,8 @@ export default function ConsoleDeck() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, projectHeads.length]);
 
-  const screenH = `calc(100vh - ${CHROME_TOP + CHROME_BOTTOM + DECK_CHROME}px)`;
+  // no CHROME_BOTTOM here — the market ticker is hidden on /hq, so its clearance would be dead space
+  const screenH = `calc(100vh - ${CHROME_TOP + DECK_CHROME}px)`;
 
   return (
     <div style={{ maxWidth: 980, margin: '0 auto', padding: '0 10px', fontFamily: 'monospace', color: GREEN }}>

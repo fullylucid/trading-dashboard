@@ -171,18 +171,19 @@ const IS_HQ_HOST =
 
 function Shell() {
   const { pathname } = useLocation();
-  // HQ / console views drop the scrolling market ticker — it eats vertical space and is
-  // irrelevant on the fleet console. Hidden on /hq* and on the dedicated hq.shmaptech.com host;
-  // the reserved bottom clearance is reclaimed so the console gets the room back.
+  // HQ / console views drop the trading chrome (the scrolling market ticker + the floating
+  // agent-bridge chat bubble) — both eat space and are irrelevant on the fleet console (you're
+  // already chatting in it). Hidden on /hq* and on the dedicated hq.shmaptech.com host; the
+  // reserved bottom clearance is reclaimed so the console fills flush to the bottom edge.
   const isHqRoute = pathname === '/hq' || pathname.startsWith('/hq/');
-  const hideTicker = isHqRoute || IS_HQ_HOST;
+  const hqView = isHqRoute || IS_HQ_HOST;
   return (
     <div className="app min-h-screen bg-gray-900 text-white">
       <SystemBanner />
       <NavMenu />
       {/* Reserve clearance for the fixed chrome (top banner / ☰ button, bottom ticker)
           so no routed page slides under it. Single-sourced in ./layout. */}
-      <main style={{ paddingTop: CHROME_TOP, paddingBottom: hideTicker ? 0 : CHROME_BOTTOM }}>
+      <main style={{ paddingTop: CHROME_TOP, paddingBottom: hqView ? 0 : CHROME_BOTTOM }}>
         <Routes>
             <Route path="/" element={IS_HQ_HOST ? <HydraHQ /> : <HomeDashboard />} />
             <Route path="/hq" element={<HydraHQ />} />
@@ -202,8 +203,8 @@ function Shell() {
             <Route path="/sector-rotation" element={<SectorRotation />} />
           </Routes>
         </main>
-        <MessengerWidget />
-        {!hideTicker && <GlobalTicker />}
+        {!hqView && <MessengerWidget />}
+        {!hqView && <GlobalTicker />}
     </div>
   );
 }
