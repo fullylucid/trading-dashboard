@@ -94,6 +94,10 @@ DEFAULT_ROOMS_CONFIG: Dict[str, Any] = {
     ],
     "order": ["command"],     # category ids first, in this order; remaining rooms follow (alpha)
     "room_labels": {},        # optional per-room display-label overrides
+    # Category roadmaps (the 'command' group owns no repo room, so it has no workdir): map a
+    # category id -> an ABSOLUTE checklist path, read directly + fused with the trading-dashboard
+    # PRs (the console PRs live there). Lets the Command card show the HQ/console backlog.
+    "category_roadmaps": {"command": os.path.join(HOME, "hydra-hq", "CONSOLE-CHECKLIST.md")},
     "external_heads": [       # bus/heartbeat-reported heads (no tmux/git) — see collect_external_heads
         {"name": "win-gaia", "heartbeat_path": "/mnt/c/cyborganic-bus/heartbeat-win.md",
          "room": "cyborganic", "kind": "windows"},
@@ -1109,6 +1113,23 @@ def fuse_roadmap(nodes: List[Dict[str, Any]], prs: List[Dict[str, Any]]) -> Tupl
     return done, total
 
 
+def _finalize_roadmap(text: str, prs: List[Dict[str, Any]], source: str) -> Dict[str, Any]:
+    """Parse checklist text, fuse with PR state, and collect milestone names. Shared by the
+    per-room and per-category roadmap collectors."""
+    nodes = parse_roadmap(scrub_secrets(text))
+    done, total = fuse_roadmap(nodes, prs)
+    milestones: List[str] = []
+
+    def walk(ns: List[Dict[str, Any]]) -> None:
+        for n in ns:
+            if n.get("milestone"):
+                milestones.append(n["milestone"])
+            walk(n.get("children", []))
+    walk(nodes)
+    return {"source": source, "nodes": nodes,
+            "progress": {"done": done, "total": total}, "milestones": milestones}
+
+
 def collect_roadmap(workdir: str, prs: List[Dict[str, Any]], rel: Optional[str]) -> Optional[Dict[str, Any]]:
     """Read + parse a room's roadmap file (config override or first candidate that exists), fuse
     with its PRs. Returns {source, nodes, progress, milestones} or None when no file is found."""
@@ -1121,18 +1142,21 @@ def collect_roadmap(workdir: str, prs: List[Dict[str, Any]], rel: Optional[str])
             text = f.read(120_000)
     except OSError:
         return None
-    nodes = parse_roadmap(scrub_secrets(text))
-    done, total = fuse_roadmap(nodes, prs)
-    milestones: List[str] = []
+    return _finalize_roadmap(text, prs, os.path.relpath(path, workdir))
 
-    def walk(ns: List[Dict[str, Any]]) -> None:
-        for n in ns:
-            if n.get("milestone"):
-                milestones.append(n["milestone"])
-            walk(n.get("children", []))
-    walk(nodes)
-    return {"source": os.path.relpath(path, workdir), "nodes": nodes,
-            "progress": {"done": done, "total": total}, "milestones": milestones}
+
+def collect_category_roadmap(abs_path: str, prs: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Roadmap for a CATEGORY (e.g. 'command'), which owns no repo room/workdir. Reads an ABSOLUTE
+    checklist path directly (no workdir join) and fuses with the given PRs. Returns the same shape
+    as collect_roadmap, or None if the file is missing/unreadable."""
+    if not abs_path or not os.path.isfile(abs_path):
+        return None
+    try:
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read(120_000)
+    except OSError:
+        return None
+    return _finalize_roadmap(text, prs, os.path.basename(abs_path))
 
 
 def _int(s: Any) -> Optional[int]:
@@ -1320,6 +1344,17 @@ def build_snapshot() -> Dict[str, Any]:
         if rm:
             rm["repo"] = room_repo.get(rid)
             roadmaps[rid] = rm
+
+    # Category roadmaps (e.g. 'command'): absolute checklist paths, fused with the trading-dashboard
+    # PRs since the console PRs live there. Keyed by category id alongside the room roadmaps, so
+    # GET /room/command/roadmap serves it (the card renders nodes/milestones/owners identically).
+    cat_roadmap_cfg = config.get("category_roadmaps") or {}
+    td_repo = next((repo for repo in room_repo.values() if repo and repo.endswith("trading-dashboard")), None)
+    for cid, abs_path in cat_roadmap_cfg.items():
+        crm = collect_category_roadmap(abs_path, pr_cache.get(td_repo or "", []))
+        if crm:
+            crm["repo"] = td_repo
+            roadmaps[cid] = crm
     roadmap_payload = {"generated_at": int(now), "rooms": roadmaps}
 
     return {

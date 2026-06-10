@@ -537,6 +537,24 @@ def test_fuse_roadmap_pr_status():
     assert flat["jump-to-latest"]["status"] == "planned"
 
 
+def test_collect_category_roadmap_abs_path(tmp_path):
+    # a CATEGORY roadmap reads an ABSOLUTE path directly (no workdir) + fuses with PRs
+    f = tmp_path / "CONSOLE-CHECKLIST.md"
+    f.write_text(_ROADMAP_MD, encoding="utf-8")
+    rm = hq.collect_category_roadmap(str(f), _ROADMAP_PRS)
+    assert rm is not None
+    assert rm["source"] == "CONSOLE-CHECKLIST.md"          # basename, not a workdir-relative path
+    assert rm["progress"] == {"done": 1, "total": 3}
+    assert "R12" in rm["milestones"]
+    flat = {n["text"]: n for n in _flatten_roadmap(rm["nodes"]) if n.get("checked") is not None}
+    assert flat["positions read #88"]["status"] == "done"  # PR fusion still applies
+
+
+def test_collect_category_roadmap_missing_file():
+    assert hq.collect_category_roadmap("/no/such/file.md", _ROADMAP_PRS) is None
+    assert hq.collect_category_roadmap("", _ROADMAP_PRS) is None
+
+
 def test_match_pr_explicit_and_fuzzy():
     prs = [{"number": 5, "title": "add volume profile overlay", "state": "MERGED"}]
     assert hq.match_pr("anything #5 here", 5, prs)["number"] == 5      # explicit ref wins
