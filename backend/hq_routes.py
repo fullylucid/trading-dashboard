@@ -191,6 +191,43 @@ async def room_stream(room_id: str, request: Request) -> StreamingResponse:
     )
 
 
+def _head_workdir(name: str) -> Optional[str]:
+    """Resolve a head name -> its workdir from the fleet snapshot (the collector records it)."""
+    fleet = _get_json(_r(), FLEET_KEY)
+    if fleet is None:
+        return None
+    h = next((x for x in fleet.get("heads", []) if x.get("name") == name), None)
+    return (h or {}).get("workdir")
+
+
+@hq_router.get("/head/{name}/transcript")
+def head_transcript(
+    name: str, limit: int = 60, after: Optional[int] = None, file: Optional[str] = None
+) -> Dict[str, Any]:
+    """The head's live conversation (CONSOLE.md Slice 1, read-only). Resolves name -> workdir ->
+    newest Claude transcript .jsonl and returns parsed chat turns. Live-tail: pass ``after``
+    (the prior ``cursor`` byte offset) + ``file`` (the prior ``file``) to fetch only new turns;
+    on file rotation (newest != ``file``) the server returns a fresh page. Behind Access SSO."""
+    import hq_console
+
+    workdir = _head_workdir(name)
+    if not workdir:
+        # unknown head, or an external/bus head with no local transcript
+        return {"available": False, "reason": "no transcript for this head"}
+
+    path = hq_console.newest_transcript(workdir)
+    if not path:
+        return {"available": True, "file": None, "cursor": 0, "turns": []}
+
+    current = os.path.basename(path)
+    # incremental tail only if the client is still on the current file; else send a fresh page
+    same_file = file is not None and file == current
+    use_after = after if (same_file and after is not None and after >= 0) else None
+    turns, cursor = hq_console.read_turns(path, limit=limit, after=use_after)
+    return {"available": True, "file": current, "rotated": file is not None and not same_file,
+            "cursor": cursor, "turns": turns}
+
+
 @hq_router.get("/memory")
 def memory_index() -> Dict[str, Any]:
     """The memory knowledge-base index: one lightweight entry per ``memory/*.md`` (name, title,

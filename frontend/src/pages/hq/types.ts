@@ -96,6 +96,29 @@ export type HeadDetailResponse = {
   head?: HeadDetail;
 };
 
+// HQ Console (CONSOLE.md Slice 1) — a head's live conversation
+export type ConsoleBlock =
+  | { kind: 'text'; text: string }
+  | { kind: 'thinking'; text: string }
+  | { kind: 'tool_use'; name: string; input: string }
+  | { kind: 'tool_result'; text: string; is_error: boolean };
+
+export type ConsoleTurn = {
+  uuid: string | null;
+  type: 'user' | 'assistant' | 'system';
+  timestamp: string | null;
+  blocks: ConsoleBlock[];
+};
+
+export type TranscriptResponse = {
+  available: boolean;
+  reason?: string;
+  file?: string | null;
+  rotated?: boolean;
+  cursor?: number;
+  turns?: ConsoleTurn[];
+};
+
 export type MemoryIndexEntry = {
   name: string;
   title: string;
