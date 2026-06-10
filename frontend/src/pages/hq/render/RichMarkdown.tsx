@@ -86,11 +86,15 @@ function inline(text: string, key: string): ReactNode[] {
 
 const HSIZE = [19, 17, 15, 14, 13, 12];
 
-export default function RichMarkdown({ source, dim = false }: { source: string; dim?: boolean }) {
+export default function RichMarkdown(
+  { source, dim = false, font, ink }: { source: string; dim?: boolean; font?: string; ink?: string },
+) {
   const lines = source.replace(/\r\n/g, '\n').split('\n');
   const blocks: ReactNode[] = [];
   let i = 0, key = 0;
-  const prose = dim ? 'rgba(183,155,255,.85)' : C.ink;
+  // `ink` (the agents-side text colour, T1 theming) overrides the default prose colour; the dim
+  // "thinking" variant keeps its violet regardless.
+  const prose = dim ? 'rgba(183,155,255,.85)' : (ink || C.ink);
 
   while (i < lines.length) {
     const line = lines[i];
@@ -143,5 +147,5 @@ export default function RichMarkdown({ source, dim = false }: { source: string; 
     blocks.push(<p key={key++} style={{ margin: '0 0 8px', lineHeight: 1.6, color: prose, fontStyle: dim ? 'italic' : 'normal' }}>{inline(para.join(' '), `p${key}`)}</p>);
   }
 
-  return <div style={{ fontFamily: C.sans, fontSize: 14 }}>{blocks}</div>;
+  return <div style={{ fontFamily: font || C.sans, fontSize: 14 }}>{blocks}</div>;
 }

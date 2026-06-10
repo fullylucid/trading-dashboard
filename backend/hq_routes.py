@@ -34,6 +34,8 @@ HEADS_KEY = "hq:heads"
 COMMANDS_KEY = "hq:commands"
 ROADMAP_KEY = "hq:roadmap"
 AUTOPILOT_PREFIX = "hq:autopilot:"   # per-room milestone-autopilot intent the engine consumes
+THEME_KEY = "hq:theme"               # console theming config (per-side font/colour, cross-device)
+THEME_MAX_BYTES = 64 * 1024          # a generous cap; the config is small even with many heads
 
 _redis_client: Optional["redis.Redis"] = None
 
@@ -355,6 +357,41 @@ async def head_answer(name: str, request: Request) -> Dict[str, Any]:
                 by, name, pane, index, keys, jid)
     r.rpush(hq_console.INPUT_QUEUE, json.dumps(job))
     return {"ok": True, "id": jid, "head": name, "index": index, "label": chosen}
+
+
+@hq_router.get("/theme")
+def get_theme() -> Dict[str, Any]:
+    """The console theming config (per-side font/text/highlight, per-project + per-head overrides),
+    stored in Redis so it follows the operator across phone + desktop. Returns ``{theme: null}``
+    when unset — the frontend then uses its baked-in defaults (which reproduce today's look)."""
+    return {"theme": _get_json(_r(), THEME_KEY)}
+
+
+@hq_router.post("/theme")
+async def put_theme(request: Request) -> Dict[str, Any]:
+    """Persist the console theming config. Owner-only behind Access SSO; cosmetic + low-risk, but
+    still validated: must be a JSON object with the expected ``global``/``projects`` shape and
+    under a size cap, so a malformed client can't store junk that breaks every console's render."""
+    raw = await request.body()
+    if len(raw) > THEME_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="theme too large")
+    try:
+        body = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="invalid JSON")
+    if not isinstance(body, dict) or not isinstance(body.get("global"), dict) \
+            or not isinstance(body.get("projects"), dict):
+        raise HTTPException(status_code=400, detail="theme must have object 'global' and 'projects'")
+    r = _r()
+    if r is None:
+        raise HTTPException(status_code=503, detail="store unavailable")
+    by = request.headers.get("Cf-Access-Authenticated-User-Email") or "local"
+    try:
+        r.set(THEME_KEY, json.dumps(body))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"could not save theme: {e}")
+    logger.info("hq theme saved by=%s bytes=%d", by, len(raw))
+    return {"ok": True}
 
 
 @hq_router.post("/head/{name}/upload")

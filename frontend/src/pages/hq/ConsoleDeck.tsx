@@ -115,7 +115,7 @@ export default function ConsoleDeck() {
                 </div>
                 <div style={{ flex: 1, minHeight: 0 }}>
                   {/* only the visible screen live-tails */}
-                  <HeadConsole name={h.name} active={i === active} />
+                  <HeadConsole name={h.name} room={selected} active={i === active} />
                 </div>
               </section>
             ))}
