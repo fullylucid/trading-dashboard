@@ -18,6 +18,7 @@ export default function HeadConsole({ name, active = true }: { name: string; act
   const [turns, setTurns] = useState<ConsoleTurn[]>([]);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
+  const [headStatus, setHeadStatus] = useState<string | null>(null);
   const cursor = useRef<number>(0);
   const file = useRef<string | null>(null);
   const seen = useRef<Set<string>>(new Set());
@@ -50,6 +51,7 @@ export default function HeadConsole({ name, active = true }: { name: string; act
         if (!alive) return;
         if (!d.available) { setUnavailable(d.reason || 'no transcript'); return; }
         setUnavailable(null);
+        setHeadStatus(d.status ?? null);
         if (d.rotated) { setTurns([]); seen.current = new Set(); }
         file.current = d.file ?? null;
         cursor.current = d.cursor ?? 0;
@@ -109,6 +111,11 @@ export default function HeadConsole({ name, active = true }: { name: string; act
     return <div style={{ ...card, color: AMBER, borderColor: AMBER, textAlign: 'center', margin: 4 }}>{unavailable}</div>;
   }
 
+  // a delivered message that the agent hasn't picked up yet (busy) is QUEUED in Claude Code's
+  // input — render it distinctly until its real transcript turn lands.
+  const busy = headStatus === 'working' || headStatus === 'waiting-input';
+  const queuedCount = busy ? pending.filter((p) => p.status === 'delivered').length : 0;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div
@@ -118,7 +125,7 @@ export default function HeadConsole({ name, active = true }: { name: string; act
       >
         {turns.length === 0 && pending.length === 0 && <div style={{ color: DIM, fontSize: 12, textAlign: 'center', marginTop: 20 }}>loading conversation…</div>}
         {turns.map((t, i) => <Turn key={t.uuid ?? i} turn={t} />)}
-        {pending.map((p) => <PendingBubble key={p.id} msg={p} />)}
+        {pending.map((p) => <PendingBubble key={p.id} msg={p} busy={busy} queuedCount={queuedCount} />)}
       </div>
 
       <div style={{ marginTop: 10, flex: '0 0 auto' }}>
@@ -128,24 +135,31 @@ export default function HeadConsole({ name, active = true }: { name: string; act
   );
 }
 
-function PendingBubble({ msg }: { msg: Pending }) {
+function PendingBubble({ msg, busy, queuedCount }: { msg: Pending; busy: boolean; queuedCount: number }) {
   const caption = msg.text.replace(/\n?\[(image|file) attached\][^\n]*$/i, '').trim();
-  const badge = msg.status === 'failed'
-    ? { ch: '✗ failed', color: C.red }
-    : msg.status === 'delivered'
-      ? { ch: '✓', color: C.green }
-      : { ch: '· · ·', color: C.amber };
+  // delivered + agent busy = QUEUED in Claude Code's input (runs when the agent finishes)
+  const queued = msg.status === 'delivered' && busy;
+  const view = msg.status === 'failed' ? 'failed' : queued ? 'queued' : msg.status; // sending | delivered | queued | failed
+  const badge = {
+    failed: { ch: '✗ failed', color: C.red },
+    queued: { ch: queuedCount > 1 ? `⧖ queued · ${queuedCount} waiting` : '⧖ queued', color: C.violet },
+    delivered: { ch: '✓ delivered', color: C.green },
+    sending: { ch: '● sending', color: C.amber },
+  }[view] ?? { ch: '● sending', color: C.amber };
   return (
-    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
       <div style={{
         maxWidth: '88%', minWidth: 0, position: 'relative',
-        border: `1px solid ${msg.status === 'failed' ? C.red : C.userLine}`, borderRadius: 14, borderBottomRightRadius: 5,
-        padding: '11px 13px', background: C.userBg, opacity: msg.status === 'sending' ? 0.72 : 1,
+        border: `1px solid ${view === 'failed' ? C.red : view === 'queued' ? 'rgba(183,155,255,.4)' : C.userLine}`,
+        borderRadius: 14, borderBottomRightRadius: 5, padding: '11px 13px',
+        background: view === 'queued' ? 'rgba(183,155,255,.06)' : C.userBg,
+        opacity: view === 'sending' ? 0.72 : view === 'queued' ? 0.92 : 1,
       }}>
         {msg.attachment && <div style={{ fontFamily: C.mono, fontSize: 11.5, color: C.blue, marginBottom: caption ? 5 : 0 }}>📎 {msg.attachment}</div>}
-        {caption && <div style={{ fontFamily: C.mono, fontSize: 13.5, lineHeight: 1.5, color: C.userInk, whiteSpace: 'pre-wrap' }}>{caption}</div>}
-        <span title={msg.status} style={{ position: 'absolute', right: 8, bottom: -7, fontSize: 9, fontFamily: C.mono, color: badge.color, background: C.bg, padding: '0 4px', borderRadius: 4 }}>{badge.ch}</span>
+        {caption && <div style={{ fontFamily: C.mono, fontSize: 13.5, lineHeight: 1.5, color: view === 'queued' ? 'rgba(215,247,226,.78)' : C.userInk, whiteSpace: 'pre-wrap', fontStyle: view === 'queued' ? 'italic' : 'normal' }}>{caption}</div>}
+        <span title={view} style={{ position: 'absolute', right: 8, bottom: -7, fontSize: 9, fontFamily: C.mono, color: badge.color, background: C.bg, padding: '0 4px', borderRadius: 4 }}>{badge.ch}</span>
       </div>
+      {queued && <span style={{ fontSize: 9, color: C.faint, fontFamily: C.mono, paddingRight: 4 }}>will run when the agent finishes its turn</span>}
     </div>
   );
 }
