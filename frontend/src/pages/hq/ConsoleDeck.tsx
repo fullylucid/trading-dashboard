@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import HeadConsole from './HeadConsole';
 import RoadmapCard from './RoadmapCard';
+import ThemePalette from './ThemePalette';
 import { GREEN, DIM, FAINT, BLUE, AMBER, card, StatusDot } from './ui';
 import { CHROME_TOP } from '../../layout';
 import type { Category, Fleet, Head } from './types';
@@ -95,7 +96,10 @@ export default function ConsoleDeck() {
         >
           {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
         </select>
-        <Link to="/hq" style={{ marginLeft: 'auto', color: BLUE, fontSize: 12, textDecoration: 'none' }}>← fleet</Link>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+          {selected && <ThemePalette room={selected} heads={projectHeads.map((h) => h.name)} />}
+          <Link to="/hq" style={{ color: BLUE, fontSize: 12, textDecoration: 'none' }}>← fleet</Link>
+        </div>
       </div>
 
       {projectHeads.length === 0 ? (

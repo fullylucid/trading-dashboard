@@ -34,16 +34,75 @@ export const DEFAULT_THEME: ThemeConfig = {
 
 // Resolve one side's full theme for a given (project, head). Every field independently walks
 // agent → project → global, so e.g. a per-head font can sit on top of a project-wide colour.
+// SECURITY: colours are validated here (the chokepoint where a value becomes a `style`), so a
+// config value — even one hand-poked into Redis, though it's owner-only behind Access — can never
+// inject CSS. Fonts are likewise allow-listed at apply time via fonts.ts `fontStack` (an unknown
+// id falls back to the system stack), so only curated faces ever reach the DOM.
 export function resolveSide(cfg: ThemeConfig, room: string | undefined, head: string | undefined, side: Side): SideTheme {
   const g = cfg.global[side];
   const proj = (room && cfg.projects?.[room]) || undefined;
   const p = (proj?.[side] as PartialSide) || {};
   const a = ((head && proj?.byAgent?.[head]?.[side]) as PartialSide) || {};
   return {
-    font: a.font ?? p.font ?? g.font,
-    text: a.text ?? p.text ?? g.text,
-    hl: a.hl ?? p.hl ?? g.hl,
+    font: a.font ?? p.font ?? g.font,                 // fontStack() allow-lists this at apply time
+    text: safeColor(a.text ?? p.text ?? g.text, g.text),
+    hl: safeColor(a.hl ?? p.hl ?? g.hl, g.hl),
   };
+}
+
+// A colour is only accepted if it's a hex (#rgb/#rgba/#rrggbb/#rrggbbaa) or rgb()/rgba() literal —
+// nothing else can be written into a style. Anything off-pattern falls back to a known-good token.
+const _HEX_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const _RGB_RE = /^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*(?:,\s*(?:0|1|0?\.\d+)\s*)?\)$/;
+export function isColor(v: unknown): v is string {
+  return typeof v === 'string' && (_HEX_RE.test(v) || _RGB_RE.test(v));
+}
+export function safeColor(v: unknown, fallback: string): string {
+  return isColor(v) ? v : fallback;
+}
+
+// Curated colour swatches for the palette's text + highlight pickers (a custom hex input rides
+// alongside). Drawn from the design tokens so the menu stays on-brand.
+export const SWATCHES = [
+  C.green, C.cerulean, C.blue, C.amber, C.violet, C.red,
+  '#ff8fd0', '#9bf0bb', C.ink, '#ffffff', C.muted, '#5f7d68',
+];
+
+// Immutable edit of one (scope, side, field): scope is the whole project (head=null) or a single
+// head override (head=name). Returns a new config; the provider persists it cross-device.
+export function setSideField(
+  cfg: ThemeConfig, room: string, head: string | null, side: Side, field: keyof SideTheme, value: string,
+): ThemeConfig {
+  const projects = { ...cfg.projects };
+  const proj: ProjectTheme = { ...(projects[room] || {}) };
+  if (head) {
+    const byAgent = { ...(proj.byAgent || {}) };
+    const agent = { ...(byAgent[head] || {}) };
+    agent[side] = { ...(agent[side] || {}), [field]: value };
+    byAgent[head] = agent;
+    proj.byAgent = byAgent;
+  } else {
+    proj[side] = { ...((proj[side] as PartialSide) || {}), [field]: value };
+  }
+  projects[room] = proj;
+  return { ...cfg, projects };
+}
+
+// Drop the override object for one (scope, side) so it falls back to the next level up.
+export function clearSide(cfg: ThemeConfig, room: string, head: string | null, side: Side): ThemeConfig {
+  const projects = { ...cfg.projects };
+  const proj: ProjectTheme = { ...(projects[room] || {}) };
+  if (head) {
+    const byAgent = { ...(proj.byAgent || {}) };
+    const agent = { ...(byAgent[head] || {}) };
+    delete agent[side];
+    if (Object.keys(agent).length) byAgent[head] = agent; else delete byAgent[head];
+    proj.byAgent = byAgent;
+  } else {
+    delete proj[side];
+  }
+  projects[room] = proj;
+  return { ...cfg, projects };
 }
 
 // A defensive merge of a possibly-partial/old server blob onto the defaults, so a missing key
