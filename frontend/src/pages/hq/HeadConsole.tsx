@@ -12,9 +12,12 @@ import type { ConsoleBlock, ConsoleTurn, TranscriptResponse } from './types';
 
 const POLL_MS = 2000;
 
+type Pending = { id: string; text: string; attachment?: string; status: 'sending' | 'delivered' | 'failed' };
+
 export default function HeadConsole({ name, active = true }: { name: string; active?: boolean }) {
   const [turns, setTurns] = useState<ConsoleTurn[]>([]);
   const [unavailable, setUnavailable] = useState<string | null>(null);
+  const [pending, setPending] = useState<Pending[]>([]);
   const cursor = useRef<number>(0);
   const file = useRef<string | null>(null);
   const seen = useRef<Set<string>>(new Set());
@@ -63,7 +66,38 @@ export default function HeadConsole({ name, active = true }: { name: string; act
   useEffect(() => {
     const el = scrollRef.current;
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
+  }, [turns, pending]);
+
+  // reconcile: drop an optimistic message once its real transcript user-turn lands
+  useEffect(() => {
+    if (!pending.length) return;
+    const userTexts = new Set(
+      turns.filter((t) => t.type === 'user')
+        .map((t) => t.blocks.filter((b) => b.kind === 'text').map((b) => (b as { text: string }).text).join('\n').trim())
+        .filter(Boolean),
+    );
+    setPending((prev) => prev.filter((p) => !userTexts.has(p.text.trim())));
   }, [turns]);
+
+  // poll delivery status of in-flight messages (the relay writes the per-job result)
+  useEffect(() => {
+    const inflight = pending.filter((p) => p.status === 'sending');
+    if (!inflight.length) return;
+    let alive = true;
+    const tick = () => inflight.forEach((p) => {
+      fetch(`/api/hq/input/${encodeURIComponent(p.id)}/status`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (alive && (d.status === 'delivered' || d.status === 'failed')) {
+            setPending((prev) => prev.map((x) => (x.id === p.id ? { ...x, status: d.status } : x)));
+          }
+        })
+        .catch(() => {});
+    });
+    const id = setInterval(tick, 1500);
+    tick();
+    return () => { alive = false; clearInterval(id); };
+  }, [pending]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -82,12 +116,35 @@ export default function HeadConsole({ name, active = true }: { name: string; act
         onScroll={onScroll}
         style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 2px' }}
       >
-        {turns.length === 0 && <div style={{ color: DIM, fontSize: 12, textAlign: 'center', marginTop: 20 }}>loading conversation…</div>}
+        {turns.length === 0 && pending.length === 0 && <div style={{ color: DIM, fontSize: 12, textAlign: 'center', marginTop: 20 }}>loading conversation…</div>}
         {turns.map((t, i) => <Turn key={t.uuid ?? i} turn={t} />)}
+        {pending.map((p) => <PendingBubble key={p.id} msg={p} />)}
       </div>
 
       <div style={{ marginTop: 10, flex: '0 0 auto' }}>
-        <Composer name={name} onSent={() => { atBottom.current = true; }} />
+        <Composer name={name} onSent={(m) => { setPending((p) => [...p, { ...m, status: 'sending' }]); atBottom.current = true; }} />
+      </div>
+    </div>
+  );
+}
+
+function PendingBubble({ msg }: { msg: Pending }) {
+  const caption = msg.text.replace(/\n?\[(image|file) attached\][^\n]*$/i, '').trim();
+  const badge = msg.status === 'failed'
+    ? { ch: '✗ failed', color: C.red }
+    : msg.status === 'delivered'
+      ? { ch: '✓', color: C.green }
+      : { ch: '· · ·', color: C.amber };
+  return (
+    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div style={{
+        maxWidth: '88%', minWidth: 0, position: 'relative',
+        border: `1px solid ${msg.status === 'failed' ? C.red : C.userLine}`, borderRadius: 14, borderBottomRightRadius: 5,
+        padding: '11px 13px', background: C.userBg, opacity: msg.status === 'sending' ? 0.72 : 1,
+      }}>
+        {msg.attachment && <div style={{ fontFamily: C.mono, fontSize: 11.5, color: C.blue, marginBottom: caption ? 5 : 0 }}>📎 {msg.attachment}</div>}
+        {caption && <div style={{ fontFamily: C.mono, fontSize: 13.5, lineHeight: 1.5, color: C.userInk, whiteSpace: 'pre-wrap' }}>{caption}</div>}
+        <span title={msg.status} style={{ position: 'absolute', right: 8, bottom: -7, fontSize: 9, fontFamily: C.mono, color: badge.color, background: C.bg, padding: '0 4px', borderRadius: 4 }}>{badge.ch}</span>
       </div>
     </div>
   );
