@@ -122,6 +122,25 @@ export type TranscriptResponse = {
 export type SlashCommand = { name: string; desc: string; source: 'builtin' | 'skill' | 'custom' };
 export type CommandsResponse = { available: boolean; commands: SlashCommand[]; counts?: Record<string, number> };
 
+export type RoadmapNode = {
+  text: string;
+  checked: boolean | null;            // null = group/heading (no checkbox)
+  owner: string | null;
+  milestone: string | null;
+  status?: 'done' | 'in_progress' | 'planned' | 'group';
+  pr?: { number: number; state: string; title: string } | null;
+  children: RoadmapNode[];
+};
+export type Roadmap = {
+  source: string;
+  repo: string | null;
+  nodes: RoadmapNode[];
+  progress: { done: number; total: number };
+  milestones: string[];
+  active_milestone?: string | null;
+};
+export type RoadmapResponse = { available: boolean; generated_at?: number; roadmap: Roadmap | null };
+
 export type MemoryIndexEntry = {
   name: string;
   title: string;

@@ -442,6 +442,88 @@ def test_collect_commands_custom_dir(tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# living roadmap — nested parse, @owner / {milestone}, PR fusion
+# --------------------------------------------------------------------------- #
+_ROADMAP_MD = """# R12 build
+## Render @data-gaia
+- [x] positions read #88
+- [ ] swim demotion @win-gaia
+{milestone:R12}
+## Polish
+- [ ] jump-to-latest
+"""
+_ROADMAP_PRS = [
+    {"number": 88, "title": "render reads positions", "state": "MERGED"},
+    {"number": 90, "title": "swim demotion flourish", "state": "OPEN"},
+]
+
+
+def test_parse_roadmap_hierarchy_owner_milestone():
+    nodes = hq.parse_roadmap(_ROADMAP_MD)
+    top = nodes[0]                       # "R12 build" (H1)
+    assert top["text"] == "R12 build" and top["checked"] is None
+    render = top["children"][0]
+    assert render["text"] == "Render" and render["owner"] == "data-gaia"
+    swim = render["children"][1]
+    assert swim["text"] == "swim demotion" and swim["owner"] == "win-gaia"
+    # standalone {milestone:R12} -> a divider node
+    assert any(n.get("milestone") == "R12" for n in _flatten_roadmap(nodes))
+
+
+def _flatten_roadmap(nodes):
+    out = []
+    for n in nodes:
+        out.append(n)
+        out.extend(_flatten_roadmap(n.get("children", [])))
+    return out
+
+
+def test_fuse_roadmap_pr_status():
+    nodes = hq.parse_roadmap(_ROADMAP_MD)
+    done, total = hq.fuse_roadmap(nodes, _ROADMAP_PRS)
+    assert (done, total) == (1, 3)
+    flat = {n["text"]: n for n in _flatten_roadmap(nodes) if n.get("checked") is not None}
+    assert flat["positions read #88"]["status"] == "done"            # explicit #88 merged -> done
+    assert flat["positions read #88"]["pr"]["number"] == 88
+    assert flat["swim demotion"]["status"] == "in_progress"          # fuzzy -> open PR
+    assert flat["jump-to-latest"]["status"] == "planned"
+
+
+def test_match_pr_explicit_and_fuzzy():
+    prs = [{"number": 5, "title": "add volume profile overlay", "state": "MERGED"}]
+    assert hq.match_pr("anything #5 here", 5, prs)["number"] == 5      # explicit ref wins
+    assert hq.match_pr("volume profile overlay work", None, prs)["number"] == 5  # word overlap
+    assert hq.match_pr("totally unrelated thing", None, prs) is None  # below threshold
+
+
+def test_roadmap_route_passthrough_and_autopilot(monkeypatch):
+    pytest.importorskip("httpx")
+    import time
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    store = {"hq:roadmap": json.dumps({"rooms": {"cyborganic": {
+        "source": "ROADMAP.md", "nodes": [], "progress": {"done": 2, "total": 5}, "milestones": ["R12"], "repo": "x/y"}}})}
+
+    class FR:
+        def get(self, k): return store.get(k)
+        def set(self, k, v): store[k] = v
+        def delete(self, k): store.pop(k, None)
+        def rpush(self, k, v): store.setdefault(k, []).append(v)
+        def ltrim(self, k, a, b): pass
+
+    monkeypatch.setattr(hq_routes, "_r", lambda: FR())
+    app = FastAPI(); app.include_router(hq_routes.hq_router); c = TestClient(app)
+
+    assert c.get("/api/hq/room/cyborganic/roadmap").json()["roadmap"]["progress"] == {"done": 2, "total": 5}
+    armed = c.post("/api/hq/room/cyborganic/autopilot", json={"milestone": "R12"}).json()
+    assert armed == {"ok": True, "active_milestone": "R12"}
+    assert c.get("/api/hq/room/cyborganic/roadmap").json()["roadmap"]["active_milestone"] == "R12"
+    c.post("/api/hq/room/cyborganic/autopilot", json={"milestone": None})
+    assert c.get("/api/hq/room/cyborganic/roadmap").json()["roadmap"]["active_milestone"] is None
+
+
+# --------------------------------------------------------------------------- #
 # discover_heads — self-healing roster (registry UNION live tmux)
 # --------------------------------------------------------------------------- #
 def _pane(session, cmd, name):
