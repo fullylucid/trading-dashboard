@@ -41,6 +41,7 @@ services:
       FINTUBE_VISION_DIR: /vision        # where the backend stages images for vision (container path)
       FINTUBE_VISION_DIR_HOST: /home/user/.config/trading-dashboard/vision  # same dir as the Claude worker (on the host) sees it
       HQ_STREAM_DIR: /cyborganic-stream  # cyborganic live-view bus dir (bind-mounted below); see STREAM.md / hq_stream.py
+      HQ_PROJECTS_DIR: /claude-projects  # HQ console: read-only transcripts for the chat renderer (CONSOLE.md)
       LOG_LEVEL: INFO
       DASHBOARD_ENV: production
     ports:
@@ -50,6 +51,7 @@ services:
       - /home/user/.config/trading-dashboard/briefs:/briefs:ro  # Crack-a-Dawn morning briefs
       - /home/user/.config/trading-dashboard/vision:/vision     # FinTube vision staging — shared with the host Claude workers (rw)
       - /mnt/c/cyborganic-bus/stream:/cyborganic-stream         # cyborganic live-view: backend writes control.json, reads live.jpg (B2 / STREAM.md)
+      - /home/user/.claude/projects:/claude-projects:ro         # HQ console: read-only head transcripts for the chat renderer (CONSOLE.md Slice 1)
     depends_on:
       redis:
         condition: service_healthy

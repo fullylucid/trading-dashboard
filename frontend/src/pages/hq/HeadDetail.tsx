@@ -68,6 +68,14 @@ export default function HeadDetail() {
             <Link to={`/hq/room/${head.room}`} style={{ color: BLUE, fontSize: 12, textDecoration: 'none' }}>
               {head.room} ↗
             </Link>
+            {head.source !== 'bus' && (
+              <>
+                {' · '}
+                <Link to={`/hq/console/${name}`} style={{ color: BLUE, fontSize: 12, textDecoration: 'none' }}>
+                  💬 console ↗
+                </Link>
+              </>
+            )}
           </>
         )}
       </div>
