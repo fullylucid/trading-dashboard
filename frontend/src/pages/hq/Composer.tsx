@@ -35,10 +35,12 @@ function filterCmds(cmds: SlashCommand[], q: string): SlashCommand[] {
   return cmds.map((c) => ({ c, s: score(c, q) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).map((x) => x.c);
 }
 
-type SentMsg = { id: string; text: string; attachment?: string };
+type SentMsg = { id: string; text: string };
+type Attachment = { name: string; host_path: string; image: boolean; preview?: string };
 
 export default function Composer({ name, onSent }: { name: string; onSent?: (msg: SentMsg) => void }) {
   const [draft, setDraft] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
@@ -83,31 +85,44 @@ export default function Composer({ name, onSent }: { name: string; onSent?: (msg
 
   const send = async () => {
     const text = draft.trim();
-    if (!text || sending) return;
+    if ((!text && attachments.length === 0) || sending) return;
     setSending(true); setSendErr(null);
     try {
+      const body = { text, attachments: attachments.map((a) => ({ path: a.host_path, image: a.image })) };
       const r = await fetch(`/api/hq/head/${encodeURIComponent(name)}/input`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
-      if (r.ok) { const d = await r.json().catch(() => ({})); setDraft(''); setDismissed(false); onSent?.({ id: d.id, text }); }
-      else { const d = await r.json().catch(() => ({})); setSendErr(d.detail || `send failed (${r.status})`); }
+      if (r.ok) {
+        const d = await r.json().catch(() => ({}));
+        attachments.forEach((a) => a.preview && URL.revokeObjectURL(a.preview));
+        setDraft(''); setAttachments([]); setDismissed(false);
+        onSent?.({ id: d.id, text: d.text ?? text });
+      } else { const d = await r.json().catch(() => ({})); setSendErr(d.detail || `send failed (${r.status})`); }
     } catch { setSendErr("can't reach the console backend"); } finally { setSending(false); }
   };
 
+  // attach-then-send: upload SAVES the file; it sits as a chip until you hit Send
   const attach = async (files: FileList | null) => {
-    const file = files?.[0];
-    if (!file || uploading) return;
+    const list = files ? Array.from(files) : [];
+    if (!list.length || uploading) return;
     setUploading(true); setSendErr(null);
-    const caption = draft.trim();
     try {
-      const fd = new FormData();
-      fd.append('file', file);
-      fd.append('caption', caption);
-      const r = await fetch(`/api/hq/head/${encodeURIComponent(name)}/upload`, { method: 'POST', body: fd });
-      if (r.ok) { const d = await r.json(); setDraft(''); onSent?.({ id: d.id, text: d.text, attachment: d.filename }); }
-      else { const d = await r.json().catch(() => ({})); setSendErr(d.detail || `upload failed (${r.status})`); }
+      for (const file of list) {
+        const fd = new FormData();
+        fd.append('file', file);
+        const r = await fetch(`/api/hq/head/${encodeURIComponent(name)}/upload`, { method: 'POST', body: fd });
+        if (r.ok) {
+          const d = await r.json();
+          const preview = d.image ? URL.createObjectURL(file) : undefined;
+          setAttachments((prev) => [...prev, { name: d.name, host_path: d.host_path, image: d.image, preview }]);
+        } else { const d = await r.json().catch(() => ({})); setSendErr(d.detail || `upload failed (${r.status})`); }
+      }
     } catch { setSendErr("upload failed — can't reach the backend"); }
     finally { setUploading(false); if (fileRef.current) fileRef.current.value = ''; }
+  };
+
+  const removeAttachment = (i: number) => {
+    setAttachments((prev) => { const a = prev[i]; if (a?.preview) URL.revokeObjectURL(a.preview); return prev.filter((_, k) => k !== i); });
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -160,7 +175,24 @@ export default function Composer({ name, onSent }: { name: string; onSent?: (msg
         </Popup>
       )}
 
-      <input ref={fileRef} type="file" accept="image/*,.pdf,.txt,.md,.csv,.json,.log,.py,.ts,.tsx,.js" style={{ display: 'none' }} onChange={(e) => attach(e.target.files)} />
+      <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.txt,.md,.csv,.json,.log,.py,.ts,.tsx,.js" style={{ display: 'none' }} onChange={(e) => attach(e.target.files)} />
+
+      {/* pending attachment chips (attach-then-send) */}
+      {attachments.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+          {attachments.map((a, i) => (
+            <div key={a.name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.raised, border: `1px solid ${C.line2}`, borderRadius: 8, padding: '3px 6px 3px 4px' }}>
+              {a.preview
+                ? <img src={a.preview} alt="" style={{ width: 28, height: 28, objectFit: 'cover', borderRadius: 5, display: 'block' }} />
+                : <span style={{ fontSize: 15, width: 24, textAlign: 'center' }}>📄</span>}
+              <span style={{ fontFamily: C.mono, fontSize: 10.5, color: C.ink, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name.replace(/^[0-9a-f]{8}-/, '')}</span>
+              <button type="button" aria-label="remove attachment" onClick={() => removeAttachment(i)}
+                style={{ background: 'transparent', border: 'none', color: C.muted, cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: 0 }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, background: '#060a06', border: `1px solid ${C.line2}`, borderRadius: 14, padding: '8px 10px' }}>
         <button type="button" title="attach photo or document" onClick={() => fileRef.current?.click()} disabled={uploading}
           style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${C.line}`, background: C.raised, color: uploading ? C.green : C.greenDim, cursor: uploading ? 'wait' : 'pointer', fontSize: 15, flex: '0 0 auto' }}>{uploading ? '…' : '📎'}</button>
@@ -174,8 +206,10 @@ export default function Composer({ name, onSent }: { name: string; onSent?: (msg
           rows={1}
           style={{ flex: 1, resize: 'none', background: 'transparent', color: C.ink, border: 'none', outline: 'none', fontFamily: C.sans, fontSize: 14, lineHeight: 1.5, maxHeight: 184, minHeight: 24, overflowY: 'auto', paddingTop: 4 }}
         />
-        <button type="button" onClick={send} disabled={sending || !draft.trim()}
-          style={{ width: 38, height: 34, borderRadius: 9, border: `1px solid ${draft.trim() ? C.green : C.line}`, background: draft.trim() ? 'rgba(34,255,106,.14)' : C.raised, color: draft.trim() ? C.green : C.faint, cursor: sending || !draft.trim() ? 'not-allowed' : 'pointer', flex: '0 0 auto', opacity: sending ? 0.6 : 1, fontSize: 14 }}>➤</button>
+        {(() => { const can = !!draft.trim() || attachments.length > 0; return (
+          <button type="button" onClick={send} disabled={sending || !can}
+            style={{ width: 38, height: 34, borderRadius: 9, border: `1px solid ${can ? C.green : C.line}`, background: can ? 'rgba(34,255,106,.14)' : C.raised, color: can ? C.green : C.faint, cursor: sending || !can ? 'not-allowed' : 'pointer', flex: '0 0 auto', opacity: sending ? 0.6 : 1, fontSize: 14 }}>➤</button>
+        ); })()}
       </div>
       <div style={{ fontSize: 9, color: C.faint, marginTop: 4, fontFamily: C.mono, display: 'flex', justifyContent: 'space-between' }}>
         <span>Enter to send · Shift+Enter newline · / for commands</span>

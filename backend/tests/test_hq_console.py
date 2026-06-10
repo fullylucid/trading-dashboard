@@ -158,3 +158,31 @@ def test_upload_message_format():
     assert hq_console.upload_message("why is this red?", p, True) == f"why is this red?\n[image attached] {p}"
     assert hq_console.upload_message("", p, True) == f"[image attached] {p}"           # no caption -> just the signal
     assert hq_console.upload_message("", "/d/doc.pdf", False) == "[file attached] /d/doc.pdf"
+
+
+def test_build_message_multiple_attachments():
+    msg = hq_console.build_message("look", [{"path": "/u/a.png", "image": True}, {"path": "/u/b.pdf", "image": False}])
+    assert msg == "look\n[image attached] /u/a.png\n[file attached] /u/b.pdf"
+    assert hq_console.build_message("", [{"path": "/u/a.png", "image": True}]) == "[image attached] /u/a.png"
+    for bad in [("", []), ("", [{"image": True}])]:   # no caption + no usable attachment -> reject
+        with pytest.raises(ValueError):
+            hq_console.build_message(*bad)
+
+
+@pytest.mark.parametrize("name,code", [
+    ("../etc/passwd", 400), ("a/b.png", 400), (".secret", 400), ("missing.png", 404),
+])
+def test_serve_upload_path_safety(name, code, tmp_path, monkeypatch):
+    import hq_routes
+    monkeypatch.setattr(hq_console, "UPLOADS_DIR", str(tmp_path))
+    with pytest.raises(Exception) as e:   # fastapi.HTTPException
+        hq_routes.serve_upload(name)
+    assert getattr(e.value, "status_code", None) == code
+
+
+def test_serve_upload_valid(tmp_path, monkeypatch):
+    import hq_routes
+    monkeypatch.setattr(hq_console, "UPLOADS_DIR", str(tmp_path))
+    (tmp_path / "ok.png").write_bytes(b"x" * 200)
+    resp = hq_routes.serve_upload("ok.png")
+    assert resp.__class__.__name__ == "FileResponse"

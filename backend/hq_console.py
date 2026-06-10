@@ -218,10 +218,26 @@ def safe_upload_name(filename: str, jid: str) -> str:
 
 
 def upload_message(caption: str, host_path: str, image: bool) -> str:
-    """The message send-keys'd to the head: the user's caption (if any) then a clear attachment
-    signal + the absolute host path, so the head reliably Reads the file regardless of caption.
+    """One-attachment convenience wrapper around build_message."""
+    return build_message(caption, [{"path": host_path, "image": image}])
+
+
+def build_message(caption: str, attachments: Any) -> str:
+    """The message send-keys'd to the head: the user's caption (if any) then one clear attachment
+    signal per file — ``[image attached] <abs-path>`` / ``[file attached] <abs-path>`` — so the
+    head reliably Reads each regardless of caption. Supports MULTIPLE attachments per message.
     Verified delivery format (Schyler, 2026-06-09)."""
-    tag = "[image attached]" if image else "[file attached]"
-    line = f"{tag} {host_path}"
     cap = (caption or "").strip()
-    return f"{cap}\n{line}" if cap else line
+    lines = []
+    for a in (attachments or []):
+        if not isinstance(a, dict) or not a.get("path"):
+            continue
+        tag = "[image attached]" if a.get("image") else "[file attached]"
+        lines.append(f"{tag} {a['path']}")
+    parts = ([cap] if cap else []) + lines
+    text = "\n".join(parts)
+    if not text.strip():
+        raise ValueError("nothing to send")
+    if len(text) > INPUT_TEXT_MAX:
+        raise ValueError("message too long")
+    return text

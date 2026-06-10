@@ -12,13 +12,14 @@ import type { ConsoleBlock, ConsoleTurn, TranscriptResponse } from './types';
 
 const POLL_MS = 2000;
 
-type Pending = { id: string; text: string; attachment?: string; status: 'sending' | 'delivered' | 'failed' };
+type Pending = { id: string; text: string; status: 'sending' | 'delivered' | 'failed' };
 
 export default function HeadConsole({ name, active = true }: { name: string; active?: boolean }) {
   const [turns, setTurns] = useState<ConsoleTurn[]>([]);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
   const [headStatus, setHeadStatus] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<string | null>(null);
   const cursor = useRef<number>(0);
   const file = useRef<string | null>(null);
   const seen = useRef<Set<string>>(new Set());
@@ -124,19 +125,60 @@ export default function HeadConsole({ name, active = true }: { name: string; act
         style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 2px' }}
       >
         {turns.length === 0 && pending.length === 0 && <div style={{ color: DIM, fontSize: 12, textAlign: 'center', marginTop: 20 }}>loading conversation…</div>}
-        {turns.map((t, i) => <Turn key={t.uuid ?? i} turn={t} />)}
-        {pending.map((p) => <PendingBubble key={p.id} msg={p} busy={busy} queuedCount={queuedCount} />)}
+        {turns.map((t, i) => <Turn key={t.uuid ?? i} turn={t} onImage={setLightbox} />)}
+        {pending.map((p) => <PendingBubble key={p.id} msg={p} busy={busy} queuedCount={queuedCount} onImage={setLightbox} />)}
       </div>
 
       <div style={{ marginTop: 10, flex: '0 0 auto' }}>
         <Composer name={name} onSent={(m) => { setPending((p) => [...p, { ...m, status: 'sending' }]); atBottom.current = true; }} />
       </div>
+
+      {lightbox && (
+        <div onClick={() => setLightbox(null)} role="dialog" aria-label="image preview"
+          style={{ position: 'fixed', inset: 0, zIndex: 3000, background: 'rgba(0,0,0,.88)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, cursor: 'zoom-out' }}>
+          <img src={lightbox} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: 8, boxShadow: '0 8px 40px rgba(0,0,0,.6)' }} />
+        </div>
+      )}
     </div>
   );
 }
 
-function PendingBubble({ msg, busy, queuedCount }: { msg: Pending; busy: boolean; queuedCount: number }) {
-  const caption = msg.text.replace(/\n?\[(image|file) attached\][^\n]*$/i, '').trim();
+// caption + [image/file attached] path lines parsed out of a user message -> thumbnails + chips.
+function parseAttach(text: string): { caption: string; atts: { image: boolean; name: string }[] } {
+  const re = /\[(image|file) attached\]\s+(\S+)/g;
+  const atts: { image: boolean; name: string }[] = [];
+  let first = text.length, m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    atts.push({ image: m[1] === 'image', name: (m[2].split('/').pop() || m[2]) });
+    first = Math.min(first, m.index);
+  }
+  const caption = atts.length ? text.slice(0, first).replace(/\n+$/, '').trim() : text;
+  return { caption, atts };
+}
+
+function UserContent({ text, onImage, dim }: { text: string; onImage: (src: string) => void; dim?: boolean }) {
+  const { caption, atts } = parseAttach(text);
+  return (
+    <>
+      {caption && <div style={{ fontFamily: C.mono, fontSize: 13.5, lineHeight: 1.5, color: dim ? 'rgba(215,247,226,.78)' : C.userInk, whiteSpace: 'pre-wrap', fontStyle: dim ? 'italic' : 'normal' }}>{caption}</div>}
+      {atts.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: caption ? 6 : 0 }}>
+          {atts.map((a, i) => {
+            const url = `/api/hq/uploads/${encodeURIComponent(a.name)}`;
+            const label = a.name.replace(/^[0-9a-f]{8}-/, '');
+            return a.image
+              ? <img key={i} src={url} alt={label} title={label} onClick={() => onImage(url)}
+                  style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 8, border: `1px solid ${C.userLine}`, cursor: 'zoom-in', display: 'block' }} />
+              : <a key={i} href={url} target="_blank" rel="noreferrer"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: C.raised, border: `1px solid ${C.line2}`, borderRadius: 8, padding: '6px 9px', textDecoration: 'none', color: C.ink, fontFamily: C.mono, fontSize: 11 }}>📄 {label}</a>;
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
+function PendingBubble({ msg, busy, queuedCount, onImage }: { msg: Pending; busy: boolean; queuedCount: number; onImage: (src: string) => void }) {
   // delivered + agent busy = QUEUED in Claude Code's input (runs when the agent finishes)
   const queued = msg.status === 'delivered' && busy;
   const view = msg.status === 'failed' ? 'failed' : queued ? 'queued' : msg.status; // sending | delivered | queued | failed
@@ -155,8 +197,7 @@ function PendingBubble({ msg, busy, queuedCount }: { msg: Pending; busy: boolean
         background: view === 'queued' ? 'rgba(183,155,255,.06)' : C.userBg,
         opacity: view === 'sending' ? 0.72 : view === 'queued' ? 0.92 : 1,
       }}>
-        {msg.attachment && <div style={{ fontFamily: C.mono, fontSize: 11.5, color: C.blue, marginBottom: caption ? 5 : 0 }}>📎 {msg.attachment}</div>}
-        {caption && <div style={{ fontFamily: C.mono, fontSize: 13.5, lineHeight: 1.5, color: view === 'queued' ? 'rgba(215,247,226,.78)' : C.userInk, whiteSpace: 'pre-wrap', fontStyle: view === 'queued' ? 'italic' : 'normal' }}>{caption}</div>}
+        <UserContent text={msg.text} onImage={onImage} dim={queued} />
         <span title={view} style={{ position: 'absolute', right: 8, bottom: -7, fontSize: 9, fontFamily: C.mono, color: badge.color, background: C.bg, padding: '0 4px', borderRadius: 4 }}>{badge.ch}</span>
       </div>
       {queued && <span style={{ fontSize: 9, color: C.faint, fontFamily: C.mono, paddingRight: 4 }}>will run when the agent finishes its turn</span>}
@@ -164,10 +205,21 @@ function PendingBubble({ msg, busy, queuedCount }: { msg: Pending; busy: boolean
   );
 }
 
-function Turn({ turn }: { turn: ConsoleTurn }) {
+function Turn({ turn, onImage }: { turn: ConsoleTurn; onImage: (src: string) => void }) {
   const isUser = turn.type === 'user' && turn.blocks.some((b) => b.kind === 'text');
+  if (isUser) {
+    // a user message: render its text via UserContent so [image/file attached] -> thumbnails
+    const text = turn.blocks.filter((b) => b.kind === 'text').map((b) => (b as { text: string }).text).join('\n');
+    return (
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <div style={{ maxWidth: '88%', minWidth: 0, border: `1px solid ${C.userLine}`, borderRadius: 14, borderBottomRightRadius: 5, padding: '11px 13px', background: C.userBg, wordBreak: 'break-word' }}>
+          <UserContent text={text} onImage={onImage} />
+        </div>
+      </div>
+    );
+  }
   return (
-    <div style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
+    <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
       <div style={{ maxWidth: '88%', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
         {turn.blocks.map((b, i) => <Block key={i} block={b} isUser={isUser} />)}
       </div>

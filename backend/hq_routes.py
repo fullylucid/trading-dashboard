@@ -15,7 +15,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 try:
@@ -269,8 +269,13 @@ async def head_input(name: str, request: Request) -> Dict[str, Any]:
         body = await request.json()
     except Exception:  # noqa: BLE001
         body = {}
+    # text + optional pre-uploaded attachments (folded in as [image/file attached] path lines)
+    attachments = (body or {}).get("attachments") or []
     try:
-        text = hq_console.clean_input_text((body or {}).get("text"))
+        if attachments:
+            text = hq_console.build_message((body or {}).get("text") or "", attachments)
+        else:
+            text = hq_console.clean_input_text((body or {}).get("text"))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -290,23 +295,20 @@ async def head_input(name: str, request: Request) -> Dict[str, Any]:
         pass
     logger.info("hq console input by=%s head=%s pane=%s len=%d id=%s", by, name, pane, len(text), jid)
     r.rpush(hq_console.INPUT_QUEUE, json.dumps(job))
-    return {"ok": True, "id": jid, "head": name, "pane": pane}
+    return {"ok": True, "id": jid, "head": name, "pane": pane, "text": text}
 
 
 @hq_router.post("/head/{name}/upload")
-async def head_upload(name: str, request: Request, file: UploadFile = File(...), caption: str = Form("")) -> Dict[str, Any]:
-    """Photo / document upload to a head (F4). Saves the file to the shared uploads dir, then
-    delivers it by send-keys'ing a message that references the file's absolute host path (with a
-    clear ``[image attached]`` / ``[file attached]`` signal) so the head's Claude Code Reads it.
-    Returns the input job ``id`` so the UI can track delivery. Same gate as /input (Access SSO)."""
+async def head_upload(name: str, file: UploadFile = File(...)) -> Dict[str, Any]:
+    """Save a photo/document to the shared uploads dir — SAVE ONLY, no delivery (attach-then-send).
+    The file sits as a pending attachment in the composer; delivery happens on /input, which folds
+    the returned `host_path` into the message. Returns {name, host_path, image, size}. Access SSO."""
     import os as _os
-    import time
     import uuid
 
     import hq_console
 
-    pane = _head_pane(name)
-    if not hq_console.valid_pane(pane):
+    if not _head_pane(name):
         raise HTTPException(status_code=409, detail=f"head '{name}' is not drivable (no tmux pane)")
     data = await file.read()
     if not data:
@@ -314,8 +316,8 @@ async def head_upload(name: str, request: Request, file: UploadFile = File(...),
     if len(data) > hq_console.UPLOAD_MAX_BYTES:
         raise HTTPException(status_code=413, detail="file too large")
 
-    jid = uuid.uuid4().hex[:12]
-    fname = hq_console.safe_upload_name(file.filename or "file", jid)
+    fid = uuid.uuid4().hex[:12]
+    fname = hq_console.safe_upload_name(file.filename or "file", fid)
     try:
         _os.makedirs(hq_console.UPLOADS_DIR, exist_ok=True)
         with open(_os.path.join(hq_console.UPLOADS_DIR, fname), "wb") as f:
@@ -323,24 +325,28 @@ async def head_upload(name: str, request: Request, file: UploadFile = File(...),
     except OSError as e:
         raise HTTPException(status_code=500, detail=f"could not save upload: {e}")
 
-    host_path = _os.path.join(hq_console.UPLOADS_DIR_HOST, fname)
-    image = hq_console.is_image(fname)
-    text = hq_console.upload_message(caption, host_path, image)
-    by = request.headers.get("Cf-Access-Authenticated-User-Email") or "local"
-    job = hq_console.input_job(name, pane, text, by, time.time(), jid)
+    logger.info("hq console upload-saved head=%s file=%s bytes=%d", name, fname, len(data))
+    return {"ok": True, "name": fname, "host_path": _os.path.join(hq_console.UPLOADS_DIR_HOST, fname),
+            "image": hq_console.is_image(fname), "size": len(data)}
 
-    r = _r()
-    if r is None:
-        raise HTTPException(status_code=503, detail="queue unavailable")
-    audit = {"id": jid, "ts": job["ts"], "by": by, "head": name, "pane": pane, "text": text, "upload": fname}
-    try:
-        r.rpush(hq_console.INPUT_AUDIT, json.dumps(audit))
-        r.ltrim(hq_console.INPUT_AUDIT, -hq_console.INPUT_AUDIT_MAX, -1)
-    except Exception:  # noqa: BLE001
-        pass
-    logger.info("hq console upload by=%s head=%s file=%s image=%s id=%s", by, name, fname, image, jid)
-    r.rpush(hq_console.INPUT_QUEUE, json.dumps(job))
-    return {"ok": True, "id": jid, "head": name, "filename": fname, "host_path": host_path, "image": image, "text": text}
+
+@hq_router.get("/uploads/{name}")
+def serve_upload(name: str):
+    """Serve a saved upload by name for the chat thumbnail/lightbox — from the uploads dir ONLY,
+    path-safe (basename, no traversal). Behind Access SSO; private short cache."""
+    import os as _os
+
+    import hq_console
+    from fastapi.responses import FileResponse
+
+    safe = _os.path.basename(name)
+    if not safe or safe != name or safe.startswith("."):
+        raise HTTPException(status_code=400, detail="bad name")
+    path = _os.path.join(hq_console.UPLOADS_DIR, safe)
+    real = _os.path.realpath(path)
+    if not real.startswith(_os.path.realpath(hq_console.UPLOADS_DIR) + _os.sep) or not _os.path.isfile(real):
+        raise HTTPException(status_code=404, detail="not found")
+    return FileResponse(real, headers={"Cache-Control": "private, max-age=3600"})
 
 
 @hq_router.get("/input/{jid}/status")
