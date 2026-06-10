@@ -160,7 +160,7 @@ function UserContent({ text, onImage, dim }: { text: string; onImage: (src: stri
   const { caption, atts } = parseAttach(text);
   return (
     <>
-      {caption && <div style={{ fontFamily: C.mono, fontSize: 13.5, lineHeight: 1.5, color: dim ? 'rgba(215,247,226,.78)' : C.userInk, whiteSpace: 'pre-wrap', fontStyle: dim ? 'italic' : 'normal' }}>{caption}</div>}
+      {caption && <div style={{ fontFamily: C.userFont, fontSize: 15, lineHeight: 1.45, color: C.cerulean, whiteSpace: 'pre-wrap', fontStyle: dim ? 'italic' : 'normal', opacity: dim ? 0.8 : 1 }}>{caption}</div>}
       {atts.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: caption ? 6 : 0 }}>
           {atts.map((a, i) => {
