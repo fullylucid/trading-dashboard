@@ -126,11 +126,35 @@ def test_relay_valid_pane_matches_backend():
 
 
 def test_relay_handle_rejects_dead_or_bad_pane(monkeypatch):
-    sent = []
+    sent, results = [], []
     monkeypatch.setattr(relay, "send_to_pane", lambda pane, text: sent.append((pane, text)) or True)
+    monkeypatch.setattr(relay, "write_result", lambda jid, ok: results.append((jid, ok)))
     live = {"%4"}
-    relay.handle({"pane": "%4", "text": "ok"}, live)          # valid + live -> sent
-    relay.handle({"pane": "%9", "text": "x"}, live)           # not in live session -> dropped
-    relay.handle({"pane": "bad", "text": "x"}, live)          # bad form -> dropped
-    relay.handle({"pane": "%4", "text": ""}, live)            # empty text -> dropped
+    relay.handle({"id": "j1", "pane": "%4", "text": "ok"}, live)     # valid + live -> sent + ok
+    relay.handle({"id": "j2", "pane": "%9", "text": "x"}, live)      # not in live -> dropped + failed
+    relay.handle({"id": "j3", "pane": "bad", "text": "x"}, live)     # bad form -> dropped + failed
+    relay.handle({"id": "j4", "pane": "%4", "text": ""}, live)       # empty -> dropped + failed
     assert sent == [("%4", "ok")]
+    assert results == [("j1", True), ("j2", False), ("j3", False), ("j4", False)]
+
+
+# --------------------------------------------------------------------------- upload (F4)
+@pytest.mark.parametrize("fn,expected", [
+    ("a.png", True), ("b.JPG", True), ("c.heic", True), ("d.pdf", False), ("e.txt", False), ("f", False),
+])
+def test_is_image(fn, expected):
+    assert hq_console.is_image(fn) == expected
+
+
+def test_safe_upload_name_sanitizes_and_prefixes():
+    n = hq_console.safe_upload_name("../../etc/pa ss wд.png", "abcdef123456")
+    assert n.startswith("abcdef12-") and "/" not in n and ".." not in n
+    assert n.endswith(".png")
+    assert hq_console.safe_upload_name("", "xyz") == "xyz-file"
+
+
+def test_upload_message_format():
+    p = "/home/user/hydra-worktrees/.hq-uploads/x.png"
+    assert hq_console.upload_message("why is this red?", p, True) == f"why is this red?\n[image attached] {p}"
+    assert hq_console.upload_message("", p, True) == f"[image attached] {p}"           # no caption -> just the signal
+    assert hq_console.upload_message("", "/d/doc.pdf", False) == "[file attached] /d/doc.pdf"

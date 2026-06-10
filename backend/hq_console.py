@@ -31,6 +31,15 @@ INPUT_AUDIT_MAX = 500
 INPUT_TEXT_MAX = 10000
 _PANE_RE = re.compile(r"^%\d+$")  # tmux pane id form — the relay only ever targets one of these
 
+# Photo / document upload (F4). The backend saves the file to a shared uploads dir (bind-mounted),
+# then sends the head a message referencing the file's ABSOLUTE HOST path so its Claude Code Reads
+# it. UPLOADS_DIR is where the backend writes (container path); UPLOADS_DIR_HOST is the path the
+# head sees (referenced in the message) — same dir, two mount views (cf. FINTUBE_VISION_DIR).
+UPLOADS_DIR = os.getenv("HQ_UPLOADS_DIR", "/home/user/hydra-worktrees/.hq-uploads")
+UPLOADS_DIR_HOST = os.getenv("HQ_UPLOADS_DIR_HOST", "/home/user/hydra-worktrees/.hq-uploads")
+UPLOAD_MAX_BYTES = 25 * 1024 * 1024
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".heic", ".tiff"}
+
 _SECRET_PATTERNS = [
     re.compile(r"\b(sk|pk|rk)-[A-Za-z0-9_\-]{12,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}"),
@@ -194,3 +203,25 @@ def input_job(head: str, pane: str, text: str, by: str, now: float, jid: str) ->
     """The command the host relay consumes. `pane` is a tmux pane id (validated) — never a
     shell string; the relay only ever runs `tmux send-keys -t <pane>`, nothing interpolated."""
     return {"id": jid, "head": head, "pane": pane, "text": text, "by": by, "ts": int(now)}
+
+
+def is_image(filename: str) -> bool:
+    return os.path.splitext(filename)[1].lower() in _IMAGE_EXTS
+
+
+def safe_upload_name(filename: str, jid: str) -> str:
+    """A collision-free, path-safe upload filename: <jid>-<sanitized basename>. Strips any
+    directory components and unusual chars so a malicious name can't escape the uploads dir."""
+    base = os.path.basename(filename or "file")
+    base = re.sub(r"[^A-Za-z0-9._-]", "_", base).strip("._") or "file"
+    return f"{jid[:8]}-{base[:80]}"
+
+
+def upload_message(caption: str, host_path: str, image: bool) -> str:
+    """The message send-keys'd to the head: the user's caption (if any) then a clear attachment
+    signal + the absolute host path, so the head reliably Reads the file regardless of caption.
+    Verified delivery format (Schyler, 2026-06-09)."""
+    tag = "[image attached]" if image else "[file attached]"
+    line = f"{tag} {host_path}"
+    cap = (caption or "").strip()
+    return f"{cap}\n{line}" if cap else line

@@ -35,9 +35,12 @@ function filterCmds(cmds: SlashCommand[], q: string): SlashCommand[] {
   return cmds.map((c) => ({ c, s: score(c, q) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).map((x) => x.c);
 }
 
-export default function Composer({ name, onSent }: { name: string; onSent?: () => void }) {
+type SentMsg = { id: string; text: string; attachment?: string };
+
+export default function Composer({ name, onSent }: { name: string; onSent?: (msg: SentMsg) => void }) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
   const [commands, setCommands] = useState<SlashCommand[]>(CACHE ?? []);
   const [hi, setHi] = useState(0);
@@ -45,6 +48,7 @@ export default function Composer({ name, onSent }: { name: string; onSent?: () =
   const [browse, setBrowse] = useState(false);
   const [browseQ, setBrowseQ] = useState('');
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (CACHE) return;
@@ -85,9 +89,25 @@ export default function Composer({ name, onSent }: { name: string; onSent?: () =
       const r = await fetch(`/api/hq/head/${encodeURIComponent(name)}/input`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }),
       });
-      if (r.ok) { setDraft(''); setDismissed(false); onSent?.(); }
+      if (r.ok) { const d = await r.json().catch(() => ({})); setDraft(''); setDismissed(false); onSent?.({ id: d.id, text }); }
       else { const d = await r.json().catch(() => ({})); setSendErr(d.detail || `send failed (${r.status})`); }
     } catch { setSendErr("can't reach the console backend"); } finally { setSending(false); }
+  };
+
+  const attach = async (files: FileList | null) => {
+    const file = files?.[0];
+    if (!file || uploading) return;
+    setUploading(true); setSendErr(null);
+    const caption = draft.trim();
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('caption', caption);
+      const r = await fetch(`/api/hq/head/${encodeURIComponent(name)}/upload`, { method: 'POST', body: fd });
+      if (r.ok) { const d = await r.json(); setDraft(''); onSent?.({ id: d.id, text: d.text, attachment: d.filename }); }
+      else { const d = await r.json().catch(() => ({})); setSendErr(d.detail || `upload failed (${r.status})`); }
+    } catch { setSendErr("upload failed — can't reach the backend"); }
+    finally { setUploading(false); if (fileRef.current) fileRef.current.value = ''; }
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -140,7 +160,10 @@ export default function Composer({ name, onSent }: { name: string; onSent?: () =
         </Popup>
       )}
 
+      <input ref={fileRef} type="file" accept="image/*,.pdf,.txt,.md,.csv,.json,.log,.py,.ts,.tsx,.js" style={{ display: 'none' }} onChange={(e) => attach(e.target.files)} />
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, background: '#060a06', border: `1px solid ${C.line2}`, borderRadius: 14, padding: '8px 10px' }}>
+        <button type="button" title="attach photo or document" onClick={() => fileRef.current?.click()} disabled={uploading}
+          style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${C.line}`, background: C.raised, color: uploading ? C.green : C.greenDim, cursor: uploading ? 'wait' : 'pointer', fontSize: 15, flex: '0 0 auto' }}>{uploading ? '…' : '📎'}</button>
         <button type="button" title="browse slash commands" onClick={() => { setBrowse((v) => !v); setBrowseQ(''); }}
           style={{ width: 34, height: 34, borderRadius: 9, border: `1px solid ${browse ? C.green : C.line}`, background: C.raised, color: browse ? C.green : C.greenDim, cursor: 'pointer', fontFamily: C.mono, fontSize: 16, flex: '0 0 auto' }}>/</button>
         <textarea

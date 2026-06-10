@@ -31,6 +31,8 @@ from typing import Any, Dict, Optional
 
 REDIS_CONTAINER = os.getenv("HQ_REDIS_CONTAINER", "tdbox-redis")
 INPUT_QUEUE = "hq:input:queue"
+RESULT_PREFIX = "hq:input:result:"   # per-job delivery result (for the console's delivery badge)
+RESULT_TTL_S = 300
 TMUX_SESSION = os.getenv("HQ_TMUX_SESSION", "hydra")
 BLPOP_TIMEOUT = 5
 _PANE_RE = re.compile(r"^%\d+$")
@@ -93,18 +95,36 @@ def blpop_job() -> Optional[Dict[str, Any]]:
     return None
 
 
+def write_result(jid: Optional[str], ok: bool) -> None:
+    """Record a job's delivery result so the console can flip its per-message badge to
+    delivered ✓ / failed ✗ (instead of a silently-stuck 'sending')."""
+    if not jid:
+        return
+    payload = json.dumps({"ok": ok, "ts": int(time.time())})
+    try:
+        subprocess.run(["docker", "exec", REDIS_CONTAINER, "redis-cli", "SETEX",
+                        RESULT_PREFIX + str(jid), str(RESULT_TTL_S), payload],
+                       capture_output=True, text=True, timeout=10)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
 def handle(job: Dict[str, Any], live: set) -> None:
-    pane, text = job.get("pane"), job.get("text")
+    pane, text, jid = job.get("pane"), job.get("text"), job.get("id")
     if not valid_pane(pane):
         print(f"[hq-input-relay] reject bad pane: {pane!r}", file=sys.stderr)
+        write_result(jid, False)
         return
     if pane not in live:
         print(f"[hq-input-relay] pane {pane} not in '{TMUX_SESSION}' session — dropping", file=sys.stderr)
+        write_result(jid, False)
         return
     if not isinstance(text, str) or not text:
         print("[hq-input-relay] reject empty text", file=sys.stderr)
+        write_result(jid, False)
         return
     ok = send_to_pane(pane, text)
+    write_result(jid, ok)
     print(f"[hq-input-relay] {'sent' if ok else 'FAILED'} head={job.get('head')} pane={pane} "
           f"by={job.get('by')} id={job.get('id')} len={len(text)}")
 

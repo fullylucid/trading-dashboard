@@ -15,7 +15,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 try:
@@ -286,6 +286,70 @@ async def head_input(name: str, request: Request) -> Dict[str, Any]:
     logger.info("hq console input by=%s head=%s pane=%s len=%d id=%s", by, name, pane, len(text), jid)
     r.rpush(hq_console.INPUT_QUEUE, json.dumps(job))
     return {"ok": True, "id": jid, "head": name, "pane": pane}
+
+
+@hq_router.post("/head/{name}/upload")
+async def head_upload(name: str, request: Request, file: UploadFile = File(...), caption: str = Form("")) -> Dict[str, Any]:
+    """Photo / document upload to a head (F4). Saves the file to the shared uploads dir, then
+    delivers it by send-keys'ing a message that references the file's absolute host path (with a
+    clear ``[image attached]`` / ``[file attached]`` signal) so the head's Claude Code Reads it.
+    Returns the input job ``id`` so the UI can track delivery. Same gate as /input (Access SSO)."""
+    import os as _os
+    import time
+    import uuid
+
+    import hq_console
+
+    pane = _head_pane(name)
+    if not hq_console.valid_pane(pane):
+        raise HTTPException(status_code=409, detail=f"head '{name}' is not drivable (no tmux pane)")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+    if len(data) > hq_console.UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="file too large")
+
+    jid = uuid.uuid4().hex[:12]
+    fname = hq_console.safe_upload_name(file.filename or "file", jid)
+    try:
+        _os.makedirs(hq_console.UPLOADS_DIR, exist_ok=True)
+        with open(_os.path.join(hq_console.UPLOADS_DIR, fname), "wb") as f:
+            f.write(data)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"could not save upload: {e}")
+
+    host_path = _os.path.join(hq_console.UPLOADS_DIR_HOST, fname)
+    image = hq_console.is_image(fname)
+    text = hq_console.upload_message(caption, host_path, image)
+    by = request.headers.get("Cf-Access-Authenticated-User-Email") or "local"
+    job = hq_console.input_job(name, pane, text, by, time.time(), jid)
+
+    r = _r()
+    if r is None:
+        raise HTTPException(status_code=503, detail="queue unavailable")
+    audit = {"id": jid, "ts": job["ts"], "by": by, "head": name, "pane": pane, "text": text, "upload": fname}
+    try:
+        r.rpush(hq_console.INPUT_AUDIT, json.dumps(audit))
+        r.ltrim(hq_console.INPUT_AUDIT, -hq_console.INPUT_AUDIT_MAX, -1)
+    except Exception:  # noqa: BLE001
+        pass
+    logger.info("hq console upload by=%s head=%s file=%s image=%s id=%s", by, name, fname, image, jid)
+    r.rpush(hq_console.INPUT_QUEUE, json.dumps(job))
+    return {"ok": True, "id": jid, "head": name, "filename": fname, "host_path": host_path, "image": image, "text": text}
+
+
+@hq_router.get("/input/{jid}/status")
+def input_status(jid: str) -> Dict[str, Any]:
+    """Delivery status of a sent message/upload (F4 + instant-echo). The host relay writes a
+    per-job result (``hq:input:result:<id>``) right after send-keys; until then it's pending."""
+    raw = (_r().get(f"hq:input:result:{jid}") if _r() is not None else None)
+    if not raw:
+        return {"status": "pending"}
+    try:
+        d = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return {"status": "pending"}
+    return {"status": "delivered" if d.get("ok") else "failed", "ts": d.get("ts")}
 
 
 @hq_router.get("/room/{room_id}/roadmap")
