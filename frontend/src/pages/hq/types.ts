@@ -113,6 +113,7 @@ export type ConsoleTurn = {
 export type TranscriptResponse = {
   available: boolean;
   reason?: string;
+  status?: Status | null;   // head busy-state — the console derives the "queued" message state
   file?: string | null;
   rotated?: boolean;
   cursor?: number;
