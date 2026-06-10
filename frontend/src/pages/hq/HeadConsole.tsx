@@ -4,6 +4,9 @@ import { C } from './render/tokens';
 import Composer from './Composer';
 import RichMarkdown, { CodeBlock, DiffBlock, looksLikeDiff } from './render/RichMarkdown';
 import type { ConsoleBlock, ConsoleTurn, MenuPrompt, TranscriptResponse } from './types';
+import { useSideTheme } from './ThemeProvider';
+import { fontStack } from './fonts';
+import type { SideTheme } from './theme';
 
 // HeadConsole — one head's full console: the live-tailed conversation (Slice 1) + the composer
 // (Slice 2). Fills its parent (height:100%), so it works both as a standalone page (ConsoleView)
@@ -17,7 +20,11 @@ const IDLE_GRACE_MS = 4000;
 
 type Pending = { id: string; text: string; status: 'sending' | 'delivered' | 'failed' };
 
-export default function HeadConsole({ name, active = true }: { name: string; active?: boolean }) {
+export default function HeadConsole({ name, room, active = true }: { name: string; room?: string; active?: boolean }) {
+  // resolved per-side theming (T1): `you` styles Schyler's messages, `agents` the head's.
+  // Defaults reproduce today's look; the palette (T3) lets him change either side per project/head.
+  const you = useSideTheme(room, name, 'you');
+  const agents = useSideTheme(room, name, 'agents');
   const [turns, setTurns] = useState<ConsoleTurn[]>([]);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
@@ -144,8 +151,8 @@ export default function HeadConsole({ name, active = true }: { name: string; act
         style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10, padding: '4px 2px' }}
       >
         {turns.length === 0 && pending.length === 0 && <div style={{ color: DIM, fontSize: 12, textAlign: 'center', marginTop: 20 }}>loading conversation…</div>}
-        {turns.map((t, i) => <Turn key={t.uuid ?? i} turn={t} onImage={setLightbox} />)}
-        {pending.map((p) => <PendingBubble key={p.id} msg={p} busy={busy} queuedCount={queuedCount} onImage={setLightbox} />)}
+        {turns.map((t, i) => <Turn key={t.uuid ?? i} turn={t} onImage={setLightbox} you={you} agents={agents} />)}
+        {pending.map((p) => <PendingBubble key={p.id} msg={p} busy={busy} queuedCount={queuedCount} onImage={setLightbox} you={you} />)}
       </div>
 
       {prompt && (
@@ -183,11 +190,11 @@ function parseAttach(text: string): { caption: string; atts: { image: boolean; n
   return { caption, atts };
 }
 
-function UserContent({ text, onImage, dim }: { text: string; onImage: (src: string) => void; dim?: boolean }) {
+function UserContent({ text, onImage, dim, theme }: { text: string; onImage: (src: string) => void; dim?: boolean; theme: SideTheme }) {
   const { caption, atts } = parseAttach(text);
   return (
     <>
-      {caption && <div style={{ fontFamily: C.userFont, fontSize: 15, lineHeight: 1.45, color: C.cerulean, whiteSpace: 'pre-wrap', fontStyle: dim ? 'italic' : 'normal', opacity: dim ? 0.8 : 1 }}>{caption}</div>}
+      {caption && <div style={{ fontFamily: fontStack(theme.font), fontSize: 15, lineHeight: 1.45, color: theme.text, whiteSpace: 'pre-wrap', fontStyle: dim ? 'italic' : 'normal', opacity: dim ? 0.8 : 1 }}>{caption}</div>}
       {atts.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: caption ? 6 : 0 }}>
           {atts.map((a, i) => {
@@ -205,7 +212,7 @@ function UserContent({ text, onImage, dim }: { text: string; onImage: (src: stri
   );
 }
 
-function PendingBubble({ msg, busy, queuedCount, onImage }: { msg: Pending; busy: boolean; queuedCount: number; onImage: (src: string) => void }) {
+function PendingBubble({ msg, busy, queuedCount, onImage, you }: { msg: Pending; busy: boolean; queuedCount: number; onImage: (src: string) => void; you: SideTheme }) {
   // delivered + agent busy = QUEUED in Claude Code's input (runs when the agent finishes)
   const queued = msg.status === 'delivered' && busy;
   const view = msg.status === 'failed' ? 'failed' : queued ? 'queued' : msg.status; // sending | delivered | queued | failed
@@ -224,7 +231,7 @@ function PendingBubble({ msg, busy, queuedCount, onImage }: { msg: Pending; busy
         background: view === 'queued' ? 'rgba(183,155,255,.06)' : C.userBg,
         opacity: view === 'sending' ? 0.72 : view === 'queued' ? 0.92 : 1,
       }}>
-        <UserContent text={msg.text} onImage={onImage} dim={queued} />
+        <UserContent text={msg.text} onImage={onImage} dim={queued} theme={you} />
         <span title={view} style={{ position: 'absolute', right: 8, bottom: -7, fontSize: 9, fontFamily: C.mono, color: badge.color, background: C.bg, padding: '0 4px', borderRadius: 4 }}>{badge.ch}</span>
       </div>
       {queued && <span style={{ fontSize: 9, color: C.faint, fontFamily: C.mono, paddingRight: 4 }}>will run when the agent finishes its turn</span>}
@@ -298,7 +305,7 @@ function MenuCard({ name, prompt }: { name: string; prompt: MenuPrompt }) {
   );
 }
 
-function Turn({ turn, onImage }: { turn: ConsoleTurn; onImage: (src: string) => void }) {
+function Turn({ turn, onImage, you, agents }: { turn: ConsoleTurn; onImage: (src: string) => void; you: SideTheme; agents: SideTheme }) {
   const isUser = turn.type === 'user' && turn.blocks.some((b) => b.kind === 'text');
   if (isUser) {
     // a user message: render its text via UserContent so [image/file attached] -> thumbnails
@@ -306,7 +313,7 @@ function Turn({ turn, onImage }: { turn: ConsoleTurn; onImage: (src: string) => 
     return (
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <div style={{ maxWidth: '88%', minWidth: 0, border: `1px solid ${C.userLine}`, borderRadius: 14, borderBottomRightRadius: 5, padding: '11px 13px', background: C.userBg, wordBreak: 'break-word' }}>
-          <UserContent text={text} onImage={onImage} />
+          <UserContent text={text} onImage={onImage} theme={you} />
         </div>
       </div>
     );
@@ -314,7 +321,7 @@ function Turn({ turn, onImage }: { turn: ConsoleTurn; onImage: (src: string) => 
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
       <div style={{ maxWidth: '88%', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {turn.blocks.map((b, i) => <Block key={i} block={b} isUser={isUser} />)}
+        {turn.blocks.map((b, i) => <Block key={i} block={b} isUser={isUser} agents={agents} />)}
       </div>
     </div>
   );
@@ -325,7 +332,7 @@ const detailsCard: React.CSSProperties = {
 };
 const summaryStyle: React.CSSProperties = { cursor: 'pointer', listStyle: 'none', padding: '7px 11px', display: 'flex', alignItems: 'center', gap: 8 };
 
-function Block({ block, isUser }: { block: ConsoleBlock; isUser: boolean }) {
+function Block({ block, isUser, agents }: { block: ConsoleBlock; isUser: boolean; agents?: SideTheme }) {
   if (block.kind === 'text') {
     return (
       <div style={{
@@ -335,7 +342,7 @@ function Block({ block, isUser }: { block: ConsoleBlock; isUser: boolean }) {
       }}>
         {isUser
           ? <div style={{ fontFamily: C.mono, fontSize: 13.5, lineHeight: 1.5, color: C.userInk, whiteSpace: 'pre-wrap' }}>{block.text}</div>
-          : <RichMarkdown source={block.text} />}
+          : <RichMarkdown source={block.text} font={agents ? fontStack(agents.font) : undefined} ink={agents?.text} />}
       </div>
     );
   }

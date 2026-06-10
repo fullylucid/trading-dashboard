@@ -713,3 +713,45 @@ def test_external_status(age, expected):
 ])
 def test_role_for(name, workdir, expected):
     assert hq.role_for(name, workdir) == expected
+
+
+# --------------------------------------------------------------------------- #
+# /api/hq/theme  (console theming store, T1) — get passthrough + put validation
+# --------------------------------------------------------------------------- #
+class _RWRedis(_FakeRedis):
+    def set(self, k, v):
+        self.store[k] = v
+        return True
+
+
+_THEME = {"global": {"you": {"font": "medievalsharp", "text": "#007BA7", "hl": "#22ff6a"},
+                       "agents": {"font": "system", "text": "#d7f7e2", "hl": "#22ff6a"}},
+          "projects": {}}
+
+
+def test_get_theme_passthrough(monkeypatch):
+    c = _client(monkeypatch, _RWRedis({"hq:theme": json.dumps(_THEME)}))
+    assert c.get("/api/hq/theme").json() == {"theme": _THEME}
+
+
+def test_get_theme_unset_is_null(monkeypatch):
+    c = _client(monkeypatch, _RWRedis({}))
+    assert c.get("/api/hq/theme").json() == {"theme": None}
+
+
+def test_put_theme_stores_valid(monkeypatch):
+    r = _RWRedis({})
+    c = _client(monkeypatch, r)
+    assert c.post("/api/hq/theme", json=_THEME).json() == {"ok": True}
+    assert json.loads(r.store["hq:theme"]) == _THEME
+
+
+@pytest.mark.parametrize("body", [
+    {"global": {}},                       # missing 'projects'
+    {"projects": {}},                     # missing 'global'
+    {"global": [], "projects": {}},       # 'global' not an object
+    [1, 2, 3],                            # not an object at all
+])
+def test_put_theme_rejects_malformed(monkeypatch, body):
+    c = _client(monkeypatch, _RWRedis({}))
+    assert c.post("/api/hq/theme", json=body).status_code == 400
