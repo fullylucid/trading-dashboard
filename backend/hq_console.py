@@ -23,6 +23,14 @@ DEFAULT_LIMIT = 60          # turns returned on a cold load
 TOOL_INPUT_MAX = 4000       # cap tool_use input / tool_result bodies (UI collapses them)
 TEXT_MAX = 20000            # generous cap on a single text/thinking block
 
+# Console input (Slice 2). The backend (in Docker, no tmux) enqueues a validated command to
+# Redis; the host-side relay (scripts/hq_input_relay.py) runs the actual `tmux send-keys`.
+INPUT_QUEUE = "hq:input:queue"   # rpush jobs here; the relay BLPOPs
+INPUT_AUDIT = "hq:input:audit"   # capped list of every input sent (who/when/head/text)
+INPUT_AUDIT_MAX = 500
+INPUT_TEXT_MAX = 10000
+_PANE_RE = re.compile(r"^%\d+$")  # tmux pane id form — the relay only ever targets one of these
+
 _SECRET_PATTERNS = [
     re.compile(r"\b(sk|pk|rk)-[A-Za-z0-9_\-]{12,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}"),
@@ -162,3 +170,27 @@ def read_turns(
     if after is None and len(turns) > limit:
         turns = turns[-limit:]
     return turns, size
+
+
+# ---------------------------------------------------------------------------- console input
+def clean_input_text(text: Any) -> str:
+    """Validate + normalize composer text. Strips a trailing newline (the relay sends a separate
+    Enter), caps length. Raises ValueError on empty/oversize — the route turns that into a 400."""
+    if not isinstance(text, str):
+        raise ValueError("text must be a string")
+    t = text.rstrip("\n")
+    if not t.strip():
+        raise ValueError("text is empty")
+    if len(t) > INPUT_TEXT_MAX:
+        raise ValueError("text too long")
+    return t
+
+
+def valid_pane(pane: Any) -> bool:
+    return isinstance(pane, str) and bool(_PANE_RE.match(pane))
+
+
+def input_job(head: str, pane: str, text: str, by: str, now: float, jid: str) -> Dict[str, Any]:
+    """The command the host relay consumes. `pane` is a tmux pane id (validated) — never a
+    shell string; the relay only ever runs `tmux send-keys -t <pane>`, nothing interpolated."""
+    return {"id": jid, "head": head, "pane": pane, "text": text, "by": by, "ts": int(now)}

@@ -228,6 +228,85 @@ def head_transcript(
             "cursor": cursor, "turns": turns}
 
 
+def _head_pane(name: str) -> Optional[str]:
+    """Resolve a head name -> its tmux pane id from the fleet snapshot (collector-built)."""
+    fleet = _get_json(_r(), FLEET_KEY)
+    if fleet is None:
+        return None
+    h = next((x for x in fleet.get("heads", []) if x.get("name") == name), None)
+    tmux = (h or {}).get("tmux") or {}
+    return tmux.get("pane")
+
+
+@hq_router.post("/head/{name}/input")
+async def head_input(name: str, request: Request) -> Dict[str, Any]:
+    """Send text to a head's tmux pane (CONSOLE.md Slice 2). Body: ``{"text": "..."}``.
+
+    ⚠️ THE most sensitive endpoint in HQ — sending input to a pane is remote control of the box.
+    It's gated by Cloudflare Access SSO (owner-only) on a localhost-bound backend; there is no
+    public route. The backend (in Docker, no tmux) does NOT execute anything — it validates,
+    AUDITS, and enqueues a job to Redis. A host-side relay runs the actual `tmux send-keys`.
+    Every send is recorded (who/when/head/pane/text) to the audit log + the app log.
+    """
+    import time
+    import uuid
+
+    import hq_console
+
+    pane = _head_pane(name)
+    if not hq_console.valid_pane(pane):
+        raise HTTPException(status_code=409, detail=f"head '{name}' is not drivable (no tmux pane)")
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    try:
+        text = hq_console.clean_input_text((body or {}).get("text"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    by = request.headers.get("Cf-Access-Authenticated-User-Email") or "local"
+    jid = uuid.uuid4().hex[:12]
+    job = hq_console.input_job(name, pane, text, by, time.time(), jid)
+
+    r = _r()
+    if r is None:
+        raise HTTPException(status_code=503, detail="queue unavailable")
+    # audit BEFORE enqueue, so nothing is sent without a record
+    audit = {"id": jid, "ts": job["ts"], "by": by, "head": name, "pane": pane, "text": text}
+    try:
+        r.rpush(hq_console.INPUT_AUDIT, json.dumps(audit))
+        r.ltrim(hq_console.INPUT_AUDIT, -hq_console.INPUT_AUDIT_MAX, -1)
+    except Exception:  # noqa: BLE001
+        pass
+    logger.info("hq console input by=%s head=%s pane=%s len=%d id=%s", by, name, pane, len(text), jid)
+    r.rpush(hq_console.INPUT_QUEUE, json.dumps(job))
+    return {"ok": True, "id": jid, "head": name, "pane": pane}
+
+
+@hq_router.get("/input/audit")
+def input_audit(limit: int = 50) -> Dict[str, Any]:
+    """Recent console inputs (who/when/head/text) — read-only transparency for the operator."""
+    import hq_console
+
+    r = _r()
+    if r is None:
+        return {"available": False, "entries": []}
+    try:
+        raw = r.lrange(hq_console.INPUT_AUDIT, -max(1, min(limit, 500)), -1)
+    except Exception:  # noqa: BLE001
+        return {"available": False, "entries": []}
+    entries = []
+    for x in raw:
+        try:
+            entries.append(json.loads(x))
+        except ValueError:
+            continue
+    entries.reverse()  # newest first
+    return {"available": True, "entries": entries}
+
+
 @hq_router.get("/memory")
 def memory_index() -> Dict[str, Any]:
     """The memory knowledge-base index: one lightweight entry per ``memory/*.md`` (name, title,
