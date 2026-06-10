@@ -1,7 +1,12 @@
-"""Tests for the HQ Console transcript renderer (CONSOLE.md Slice 1) — slug rule, event
-parsing into chat blocks, secret scrubbing, and incremental tail."""
+"""Tests for the HQ Console — transcript renderer (Slice 1) and the input layer (Slice 2):
+slug rule, event parsing, scrubbing, incremental tail, input validation, and the host relay's
+pane/job guards."""
 
+import importlib.util
 import json
+from pathlib import Path
+
+import pytest
 
 import hq_console
 
@@ -68,3 +73,64 @@ def test_read_turns_last_n_and_incremental(tmp_path):
     new_turns, new_cursor = hq_console.read_turns(str(p), after=cursor)
     assert [b["text"] for t in new_turns for b in t["blocks"]] == ["msg 5"]
     assert new_cursor > cursor
+
+
+# --------------------------------------------------------------------------- input (Slice 2)
+def test_clean_input_text_strips_trailing_newline_and_validates():
+    assert hq_console.clean_input_text("hello\n") == "hello"      # trailing \n stripped (relay sends Enter)
+    assert hq_console.clean_input_text("a\nb") == "a\nb"          # internal newlines kept
+    for bad in ["", "   ", "\n\n", 123, None]:
+        with pytest.raises(ValueError):
+            hq_console.clean_input_text(bad)
+    with pytest.raises(ValueError):
+        hq_console.clean_input_text("x" * (hq_console.INPUT_TEXT_MAX + 1))
+
+
+@pytest.mark.parametrize("pane,ok", [
+    ("%12", True), ("%0", True),
+    ("12", False), ("%", False), ("%1a", False), ("$1", False),
+    ("; rm -rf /", False), (None, False), (12, False),
+])
+def test_valid_pane(pane, ok):
+    assert hq_console.valid_pane(pane) is ok
+
+
+def test_input_job_shape():
+    j = hq_console.input_job("charts", "%4", "do the thing", "me@x.com", 1780000000.7, "abc123")
+    assert j == {"id": "abc123", "head": "charts", "pane": "%4", "text": "do the thing",
+                 "by": "me@x.com", "ts": 1780000000}
+
+
+# --------------------------------------------------------------------------- host relay guards
+def _load_relay():
+    path = Path(__file__).resolve().parents[2] / "scripts" / "hq_input_relay.py"
+    spec = importlib.util.spec_from_file_location("hq_input_relay", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+relay = _load_relay()
+
+
+def test_relay_parse_job():
+    assert relay.parse_job('{"pane":"%4","text":"hi"}') == {"pane": "%4", "text": "hi"}
+    assert relay.parse_job("not json") is None
+    assert relay.parse_job("[1,2,3]") is None   # not a dict
+
+
+def test_relay_valid_pane_matches_backend():
+    assert relay.valid_pane("%9") is True
+    assert relay.valid_pane("9") is False
+    assert relay.valid_pane("%9; tmux kill-server") is False
+
+
+def test_relay_handle_rejects_dead_or_bad_pane(monkeypatch):
+    sent = []
+    monkeypatch.setattr(relay, "send_to_pane", lambda pane, text: sent.append((pane, text)) or True)
+    live = {"%4"}
+    relay.handle({"pane": "%4", "text": "ok"}, live)          # valid + live -> sent
+    relay.handle({"pane": "%9", "text": "x"}, live)           # not in live session -> dropped
+    relay.handle({"pane": "bad", "text": "x"}, live)          # bad form -> dropped
+    relay.handle({"pane": "%4", "text": ""}, live)            # empty text -> dropped
+    assert sent == [("%4", "ok")]
