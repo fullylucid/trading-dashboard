@@ -1,8 +1,9 @@
-# Robinhood Agentic Trading — guardrail policy (DRAFT, pending Schyler approval)
+# Robinhood Agentic Trading — guardrail policy
 
-**Status:** evaluation only. The MCP is **not** installed in any config. This doc is the
-gate that must be approved (Schyler — it's his money/risk) before *any* real-money wiring.
-Director: Weaver. Author: charts head. 2026-06-12.
+**Status (2026-06-12):** **Phase 0 APPROVED by Schyler** — the software dry-run / proposal-only
+bridge (no real-money wiring, no MCP installed). **Phases 1+ remain GATED** behind a separate,
+explicit Schyler decision on a funded agentic account. The MCP is **not** installed in any config.
+Director/owner: Weaver. Original draft: charts head. Policy of record (PR #122, merged).
 
 ## What this is
 Robinhood Agentic Trading (launched 2026-05-27) — an MCP at
@@ -39,6 +40,13 @@ equity orders in a dedicated "Agentic" account.
    session. It is **BANNED** from: the orchestration engine, cron/systemd timers, `/loop`,
    any `run_in_background` agent, and any head operating unattended. (Enforce by config scope +
    review, not trust.)
+   - **Physical client isolation (preferred enforcement, Phase 1).** The RH MCP is a standard
+     Streamable HTTP MCP that works in *any* client (Codex CLI, Cursor, Claude Code — verified
+     from RH's own setup docs). Rather than scope it inside our Claude fleet's shared
+     `~/.claude.json` (a leak path into an unattended Claude head), run the one attended
+     execution session in a **separate client (e.g. Codex CLI)** with the MCP in *that* client's
+     config only. Then it is *architecturally impossible* for the trade-exec tool to appear in
+     any Claude Code head — "banned by construction," not by discipline.
 4. **Our software dry-run layer is the default** (substitutes for the missing paper trading):
    the dashboard→trade bridge produces *proposed* orders (against live prices, logged + shown)
    and **does not call the place-order tool** unless explicitly armed for that order.
@@ -66,7 +74,24 @@ equity orders in a dedicated "Agentic" account.
 - Whether read-access auth can be granted **without** enabling write (for a read-only Phase 0
   data feed, separate from execution).
 
-## Recommendation
-Approve **Phase 0 only** now (build the proposal/dry-run bridge — zero real-money risk, real
-product value: it surfaces our analysis as concrete, reviewable trade ideas). Hold Phases 1+
-for an explicit Schyler decision on a funded agentic account.
+## Phase 0 — build spec (APPROVED, Weaver owns)
+The dry-run / proposal-only bridge. Zero real-money risk; no MCP. It is the **first consumer of the
+Signal Web** — the read side that turns our analysis into a concrete, reviewable trade idea.
+
+- **`backend/proposals.py`** (pure, unit-tested): `build_proposal(symbol, signal, account_value, cfg)
+  -> ProposedOrder`. Fuses an upstream per-ticker signal (Quanticus's Signal-Web contract — coordinate
+  the exact shape with Quanticus; until it lands, read `analytics/alerts.py` confluence + `signals.py`)
+  into a structured order: `{symbol, side, qty, notional, order_type, entry, stop, target, rationale[],
+  confidence, dry_run: true, ts}`. Sizing reuses `analytics/position.py` (ATR stop + Kelly/risk-%),
+  bounded by the policy's per-trade cap (2–3% of account) + allow/deny list. **Never** calls any
+  place-order tool — `dry_run` is structurally always true in Phase 0.
+- **Endpoint** `backend/proposal_routes.py` — `GET /api/proposals` (recent), `POST /api/proposals/{sym}`
+  (generate one from current analysis). Read-only; emits + logs proposals, never executes.
+- **Log** — append-only proposal journal (Redis `proposals:journal` + optional file) so we can review
+  proposal quality over time (the "run it for a while" validation before any Phase 1 decision).
+- **Frontend** (follow-up slice) — a proposals panel: the proposed order, its rationale (which signals
+  fired), and an explicit *disabled* "arm" affordance (greyed, Phase 1+).
+- **Tests** — `backend/tests/test_proposals.py`: sizing within caps, allow/deny enforced, dry_run always
+  true, rationale captures the contributing signals.
+
+Hold Phases 1+ for an explicit Schyler decision on a funded agentic account.
