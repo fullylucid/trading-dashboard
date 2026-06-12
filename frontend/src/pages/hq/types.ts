@@ -1,7 +1,7 @@
 // Shared types for the Hydra HQ 🛰️ views (overview + room detail).
 
 export type Status = 'working' | 'idle' | 'waiting-input' | 'offline' | 'dormant';
-export type Role = 'conductor' | 'hq' | 'head';
+export type Role = 'conductor' | 'hq' | 'head' | 'lead' | 'director';
 
 export type Head = {
   name: string;

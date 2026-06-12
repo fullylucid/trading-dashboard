@@ -42,9 +42,12 @@ export default function ConsoleDeck() {
   const heads: Head[] = fleet?.heads ?? [];
   // default the project once categories arrive
   const selected = project || categories[0]?.id || '';
+  // Director/lead first (the project's owner loads first when you open the deck), then alphabetical.
+  // The collector already ranks the room this way; honour it here instead of flat alpha.
+  const roleRank = (h: Head) => (h.role === 'director' ? 0 : h.role === 'lead' ? 1 : 2);
   const projectHeads = heads
     .filter((h) => (h.category ?? h.room) === selected && h.source !== 'bus')
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => roleRank(a) - roleRank(b) || a.name.localeCompare(b.name));
 
   const changeProject = (id: string) => {
     setProject(id);
