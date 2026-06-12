@@ -49,6 +49,7 @@ import {
 import MtfDashboard from './MtfDashboard';
 import AlertsPanel from './AlertsPanel';
 import ScreenerPanel from './ScreenerPanel';
+import CopilotPanel from './CopilotPanel';
 
 // Server-computed layers from /api/chart/{symbol}/full (re-homed onto KLineChart).
 const LAYER_BUILDERS: Record<
@@ -217,6 +218,7 @@ const KLineChartView: React.FC<Props> = ({
   const [showMtf, setShowMtf] = useState(false);
   const [showAlerts, setShowAlerts] = useState(false);
   const [showScreener, setShowScreener] = useState(false);
+  const [showCopilot, setShowCopilot] = useState(false);
   // Volume Profile: POC/VA lines (reliable render) + a DOM histogram overlay.
   const [showVP, setShowVP] = useState(false);
   const [vpProfile, setVpProfile] = useState<VolumeProfile | null>(null);
@@ -658,6 +660,17 @@ const KLineChartView: React.FC<Props> = ({
     setActiveTool(null);
   };
 
+  // What's currently on the chart — passed to the AI copilot as context.
+  const activeIndicators = [
+    ...ALL_INDICATORS.filter((n) => enabled[n]),
+    ...LAYER_NAMES.filter((n) => layers[n]),
+    ...(showVP ? ['Volume Profile'] : []),
+    ...(showVwap ? [`VWAP${vwapAnchor ? ' (anchored)' : ''}`] : []),
+    ...(showKeyLevels ? ['Key Levels'] : []),
+    ...(showSessions && isIntraday ? ['Sessions'] : []),
+    ...customSpecs.filter((s) => !s.error).map((s) => s.label),
+  ];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {/* Timeframe selector */}
@@ -720,6 +733,9 @@ const KLineChartView: React.FC<Props> = ({
         <button type="button" onClick={() => setShowScreener((v) => !v)} style={btnStyle(showScreener)}>
           Screen
         </button>
+        <button type="button" onClick={() => setShowCopilot((v) => !v)} style={btnStyle(showCopilot)}>
+          🤖 Copilot
+        </button>
         <button type="button" onClick={() => setShowVP((v) => !v)} style={btnStyle(showVP)}>
           VolProfile
         </button>
@@ -778,6 +794,9 @@ const KLineChartView: React.FC<Props> = ({
 
       {/* Multi-symbol screener (price condition across a watchlist) */}
       {showScreener && <ScreenerPanel symbol={symbol} />}
+
+      {/* AI charting copilot — explains/advises on the current chart */}
+      {showCopilot && <CopilotPanel symbol={symbol} indicators={activeIndicators} />}
 
       {/* Drawing tools */}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>

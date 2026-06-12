@@ -15,7 +15,7 @@ const client: AxiosInstance = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-export type ExplainKind = 'alert' | 'regime' | 'sector' | 'generic';
+export type ExplainKind = 'alert' | 'regime' | 'sector' | 'generic' | 'chart';
 
 /** Response from POST /api/ai/explain. */
 export interface ExplainResponse {

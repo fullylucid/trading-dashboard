@@ -12,6 +12,7 @@ Surfaces (kind): alert | regime | sector | generic. Add a prompt builder to
 extend; no per-widget backend code needed.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, Optional
@@ -46,7 +47,7 @@ class ExplainRequest(BaseModel):
     symbol: Optional[str] = None
 
 
-def _trim(ctx: Any, limit: int = 4000) -> str:
+def _trim(ctx: Any, limit: int = 6000) -> str:
     return json.dumps(ctx, indent=2, default=str)[:limit]
 
 
@@ -72,6 +73,24 @@ def _build_prompt(kind: str, context: Dict[str, Any], symbol: Optional[str]) -> 
             f"what is rotating IN vs OUT and why it matters for a swing trader — cite the "
             f"strongest movers by name. No disclaimers.\n\nSECTOR ROTATION DATA:\n{ctx}"
         )
+    if kind == "chart":
+        question = (context.get("question") or "").strip()
+        if question:
+            return (
+                f"You are a sharp trading-desk chart copilot. Answer the trader's QUESTION about "
+                f"{symbol or 'this chart'} using the chart context below (precomputed, no-look-ahead "
+                f"signals + levels, plus the indicators currently on their screen). Be concrete — cite "
+                f"the actual numbers (price, RSI/MACD, support/resistance, Fibonacci). 3-6 sentences, no "
+                f"hedging, no disclaimers. If the context can't answer it, say so in one line.\n\n"
+                f"QUESTION: {question}\n\nCHART CONTEXT:\n{ctx}"
+            )
+        return (
+            f"You are a sharp trading-desk chart copilot. Give a concise read of {symbol or 'this chart'}: "
+            f"trend/regime, momentum (RSI/MACD/divergence), relative strength, and the key levels (nearest "
+            f"support/resistance + most relevant Fibonacci). Say where price sits in its range, then end with "
+            f"a one-line bias (bullish / neutral / bearish) and the invalidation level. Cite real numbers. "
+            f"4-7 sentences, no hedging, no disclaimers.\n\nCHART CONTEXT:\n{ctx}"
+        )
     return (
         f"In 2-3 sentences, explain the following trading data{sym} concretely for a swing "
         f"trader. No hedging, no disclaimers.\n\nDATA:\n{ctx}"
@@ -86,7 +105,17 @@ async def explain(req: ExplainRequest, request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=503, detail="AI explain unavailable")
 
     kind = (req.kind or "generic").lower()
-    prompt = _build_prompt(kind, req.context or {}, req.symbol)
+    context = dict(req.context or {})
+    # Chart copilot: enrich with real server-computed TA (signals / S-R / Fibonacci),
+    # reusing the same builder as the chart AI-read so the model reasons from real numbers.
+    if kind == "chart" and req.symbol:
+        try:
+            import chart_routes  # lazy; avoids import cost on non-chart calls
+            ta = await asyncio.to_thread(chart_routes._build_ta_context, req.symbol)
+            context = {**context, "ta": ta}
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"ai/explain[chart]: TA enrich failed: {e}")
+    prompt = _build_prompt(kind, context, req.symbol)
     try:
         text = await agent_bridge.run_agent_job(prompt, kind="data")
     except Exception as e:  # noqa: BLE001
