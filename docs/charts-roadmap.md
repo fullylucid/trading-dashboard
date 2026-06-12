@@ -36,9 +36,12 @@ TradingView/Pine dependency); these are the concrete *features* he showed that w
 11. **(optional)** "Build my chart" preset wizard + curated arsenal bundles (MA suite, ICT/sessions, volume kit)
 
 ## Also queued (pre-existing Phase-3 backlog)
-- AI copilot side-panel (explain/advise via ai-read + /ws/agent) — the NL-control analog to his TradingView-MCP, but on our own engine
+- ✅ **AI copilot side-panel** (shipped) — "🤖 Copilot" toggle; "Read chart" + free-text Q&A on the current symbol via `/api/ai/explain` (new `chart` kind, free local Opus). Backend enriches the prompt with real server-computed TA (signals / S-R / Fibonacci, reusing `chart_routes._build_ta_context`); the on-chart indicators are passed as context.
 - Rebuild PortfolioScan compare + portfolio-equity modes on KLineChart
 - Wire the scout's Reddit/X source adapters once those CLIs are live/published
+
+## Data/method scout (2026-06-11, for director prioritization)
+Background research run surfaced a top-5 "integrate next": (1) **Alpaca** as primary bars feed (de-risk yfinance — ToS/rate-limit risk), (2) **FINRA short-volume/short-interest** (free, net-new squeeze signal), (3) **Relative Rotation Graph** view (mostly existing ops + a normalize step), (4) **Tiingo** (clean EOD + news), (5) new engine ops **`hurst`** (regime gate) + **`yangzhang`** (range vol). Also: CCXT for crypto, Market-Profile/TPO module, Quiver (Congress/gov), DIY economic-surprise off existing FRED. Full report in the session; awaiting Weaver's call.
 
 Notes: #6 needs indicator-engine op additions; #5 and #8 are dedicated overlays outside the
 per-bar spec grammar. #1–3 are the cheapest wins — the server already computes the data.
