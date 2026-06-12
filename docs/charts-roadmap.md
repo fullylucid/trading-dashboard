@@ -37,8 +37,8 @@ TradingView/Pine dependency); these are the concrete *features* he showed that w
 
 ## Also queued (pre-existing Phase-3 backlog)
 - ✅ **AI copilot side-panel** (shipped) — "🤖 Copilot" toggle; "Read chart" + free-text Q&A on the current symbol via `/api/ai/explain` (new `chart` kind, free local Opus). Backend enriches the prompt with real server-computed TA (signals / S-R / Fibonacci, reusing `chart_routes._build_ta_context`); the on-chart indicators are passed as context.
-- Rebuild PortfolioScan compare + portfolio-equity modes on KLineChart
-- Wire the scout's Reddit/X source adapters once those CLIs are live/published
+- ✅ **Compare + portfolio-equity** (shipped) — "Compare" toggle overlays normalized %-return lines for the base symbol + a watchlist (sub-pane); "Portfolio" toggle plots the blended cumulative-return line from `/api/chart/portfolio` (degrades to "unavailable" when SnapTrade holdings aren't present). Both via the reliable `addSpecIndicator` path.
+- Wire the scout's Reddit/X source adapters once those CLIs are live/published — **now owned by the data/research head** (CLI factory charter)
 
 ## Data/method scout (2026-06-11, for director prioritization)
 Background research run surfaced a top-5 "integrate next": (1) **Alpaca** as primary bars feed (de-risk yfinance — ToS/rate-limit risk), (2) **FINRA short-volume/short-interest** (free, net-new squeeze signal), (3) **Relative Rotation Graph** view (mostly existing ops + a normalize step), (4) **Tiingo** (clean EOD + news), (5) new engine ops **`hurst`** (regime gate) + **`yangzhang`** (range vol). Also: CCXT for crypto, Market-Profile/TPO module, Quiver (Congress/gov), DIY economic-surprise off existing FRED. Full report in the session; awaiting Weaver's call.

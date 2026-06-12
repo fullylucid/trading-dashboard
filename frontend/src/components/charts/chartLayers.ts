@@ -206,6 +206,58 @@ export function buildVolumeProfileLevels(vp: VolumeProfile, bars: KLineData[]): 
   return { name: 'Volume Profile', short_name: 'VP', pane: 'overlay', precision: 2, plots, bars: bars.length };
 }
 
+// --- Compare (normalized %) + portfolio equity ---------------------------
+
+const COMPARE_PALETTE = ['#00ff41', '#22d3ee', '#ffcc00', '#ff5cf4', '#ff8c00', '#9b8cff', '#ff3b3b'];
+
+/** % return of each bar vs the first finite close (rebased to 0% at window start). */
+export function pctReturns(bars: KLineData[]): { time: number; value: number }[] {
+  const first = bars.find((b) => Number.isFinite(b.close))?.close;
+  if (!first) return [];
+  const out: { time: number; value: number }[] = [];
+  for (const b of bars) {
+    if (Number.isFinite(b.close)) out.push({ time: b.timestamp, value: (b.close / first - 1) * 100 });
+  }
+  return out;
+}
+
+/** Normalized %-return overlay: the base symbol + each compared symbol, one line each. */
+export function buildCompareResult(
+  entries: { symbol: string; bars: KLineData[] }[],
+): ComputeResult | null {
+  const plots: ComputedPlot[] = [];
+  entries.forEach((e, i) => {
+    const pts = pctReturns(e.bars);
+    if (pts.length) {
+      plots.push({
+        step: `cmp-${e.symbol}`,
+        label: `${e.symbol} %`,
+        type: 'line',
+        color: COMPARE_PALETTE[i % COMPARE_PALETTE.length],
+        points: pts,
+      });
+    }
+  });
+  if (!plots.length) return null;
+  return { name: 'Compare %', short_name: 'CMP', pane: 'separate', precision: 2, plots, bars: 0 };
+}
+
+/** Portfolio blended cumulative-return line (from /api/chart/portfolio returns[]). */
+export function buildPortfolioResult(
+  returns: { time: number; value: number }[],
+): ComputeResult | null {
+  const pts = returns.filter((p) => Number.isFinite(p.value)).map((p) => ({ time: p.time * 1000, value: p.value }));
+  if (!pts.length) return null;
+  return {
+    name: 'Portfolio %',
+    short_name: 'PORT',
+    pane: 'separate',
+    precision: 2,
+    plots: [{ step: 'port', label: 'Portfolio % (blended)', type: 'line', color: '#00ff41', points: pts }],
+    bars: pts.length,
+  };
+}
+
 // --- Auto session key levels ---------------------------------------------
 
 export interface KeyLevel {
