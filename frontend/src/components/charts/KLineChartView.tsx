@@ -31,7 +31,7 @@ import {
   type CustomHandle,
 } from './customIndicators';
 import { EXAMPLE_SPECS } from './exampleSpecs';
-import { fetchChartFull, type ChartFullResponse } from '../../lib/chartFullApi';
+import { fetchChartFull, fetchChartPortfolio, type ChartFullResponse } from '../../lib/chartFullApi';
 import {
   buildLevelsResult,
   buildMarkersResult,
@@ -43,6 +43,8 @@ import {
   computeKeyLevels,
   buildKeyLevelsResult,
   sessionRuns,
+  buildCompareResult,
+  buildPortfolioResult,
   type VolumeProfile,
   type KeyLevel,
 } from './chartLayers';
@@ -219,6 +221,14 @@ const KLineChartView: React.FC<Props> = ({
   const [showAlerts, setShowAlerts] = useState(false);
   const [showScreener, setShowScreener] = useState(false);
   const [showCopilot, setShowCopilot] = useState(false);
+  // Compare (normalized %) + portfolio-equity overlays (separate panes).
+  const [showCompare, setShowCompare] = useState(false);
+  const [compareInput, setCompareInput] = useState('SPY, QQQ');
+  const [compareApplied, setCompareApplied] = useState('SPY, QQQ');
+  const compareRef = useRef<CustomHandle | null>(null);
+  const [showPortfolio, setShowPortfolio] = useState(false);
+  const [portfolioNote, setPortfolioNote] = useState('');
+  const portfolioRef = useRef<CustomHandle | null>(null);
   // Volume Profile: POC/VA lines (reliable render) + a DOM histogram overlay.
   const [showVP, setShowVP] = useState(false);
   const [vpProfile, setVpProfile] = useState<VolumeProfile | null>(null);
@@ -293,6 +303,8 @@ const KLineChartView: React.FC<Props> = ({
       vpLevelsRef.current = null;
       vwapRenderedRef.current.clear();
       keyLevelsRef.current = null;
+      compareRef.current = null;
+      portfolioRef.current = null;
     };
   }, []);
 
@@ -487,6 +499,87 @@ const KLineChartView: React.FC<Props> = ({
   useEffect(() => {
     showVwapRef.current = showVwap;
   }, [showVwap]);
+
+  // --- Compare: normalized %-return overlay of the base symbol + others. ---
+  useEffect(() => {
+    if (!ready) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    let aborted = false;
+    const remove = () => {
+      if (compareRef.current) {
+        removeSpecIndicator(chart, compareRef.current);
+        compareRef.current = null;
+      }
+    };
+    if (!showCompare) {
+      remove();
+      return;
+    }
+    (async () => {
+      const base = barsRef.current;
+      if (!base.length) return;
+      const others = compareApplied
+        .split(/[,\s]+/)
+        .map((s) => s.trim().toUpperCase())
+        .filter((s) => s && s !== symbol.toUpperCase());
+      const entries: { symbol: string; bars: typeof base }[] = [{ symbol: symbol.toUpperCase(), bars: base }];
+      for (const sym of [...new Set(others)].slice(0, 6)) {
+        try {
+          const bars = await fetchKLineData(sym, resolution);
+          if (aborted) return;
+          if (bars.length) entries.push({ symbol: sym, bars });
+        } catch {
+          /* skip unreachable symbol */
+        }
+      }
+      const result = buildCompareResult(entries);
+      if (aborted || !result) return;
+      remove();
+      compareRef.current = addSpecIndicator(chart, 'compare', result);
+    })();
+    return () => {
+      aborted = true;
+    };
+  }, [ready, barsVersion, resolution, symbol, showCompare, compareApplied]);
+
+  // --- Portfolio-equity: blended cumulative-return line (SnapTrade holdings). ---
+  useEffect(() => {
+    if (!ready) return;
+    const chart = chartRef.current;
+    if (!chart) return;
+    let aborted = false;
+    const remove = () => {
+      if (portfolioRef.current) {
+        removeSpecIndicator(chart, portfolioRef.current);
+        portfolioRef.current = null;
+      }
+    };
+    if (!showPortfolio) {
+      remove();
+      setPortfolioNote('');
+      return;
+    }
+    (async () => {
+      try {
+        const data = await fetchChartPortfolio('1y');
+        if (aborted) return;
+        const result = buildPortfolioResult(data.returns || []);
+        if (!result) {
+          setPortfolioNote(data.note === 'no_holdings' ? 'no holdings' : 'no portfolio data');
+          return;
+        }
+        remove();
+        portfolioRef.current = addSpecIndicator(chart, 'portfolio', result);
+        setPortfolioNote('');
+      } catch {
+        if (!aborted) setPortfolioNote('unavailable (no holdings / SnapTrade off)');
+      }
+    })();
+    return () => {
+      aborted = true;
+    };
+  }, [ready, showPortfolio]);
 
   // --- Auto key levels: daily-bar-derived horizontal lines (cached per symbol). ---
   useEffect(() => {
@@ -736,6 +829,45 @@ const KLineChartView: React.FC<Props> = ({
         <button type="button" onClick={() => setShowCopilot((v) => !v)} style={btnStyle(showCopilot)}>
           🤖 Copilot
         </button>
+        <button type="button" onClick={() => setShowCompare((v) => !v)} style={btnStyle(showCompare)}>
+          Compare
+        </button>
+        <button type="button" onClick={() => setShowPortfolio((v) => !v)} style={btnStyle(showPortfolio)}>
+          Portfolio
+        </button>
+        {showCompare && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              setCompareApplied(compareInput);
+            }}
+            style={{ display: 'flex', gap: 4 }}
+          >
+            <input
+              aria-label="Compare symbols"
+              value={compareInput}
+              onChange={(e) => setCompareInput(e.target.value)}
+              placeholder="SPY, QQQ"
+              style={{
+                background: '#000',
+                color: GREEN,
+                border: `1px solid ${GREEN_DIM}`,
+                fontFamily: 'monospace',
+                fontSize: 12,
+                padding: '3px 8px',
+                borderRadius: 4,
+                width: 120,
+                textTransform: 'uppercase',
+              }}
+            />
+            <button type="submit" style={btnStyle(false)}>
+              vs
+            </button>
+          </form>
+        )}
+        {showPortfolio && portfolioNote && (
+          <span style={{ color: GREEN_DIM, fontFamily: 'monospace', fontSize: 11 }}>{portfolioNote}</span>
+        )}
         <button type="button" onClick={() => setShowVP((v) => !v)} style={btnStyle(showVP)}>
           VolProfile
         </button>

@@ -44,6 +44,25 @@ export interface ChartFullResponse {
   data_gaps?: string[];
 }
 
+export interface ChartPortfolioResponse {
+  equity?: { time: number; value: number }[]; // growth of $1
+  returns?: { time: number; value: number }[]; // cumulative % (rebased to 0)
+  holdings?: { symbol: string; weight: number }[];
+  note?: string;
+}
+
+/** Portfolio-weighted blended equity/returns series (SnapTrade holdings). */
+export async function fetchChartPortfolio(
+  range = '1y',
+  signal?: AbortSignal,
+): Promise<ChartPortfolioResponse> {
+  const { data } = await axios.get<ChartPortfolioResponse>('/api/chart/portfolio', {
+    params: { range },
+    signal,
+  });
+  return data;
+}
+
 /** Fetch the server-enriched chart payload (levels, markers, RS line). */
 export async function fetchChartFull(
   symbol: string,
