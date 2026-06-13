@@ -166,6 +166,17 @@ def test_cycle_dry_run_sends_nothing(monkeypatch):
     assert io.store[lw.STATE_KEY]["head_status"]["quanticus"] == "idle"  # state still advances
 
 
+def test_cycle_skips_hq_and_conductor_role(monkeypatch):
+    # hq lives in the trading-dashboard repo (room-lead resolves to weaver) but reports to Command —
+    # it must NOT be watched/pinged as a project worker.
+    hq = {**_worker("hq", "idle"), "role": "hq"}
+    io = FakeIO({"heads": [WEAVER, hq]}, {"trading-dashboard": "weaver"},
+                state={"head_status": {"hq": "working"}})
+    io.install(monkeypatch)
+    lw.run_cycle(drive=True)
+    assert io.queued == []                            # hq finishing is not the lead's concern
+
+
 def test_cycle_no_leads_watches_nothing(monkeypatch):
     fleet = {"heads": [WEAVER, _worker("quanticus", "idle")]}
     io = FakeIO(fleet, {}, state={"head_status": {"quanticus": "working"}})  # no leads configured

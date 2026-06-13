@@ -64,6 +64,7 @@ SENDER = "hq-leadwatch"
 HANDOFF_MAX_CHARS = 1200            # handoff slice shipped to the lead
 NOTIFY_MAX_CHARS = 6000            # < console INPUT_TEXT_MAX
 STUCK_WAIT_CYCLES = int(os.getenv("HQ_LEADWATCH_STUCK_CYCLES", "2"))   # waiting-input cycles before "stuck"
+WATCH_SKIP_ROLES = frozenset({"hq", "conductor"})   # report to Command/Charlotte, not a project lead
 
 _SECRET_PATTERNS = [
     re.compile(r"\b(sk|pk|rk)-[A-Za-z0-9_\-]{12,}"),
@@ -313,9 +314,13 @@ def run_cycle(drive: bool) -> int:
     prev_status: Dict[str, str] = state.get("head_status") or {}
     handled: Dict[str, str] = state.setdefault("handled", {})
 
-    # only WORKER heads in a LED room are watched; the lead itself is never watched
+    # only WORKER heads in a LED room are watched; the lead itself is never watched, and
+    # hq/conductor-role heads are excluded — they live in a project repo (so room-lead resolves)
+    # but report to Command/Charlotte, not the project lead, so the lead shouldn't be pinged on them.
     watched = {n: h for n, h in heads.items()
-               if resolve_lead(h.get("room") or "", leads) and h.get("name") != leads.get(h.get("room") or "")}
+               if resolve_lead(h.get("room") or "", leads)
+               and h.get("name") != leads.get(h.get("room") or "")
+               and h.get("role") not in WATCH_SKIP_ROLES}
     curr_status = {n: h.get("status") or "offline" for n, h in watched.items()}
 
     wait_counts = update_wait_counters(state.get("wait_counts") or {}, curr_status)
