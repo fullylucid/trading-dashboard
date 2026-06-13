@@ -6,12 +6,14 @@ in its threadpool instead of blocking the event loop.
 """
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
 from options_cli.chains import get_chain
+from options_cli.ivrank import IVHistoryStore, atm_iv, compute_metrics
 from options_cli.strategies import (
     build_verticals, build_income, build_iron_condor, build_strangle, build_straddle,
 )
@@ -139,6 +141,32 @@ def multileg(
     } for m in items[:top]]
     return {"symbol": ch.symbol, "spot": ch.spot, "expiration": use,
             "type": type, "side": side, "strategies": out}
+
+
+@options_router.get("/{symbol}/iv-rank")
+def iv_rank_route(
+    symbol: str,
+    target_dte: int = 30,
+    window: int = Query(252, ge=10, le=2000),
+) -> Dict[str, Any]:
+    """Current ~30-DTE ATM IV ranked against the symbol's own accrued daily IV
+    history (see scripts/snapshot_iv_history.py). Ranks only against days strictly
+    before today — no look-ahead. Cold-start honest: until the store holds enough
+    history, iv_rank/iv_percentile are null and sufficient=false."""
+    ch = get_chain(symbol, max_exps=1, target_dte=target_dte)
+    if not ch.contracts:
+        raise HTTPException(404, f"no options for {symbol.upper()}")
+    exp = ch.contracts[0].expiration
+    iv_now = atm_iv(ch, exp)
+    if iv_now is None:
+        raise HTTPException(404, f"no usable ATM IV for {symbol.upper()} at {exp}")
+    today = dt.date.today()
+    past = [row["iv"] for row in IVHistoryStore().series(ch.symbol, before=today)]
+    metrics = compute_metrics(past, iv_now, window=window)
+    return {
+        "symbol": ch.symbol, "spot": ch.spot, "expiration": exp,
+        "dte": ch.contracts[0].dte, "as_of": today.isoformat(), **metrics,
+    }
 
 
 @options_router.get("/{symbol}/wheel")
