@@ -1,0 +1,20 @@
+[Unit]
+Description=Hydra HQ leadwatch (20s loop) — pings each project lead on a worker's done/stuck transition
+After=docker.service hq-collector.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=user
+Group=user
+SupplementaryGroups=docker
+# SIGNAL_BOT_TOKEN / SIGNAL_BOT_CHAT_ID for the stuck-escalation Telegram ping (optional; degrades).
+EnvironmentFile=-/home/user/.config/agent-bridge/.env
+# Notify-only awareness: detect done/stuck and ping the lead — never auto-dispatch. --drive via env.
+Environment=HQ_LEADWATCH_DRIVE=1
+ExecStart=/home/user/.local/bin/hq-leadwatch-loop.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
