@@ -145,9 +145,48 @@ function NavMenu() {
   );
 }
 
+// Market context symbols that always lead the rolling ticker. The user's own holdings
+// (from the SnapTrade-backed /api/portfolio endpoint) are appended after these at runtime.
 const TICKER_SYMBOLS = ['AMEX:SPY', 'NASDAQ:QQQ', 'NASDAQ:AMD', 'NASDAQ:NVDA', 'NASDAQ:AAPL', 'NASDAQ:TSLA', 'NASDAQ:COIN', 'NYSE:SOFI', 'BITSTAMP:BTCUSD'];
 
+// Bare ticker (drop any "EXCHANGE:" prefix) so we can dedupe the hardcoded market symbols
+// against portfolio holdings, which arrive without an exchange prefix.
+const bareTicker = (s: string) => s.split(':').pop() as string;
+
 function GlobalTicker() {
+  // Holdings pulled from the portfolio, as exchange-less TradingView proNames (e.g. "AAPL").
+  // TradingView's ticker-tape resolves the exchange automatically for bare symbols.
+  const [holdings, setHoldings] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/portfolio/');
+        if (!res.ok) return;
+        const json = await res.json();
+        if (cancelled || !json?.success) return;
+        const owned = new Set(TICKER_SYMBOLS.map(bareTicker));
+        const syms: string[] = [];
+        for (const p of json.data?.positions ?? []) {
+          const sym = (p?.symbol ?? '').toUpperCase();
+          if (sym && !owned.has(sym)) { owned.add(sym); syms.push(sym); }
+        }
+        setHoldings(syms);
+      } catch {
+        /* ticker is best-effort; keep market symbols on failure */
+      }
+    };
+    load();
+    const interval = setInterval(load, 60000); // refresh holdings every minute
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  const symbols = [
+    ...TICKER_SYMBOLS.map((s) => ({ proName: s, title: bareTicker(s) })),
+    ...holdings.map((s) => ({ proName: s, title: s })),
+  ];
+
   return (
     <div style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 1400, background: '#000', borderTop: '1px solid rgba(0,255,65,0.3)' }}>
       <TVWidget
@@ -155,7 +194,7 @@ function GlobalTicker() {
         script="ticker-tape"
         height={42}
         config={{
-          symbols: TICKER_SYMBOLS.map((s) => ({ proName: s, title: s.split(':')[1] })),
+          symbols,
           showSymbolLogo: true, isTransparent: true, displayMode: 'compact',
         }}
       />
